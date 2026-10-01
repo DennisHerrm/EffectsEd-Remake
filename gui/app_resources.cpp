@@ -350,7 +350,8 @@ void App::collectDecodedTextures(render::Renderer* renderer) {
         } else if (ready.picture.ok) {
             id = renderer->createTexture(ready.picture.rgba.data(),
                                          ready.picture.width,
-                                         ready.picture.height, false, true);
+                                         ready.picture.height,
+                                         clampImages_.count(ready.name) != 0, true);
             ++texturesLoaded_;
             diag::info("texture " + ready.name + " <- " + ready.path + " (" +
                        std::to_string(ready.picture.width) + "x" +

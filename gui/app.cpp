@@ -2,6 +2,7 @@
 #include "testmarke.h"
 #include "app_shared.h"
 
+#include <chrono>
 #include <fstream>
 #include <sstream>
 #include <algorithm>
@@ -553,6 +554,7 @@ int App::drawParticleGroups(render::Renderer* renderer, const particles::DrawLis
         // zeichnen — mit Ersatzbild blitzte sonst ein Rechteck auf. Die Bilder
         // der Shaderstufen kennt prefetchTextures nicht; in der anderen
         // Reihenfolge wuerden sie nie angefordert.
+        if (group.clamp) clampImages_.insert(group.image);
         const render::TextureId texture = textureFor(renderer, group.image, seconds);
         if (!overdraw && textureStillLoading(group.image, seconds)) continue;
 
@@ -758,8 +760,11 @@ void App::drawViewport(render::Renderer* renderer, float width, float height) {
             2.0f * std::atan(std::tan(camera_.fovDegrees() * 0.5f * 3.14159265f / 180.0f) *
                              (innerW / innerH)) *
             180.0f / 3.14159265f;
+        const auto buildStart = std::chrono::steady_clock::now();
         list = doc().particles.build(elapsed, billboardRight, billboardUp,
                                      particleShaderLookup(), &eye);
+        lastBuildMs_ = std::chrono::duration<float, std::milli>(
+                           std::chrono::steady_clock::now() - buildStart).count();
         lastDrawn_ = list.drawn;
         lastAlive_ = list.alive;
         lastScheduled_ = list.scheduled;
@@ -881,7 +886,10 @@ void App::drawViewport(render::Renderer* renderer, float width, float height) {
     // eine Gruppe, in der Reihenfolge der Engine (particles::DrawGroup).
     if (showParticles) {
         renderer->setCulling(render::Cull::None);
+        const auto drawStart = std::chrono::steady_clock::now();
         drawParticleGroups(renderer, list, elapsed * 0.001f, settings_.effectRenderMode);
+        lastDrawMs_ = std::chrono::duration<float, std::milli>(
+                          std::chrono::steady_clock::now() - drawStart).count();
         // Texturiert UND Drahtgitter: im Original liegen die Kanten ueber dem
         // gefuellten Bild (beide Knoepfe sind unabhaengig).
         if (settings_.effectRenderMode == 0 && settings_.effectWireframe && settings_.effectTextured) {

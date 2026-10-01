@@ -199,6 +199,9 @@ public:
     // sechzigmal je Sekunde erneut in Auftrag gegeben, bis die erste
     // zurueckkommt.
     std::set<std::string> texturesInFlight_;
+    // Bilder, die eine Shaderstufe mit clampMap benutzt: sie werden mit
+    // Randklemmung angelegt (sonst blutet die gegenueberliegende Kante ein).
+    std::set<std::string> clampImages_;
     void collectDecodedTextures(render::Renderer* renderer);
     // Ein Bild anfordern, ohne es sofort zu brauchen.
     void requestTexture(const std::string& imageName);
@@ -598,6 +601,9 @@ private:
     int lastAlive_ = 0;
     int lastScheduled_ = 0;
     int lastMarks_ = 0;
+    // Wie lange Aufbau und Zeichnen der Teilchen im letzten Bild brauchten.
+    float lastBuildMs_ = 0.0f;
+    float lastDrawMs_ = 0.0f;
 
     // Spielordner aus der Windows-Registrierung. Leer auf anderen Systemen.
     std::vector<std::pair<std::string, std::string>> registryGamePaths() const;

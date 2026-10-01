@@ -2046,7 +2046,7 @@ public:
             app->settings_.extraGamePaths.clear();
             app->rescanAssets();
             app->fixedSeed_ = 4242;
-            bericht = "effekt\tzeit_ms\tlebend\tgezeichnet\tbild_ms\n";
+            bericht = "effekt\tzeit_ms\tlebend\tgezeichnet\tbild_ms\taufbau_ms\tzeichnen_ms\n";
         }));
         s.push_back(pruefSchritt("Bestand enthaelt Effekte",
                                  [] { return !app->assets_.effects.empty(); }));
@@ -2089,7 +2089,7 @@ public:
             app->showEditor();
         }));
         s.push_back(warte(3));
-        for (float ms : {150.0f, 600.0f, 1500.0f}) {
+        for (float ms : {20.0f, 150.0f, 600.0f, 1500.0f}) {
             s.push_back(tu("Zeit " + std::to_string(static_cast<int>(ms)), [ms] {
                 app->pressStop();
                 app->startPlayback();
@@ -2109,9 +2109,10 @@ public:
             s.push_back(foto("e_" + datei + "_" + std::to_string(static_cast<int>(ms))));
             s.push_back(tu("messen", [name, ms] {
                 char z[512];
-                std::snprintf(z, sizeof(z), "%s\t%.0f\t%d\t%d\t%.2f\n", name.c_str(), double(ms),
-                              app->lastAlive_, app->lastDrawn_,
-                              double(ImGui::GetIO().DeltaTime * 1000.0f));
+                std::snprintf(z, sizeof(z), "%s\t%.0f\t%d\t%d\t%.2f\t%.2f\t%.2f\n", name.c_str(),
+                              double(ms), app->lastAlive_, app->lastDrawn_,
+                              double(ImGui::GetIO().DeltaTime * 1000.0f),
+                              double(app->lastBuildMs_), double(app->lastDrawMs_));
                 bericht += z;
             }));
         }
