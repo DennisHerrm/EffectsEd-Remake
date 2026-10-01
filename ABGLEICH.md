@@ -3,7 +3,7 @@
 Alles, was `EffectsEd.exe` von Raven Software (2003) an Oberfläche mitbringt,
 gegenübergestellt mit dem, was bei uns **tatsächlich etwas tut**.
 
-Stand: 1.0.0-rc88
+Stand: 1.0.0-rc88, Bildvergleich und Bedienung ergänzt am 2. Oktober 2026
 
 **Nachgeprüft, nicht behauptet.** `tools/check_menu.py` liest die
 Menü-Ressource aus dem Binary — die Wahrheit, nicht eine Abschrift — und hält
@@ -124,3 +124,43 @@ in der Ladereihenfolge des Programms, nicht in der Anzeige. Zurückgenommen.
 eine Behauptung.** Deshalb ist er jetzt ein Werkzeug. Eine Gegenprobe hat
 gezeigt, dass es anschlägt: zwei Menüpunkte aus der Übersetzungstabelle
 entfernt, beide gemeldet.
+
+## Bildvergleich (2. Oktober 2026)
+
+27 Effekte aus Movie Duels, je bei 20/150/600/1500 ms, efxed neben dem
+laufenden Original (PrintWindow-Aufnahmen, gleiche Kamera — die Bildausschnitte
+beider Programme sind pixelgleich). Maßstab ist das **Spiel** (OpenJK-Quelltext),
+das Original nur für Aufbau und Bedienung.
+
+| Befund | Urteil | Stand |
+|---|---|---|
+| Raum verdeckte nichts (Teilchen schienen durch Boden und Wände) | efxed falsch | behoben: Raum schreibt Tiefe, Ausnahmen nur über den Shader (`depthFunc disable`, Bild ohne Shaderblock) |
+| Effekte mit `repeatDelay` standen beim Wiederholen mit 16 überlagerten Generationen da | efxed falsch | behoben: Wiederholen legt wie das Original ab der ersten Auslösung nach; der Vorlauf ist ein Schalter („Eingeschwungen beginnen") |
+| Raumlicht hellte den ganzen Raum auf (`1 − d/r` über den vollen Radius) | efxed falsch | behoben: `ProjectDlightTexture` nachgebaut (Hauptachse, `dUse`, Ebenenabstand, Profil von `gfx/2d/dlight.tga`, additiv) |
+| Achsen 1 px, blass, hinter dem Effekt | efxed anders | behoben: 3 px, obenauf, wie `glLineWidth(3)` im Original |
+| Emitter mit Modell (md3) zeichnen nichts | efxed falsch | in Arbeit (siehe `OFFEN.md`) |
+| ScreenFlash bei ~150 ms fast weiß | efxed richtig | das Original lädt `$whiteimage` nicht und zeigt ein undurchsichtiges Rechteck |
+| Bildfolgen (`oneshotanimmap`) bleiben auf dem letzten Bild | efxed richtig | das Original spielt weiter |
+| Zylinder- und Abdruckgröße | efxed richtig | das Original zeichnet etwa 0,6× zu klein |
+| Dünne Funken blasser | efxed richtig | die Engine zeichnet sie ebenso schmal; das Original mindestens 1 px |
+
+Gleich in beiden: Sprite- und Liniengrößen, Blitze, Abdrücke am Boden,
+Mischung `DST_COLOR·SRC_COLOR`, Licht ohne Alpha.
+
+Ein Vergleich im Spiel selbst (Movie Duels) war nicht möglich: Movie Duels hat
+keinen Konsolenbefehl, der eine beliebige `.efx` abspielt; der Weg führte nur
+über eine eigene Karte mit `fx_runner` oder ein ICARUS-Skript.
+
+## Bedienung, nachgemessen und angeglichen (2. Oktober 2026)
+
+| Original | efxed vorher | jetzt |
+|---|---|---|
+| „Repeat until stopped" voreingestellt, Play legt alle Repeat-Rate-Sekunden nach | einmal abspielen | wie das Original |
+| Playback Settings: Repeat for N s, Respawn every frame, Spawn-Punkt wandert | Dialog da, ohne Wirkung | wirkt, übersteht den Neustart |
+| Custom FX Spawn Origin | eingestellt, nie benutzt | wirkt |
+| Spinner-Pfeile an jedem Zahlenfeld (Schritt je Feld, gerundet) | nur Ziehen/Tippen | wie das Original |
+| Farbknopf: 20 Felder + „Other..." | nur freier Farbwähler | wie das Original |
+| Statuszeile Active / Drawn / Scheduled / Marks | Active / Drawn | wie das Original |
+| Overdraw: schwarzer Hintergrund, kein Raum | Raum blieb | wie das Original |
+| Alt+Rücktaste = Rückgängig | fehlte | belegt |
+| Spielpfad aus dem Pfad der geöffneten Datei | fehlte | wenn noch keiner gesetzt ist |
