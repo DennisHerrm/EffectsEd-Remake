@@ -524,6 +524,17 @@ ResolvedTexture findTexture(const Index& index, const std::string& basePath,
     return out;
 }
 
+std::string gamePathFromFile(const std::string& path) {
+    std::string tidy = path;
+    for (char& c : tidy) {
+        if (c == '\\') c = '/';
+    }
+    const std::string lower = toLower(tidy);
+    const size_t at = lower.rfind("/base/");
+    if (at == std::string::npos) return {};
+    return tidy.substr(0, at + 5);
+}
+
 std::vector<std::string> discoverRoots(const std::string& folder, int maxDepth) {
     std::vector<std::string> found;
     if (folder.empty()) return found;

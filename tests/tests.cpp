@@ -463,6 +463,20 @@ void testWindIsDead() {
     }
 }
 
+void testGamePathFromFile() {
+    std::cout << "== Spielpfad aus dem Dateipfad ==\n";
+    // Wie im Original: der Teil bis ".../base/" ist der Spielpfad.
+    using efx::assets::gamePathFromFile;
+    check(gamePathFromFile("C:\\Games\\GameData\\base\\effects\\blaster\\shot.efx") ==
+              "C:/Games/GameData/base",
+          "Rueckwaertsstriche, base mittendrin");
+    check(gamePathFromFile("D:/x/BASE/effects/a.efx") == "D:/x/BASE", "Grossschreibung bleibt erhalten");
+    check(gamePathFromFile("D:/base/mod/base/effects/a.efx") == "D:/base/mod/base",
+          "der letzte base-Ordner gewinnt");
+    check(gamePathFromFile("D:/mods/effects/a.efx").empty(), "ohne base kein Spielpfad");
+    check(gamePathFromFile("D:/database/effects/a.efx").empty(), "\"database\" ist kein base-Ordner");
+}
+
 void testDiagnosticSegment() {
     std::cout << "== Meldungen kennen ihr Segment ==\n";
     // Ein Klick im Meldungsfenster waehlt das betroffene Segment. Dafuer
@@ -13156,6 +13170,7 @@ int main(int argc, char** argv) {
     testPrecision();
     testNumberText();
     testDiagnosticSegment();
+    testGamePathFromFile();
     testFlags();
     testTolerance();
     testKnownRavenBugs();

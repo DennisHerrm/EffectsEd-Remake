@@ -2011,6 +2011,27 @@ public:
             s.push_back(fensterFoto(std::string("raumart_") + std::to_string(static_cast<int>(a))));
         }
         s.push_back(pruefSchritt("Raumart wieder geschlossen", [] { return app->settings_.roomStyle == 0; }));
+        // Ohne Spielpfad leitet das Oeffnen ihn aus ".../base/" ab (Original).
+        auto alterPfad = std::make_shared<std::string>();
+        s.push_back(tu("Datei unter spiel/base oeffnen, ohne Spielpfad", [=] {
+            *alterPfad = app->settings_.gamePath;
+            const fs::path ordner = fs::path(arbeitsOrdner) / "spiel" / "base" / "effects";
+            std::error_code ec;
+            fs::create_directories(ordner, ec);
+            schreibeDatei((ordner / "pfadtest.efx").string(), "Particle\n{\n\tlife 500\n}\n");
+            app->settings_.gamePath.clear();
+            app->openFile((ordner / "pfadtest.efx").string());
+        }));
+        s.push_back(pruefSchritt("Spielpfad aus dem Dateipfad abgeleitet (.../spiel/base)", [] {
+            const std::string& p = app->settings_.gamePath;
+            return p.size() >= 10 && p.compare(p.size() - 10, 10, "spiel/base") == 0;
+        }));
+        s.push_back(tu("Spielpfad zurueck", [=] {
+            app->settings_.gamePath = *alterPfad;
+            app->rescanAssets();
+            doc().dirty = false;
+            app->closeDocument(app->activeDocument_);
+        }));
         return s;
     }
 
