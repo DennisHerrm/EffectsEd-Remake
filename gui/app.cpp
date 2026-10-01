@@ -489,6 +489,95 @@ void App::updateFlagDrag(float width, float height) {
     }
 }
 
+particles::System::ShaderLookup App::particleShaderLookup() const {
+    return [this](const std::string& name) -> particles::System::ShaderDraw {
+        particles::System::ShaderDraw draw;
+        draw.definition = assets_.shaderOf(name);
+        // Weder Shaderblock noch Bild: die Engine zeichnet tr.defaultShader,
+        // das graue Kaestchen. Ohne Bestand (kein Spielpfad) wissen wir es
+        // nicht — dann nicht als fehlend melden.
+        if (!draw.definition && assetsScanned_ && !assets_.hasShader(name) &&
+            !assets_.hasTexture(name)) {
+            draw.missing = true;
+        }
+        return draw;
+    };
+}
+
+int App::drawParticleGroups(render::Renderer* renderer, const particles::DrawList& list,
+                            float seconds, int renderMode) {
+    // Die Faktoren der Shaderstufe eins zu eins an die Grafikschnittstelle.
+    const auto factor = [](shader::BlendFactor f) {
+        switch (f) {
+            case shader::BlendFactor::Zero: return render::BlendFactor::Zero;
+            case shader::BlendFactor::One: return render::BlendFactor::One;
+            case shader::BlendFactor::SrcColor: return render::BlendFactor::SrcColor;
+            case shader::BlendFactor::OneMinusSrcColor: return render::BlendFactor::OneMinusSrcColor;
+            case shader::BlendFactor::DstColor: return render::BlendFactor::DstColor;
+            case shader::BlendFactor::OneMinusDstColor: return render::BlendFactor::OneMinusDstColor;
+            case shader::BlendFactor::SrcAlpha: return render::BlendFactor::SrcAlpha;
+            case shader::BlendFactor::OneMinusSrcAlpha: return render::BlendFactor::OneMinusSrcAlpha;
+            case shader::BlendFactor::DstAlpha: return render::BlendFactor::DstAlpha;
+            case shader::BlendFactor::OneMinusDstAlpha: return render::BlendFactor::OneMinusDstAlpha;
+            case shader::BlendFactor::SrcAlphaSaturate: return render::BlendFactor::SrcAlphaSaturate;
+            case shader::BlendFactor::Unset: break;
+        }
+        return render::BlendFactor::One;
+    };
+
+    // Die drei Darstellungsarten des Originals: texturiert, Drahtgitter,
+    // Ueberzeichnung ("Shows areas of high polygon overlap" — jede Flaeche
+    // als schwaches gleichmaessiges Additiv ohne Textur).
+    const bool overdraw = renderMode == 2;
+    renderer->setFill(renderMode == 1 ? render::Fill::Wireframe : render::Fill::Solid);
+    int calls = 0;
+    for (const auto& group : list.groups) {
+        const scene::Mesh& mesh = group.mesh;
+        if (mesh.vertices.empty()) continue;
+        // Erst anfordern (textureFor gibt das Bild in Auftrag), dann fragen:
+        // noch unterwegs? Dann diese Gruppe ein, zwei Bilder lang nicht
+        // zeichnen — mit Ersatzbild blitzte sonst ein Rechteck auf. Die Bilder
+        // der Shaderstufen kennt prefetchTextures nicht; in der anderen
+        // Reihenfolge wuerden sie nie angefordert.
+        const render::TextureId texture = textureFor(renderer, group.image, seconds);
+        if (!overdraw && textureStillLoading(group.image, seconds)) continue;
+
+        if (overdraw) {
+            renderer->setBlendFactors(render::BlendFactor::One, render::BlendFactor::One);
+            renderer->setDepthTest(true);
+            renderer->setDepthWrite(false);
+            renderer->setAlphaTest(0);
+        } else {
+            renderer->setBlendFactors(group.blended ? factor(group.src) : render::BlendFactor::One,
+                                      group.blended ? factor(group.dst) : render::BlendFactor::Zero);
+            renderer->setDepthTest(group.depthTest);
+            renderer->setDepthWrite(group.depthWrite);
+            renderer->setAlphaTest(group.alphaTest);
+        }
+
+        // Ohne Textur und Farbe im Ueberzeichnungsmodus. Die umgefaerbte
+        // Fassung liegt in einem Member: der Zeiger muss den Zeichenaufruf
+        // ueberleben.
+        const scene::Vertex* vertices = mesh.vertices.data();
+        if (overdraw) {
+            overdrawScratch_ = mesh.vertices;
+            constexpr uint32_t kStep = scene::rgba(21, 21, 21, 255);
+            for (auto& v : overdrawScratch_) v.colour = kStep;
+            vertices = overdrawScratch_.data();
+        }
+        renderer->drawTriangles(reinterpret_cast<const render::Vertex*>(vertices),
+                                static_cast<int>(mesh.vertices.size()), mesh.indices.data(),
+                                static_cast<int>(mesh.indices.size()),
+                                overdraw ? render::kNoTexture : texture);
+        ++calls;
+    }
+    renderer->setDepthTest(true);
+    renderer->setDepthWrite(false);
+    renderer->setAlphaTest(0);
+    renderer->setFill(render::Fill::Solid);
+    return calls;
+}
+
 void App::drawViewport(render::Renderer* renderer, float width, float height) {
     ImGui::BeginChild("viewport", ImVec2(width, height), ImGuiChildFlags_Borders,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
@@ -585,6 +674,71 @@ void App::drawViewport(render::Renderer* renderer, float width, float height) {
         wallTextureKind_ = settings_.roomTexture;
     }
 
+    // Die Partikel VOR dem Raum aufbauen — gezeichnet werden sie danach.
+    //
+    // Der Grund sind die Lichter: ein Light-Segment erhellt die Waende
+    // (CLight::Draw -> AddLightToScene), und dafuer muss der Raum wissen,
+    // welche Lichter in diesem Bild leuchten, bevor er gezeichnet wird.
+    //
+    // Gezeichnet wird, solange die Uhr nicht steht — oder solange sie
+    // irgendwo mitten im Effekt steht, weil man gespult hat.
+    const bool showParticles = playing() || doc().clock.timeMs() > 0.0f;
+    particles::DrawList list;
+    float elapsed = 0.0f;
+    if (showParticles) {
+        // Die eigene Uhr statt der Wanduhr: springen, zurueckspulen und Bild
+        // fuer Bild gehen setzen voraus, dass sich die Uhr verschieben laesst.
+        // Die Geschwindigkeit steckt in der Uhr, nicht in der Rechnung hier.
+        //
+        // Die Dauer kommt aus der Simulation. Bei einem Effekt mit
+        // `repeatDelay` ist das EINE Wiederholung: danach ist das Bild
+        // identisch.
+        doc().clock.setDuration(doc().particles.durationMs());
+        doc().clock.advance(ImGui::GetIO().DeltaTime * 1000.0f);
+
+        if (doc().clock.consumeWrapped()) {
+            // Ein Durchlauf ist zu Ende. Neu ausloesen — aber nicht hier
+            // (startPlayback plant neu, laedt nach, bricht Klaenge ab), sondern
+            // vorgemerkt fuer das naechste Bild. Und NICHT bei `repeatDelay`:
+            // dort ist das Bild nach einer Wiederholung identisch, ein
+            // Neuplanen erzeugte genau den Sprung, den die Nahtlosigkeit
+            // vermeidet. In der Fassung des alten Editors dagegen schon.
+            if (doc().effect.repeatDelay < 1 || settings_.legacyRepeat) {
+                doc().pendingRestart = true;
+            }
+        }
+
+        elapsed = doc().clock.timeMs();
+
+        // Die Spannachsen des Billboards kommen aus der Blickmatrix: die
+        // ersten beiden Zeilen sind rechts und oben in Weltkoordinaten.
+        const camera::Vec3 billboardRight{view[0], view[4], view[8]};
+        const camera::Vec3 billboardUp{view[1], view[5], view[9]};
+
+        triggerSounds(elapsed);
+        // Und die Kameraerschuetterung — an derselben Stelle, weil beide
+        // dasselbe Muster haben: einmal ausloesen, wenn ihre Zeit gekommen
+        // ist, und nicht in jedem Bild erneut.
+        triggerCameraShakes(elapsed);
+
+        // Das Auge und das waagerechte Sichtfeld: Linien und Blitze stehen
+        // quer zur Sichtlinie, Zylinder werden mit der Entfernung feiner, ein
+        // ScreenFlash steht 8 Einheiten vor dem Auge. camera::Orbit rechnet
+        // mit dem SENKRECHTEN Winkel; die Engine (fov_x) mit dem waagerechten.
+        particles::System::View eye;
+        eye.eye = camera_.position();
+        eye.fovXDegrees =
+            2.0f * std::atan(std::tan(camera_.fovDegrees() * 0.5f * 3.14159265f / 180.0f) *
+                             (innerW / innerH)) *
+            180.0f / 3.14159265f;
+        list = doc().particles.build(elapsed, billboardRight, billboardUp,
+                                     particleShaderLookup(), &eye);
+        lastDrawn_ = list.drawn;
+        lastAlive_ = list.alive;
+    } else {
+        lastDrawn_ = 0;
+        lastAlive_ = 0;
+    }
     if (!roomMesh_.vertices.empty()) {
         renderer->setBlend(render::Blend::Opaque);
 
@@ -620,10 +774,27 @@ void App::drawViewport(render::Renderer* renderer, float width, float height) {
         // Bodengitter, nicht ein Drahtgitter der Waende — das sagt der
         // Hilfetext des Originals: "Draw outline of testing room".
         renderer->setFill(render::Fill::Solid);
+        // Die Light-Segmente dieses Bildes erhellen die Raumflaechen — wie im
+        // Spiel der Dlight-Durchgang ueber die Welt (CLight::Draw ->
+        // AddLightToScene; im Original-Editor ist die Wand im Lichtkreis
+        // aufgehellt).
+        std::vector<render::Light> lights;
+        for (const auto& light : list.lights) {
+            if (static_cast<int>(lights.size()) >= render::kMaxLights) break;
+            render::Light l{};
+            l.pos[0] = light.origin.x;
+            l.pos[1] = light.origin.y;
+            l.pos[2] = light.origin.z;
+            l.radius = light.radius;
+            for (int k = 0; k < 3; ++k) l.rgb[k] = light.rgb[k];
+            lights.push_back(l);
+        }
+        renderer->setLights(lights.data(), static_cast<int>(lights.size()));
         renderer->drawTriangles(
             reinterpret_cast<const render::Vertex*>(roomMesh_.vertices.data()),
             static_cast<int>(roomMesh_.vertices.size()), roomMesh_.indices.data(),
             static_cast<int>(roomMesh_.indices.size()), wallTexture_);
+        renderer->setLights(nullptr, 0);
     }
 
     if (settings_.drawGrid && !gridLines_.vertices.empty()) {
@@ -674,197 +845,11 @@ void App::drawViewport(render::Renderer* renderer, float width, float height) {
             static_cast<int>(windLines_.vertices.size()), 1.0f);
     }
 
-    // Die Partikel. Nach dem Raum, damit sie davor liegen, und ohne
-    // Tiefenschreiben — durchsichtige Flaechen, die sich gegenseitig
-    // verdecken, sehen falsch aus.
-    // Gezeichnet wird, solange die Uhr nicht steht — oder solange sie
-    // irgendwo mitten im Effekt steht, weil man gespult hat.
-    if (playing() || doc().clock.timeMs() > 0.0f) {
-        // Die eigene Uhr statt der Wanduhr.
-        //
-        // Bis zur Zeitleiste kam die Zeit aus ImGui::GetTime() — verstrichene
-        // Wanduhrzeit seit dem Start. Das reicht zum Abspielen und fuer sonst
-        // nichts: springen, zurueckspulen und Bild fuer Bild gehen setzen
-        // voraus, dass sich die Uhr verschieben laesst.
-        //
-        // Die Geschwindigkeit steckt in der Uhr, nicht in der Rechnung hier:
-        // so laeuft derselbe Effekt langsamer ab, statt anders geplant zu
-        // werden. Zeitlupe soll zeigen, was ohnehin passiert.
-        // Wie in startPlayback: beim Wiederholen ueber genau eine
-        // Wiederholung. Beide Stellen muessen dasselbe sagen, sonst wandert
-        // die Dauer im laufenden Betrieb wieder auf die volle Lebensdauer
-        // zurueck und der Sprung ist wieder da.
-        {
-            // Die Dauer kommt aus der Simulation.
-            //
-            // Bei einem Effekt mit `repeatDelay` ist das EINE Wiederholung:
-            // danach ist das Bild identisch, weil alle Generationen denselben
-            // Ausgangswert haben. Die Bildzahl bleibt damit konstant, jeder
-            // Zeitpunkt laesst sich anfahren, und nichts wird schwaecher.
-            doc().clock.setDuration(doc().particles.durationMs());
-        }
-        doc().clock.advance(ImGui::GetIO().DeltaTime * 1000.0f);
-
-        if (doc().clock.consumeWrapped()) {
-            // Ein Durchlauf ist zu Ende. Neu ausloesen, damit ein Effekt mit
-            // Spannen bei jeder Wiederholung anders aussieht.
-            //
-            // Aber NICHT hier: startPlayback plant den ganzen Effekt neu,
-            // laedt untergeordnete Dateien nach und bricht Klaenge ab — mitten
-            // im Zeichnen ist das der falsche Ort. Bei einem grossen Effekt
-            // stockt das Bild an genau der Stelle, an der die Wiederholung
-            // beginnt, und das sieht aus, als liefe nichts mehr.
-            //
-            // Stattdessen vormerken und im naechsten Bild erledigen, bevor
-            // gezeichnet wird.
-            //
-            // ABER nicht bei einem Effekt mit `repeatDelay`: dort ist das Bild
-            // nach einer Wiederholung identisch, und ein Neuplanen wuerde
-            // genau den Sprung erzeugen, den die Nahtlosigkeit vermeidet.
-            // Dreimal je Sekunde alles neu zu wuerfeln war der Grund, warum es
-            // gegenueber dem Original unruhig aussah.
-            //
-            // In der Fassung des alten Editors dagegen SCHON: dort ist das
-            // Neuausloesen der ganze Punkt.
-            if (doc().effect.repeatDelay < 1 || settings_.legacyRepeat) {
-                doc().pendingRestart = true;
-            }
-        }
-
-        const float elapsed = doc().clock.timeMs();
-
-        // Die Spannachsen des Billboards kommen aus der Blickmatrix: die
-        // ersten beiden Zeilen sind rechts und oben in Weltkoordinaten.
-        const camera::Vec3 billboardRight{view[0], view[4], view[8]};
-        const camera::Vec3 billboardUp{view[1], view[5], view[9]};
-
-        triggerSounds(elapsed);
-        // Und die Kameraerschuetterung — an derselben Stelle, weil beide
-        // dasselbe Muster haben: einmal ausloesen, wenn ihre Zeit gekommen
-        // ist, und nicht in jedem Bild erneut.
-        triggerCameraShakes(elapsed);
-
-        const particles::DrawList list =
-            doc().particles.build(
-                elapsed, billboardRight, billboardUp,
-                // Die `tcMod`-Regeln aus den Shaderdateien. Ohne diesen
-                // Rueckruf stehen scrollende Texturen still — und das tun
-                // sie, seit die Regeln umgesetzt wurden.
-                [this](const std::string& name)
-                    -> particles::System::ShaderDraw {
-                    return {&assets_.texModsOf(name), assets_.rgbWaveOf(name),
-                            assets_.alphaWaveOf(name)};
-                });
-        lastDrawn_ = list.drawn;
-        lastAlive_ = list.alive;
-
+    // Die Partikel. Nach dem Raum, damit sie davor liegen — je Shaderstufe
+    // eine Gruppe, in der Reihenfolge der Engine (particles::DrawGroup).
+    if (showParticles) {
         renderer->setCulling(render::Cull::None);
-        renderer->setDepthWrite(false);
-
-        // Nach Textur gruppiert zeichnen. Ein Zeichenaufruf je Shader statt
-        // einer je Partikel — bei zweihundert Funken ist das der Unterschied
-        // zwischen fluessig und ruckelig.
-        // Erst die undurchsichtigen, dann die durchsichtigen.
-        //
-        // Bei additiver Mischung ist die Reihenfolge gleichgueltig — Addition
-        // ist kommutativ. Bei Alphamischung nicht: was zuerst gezeichnet
-        // wird, liegt hinten. Eine undurchsichtige Flaeche, die nach einer
-        // durchsichtigen kommt, ueberdeckt sie vollstaendig.
-        std::vector<std::pair<const std::string*, const scene::Mesh*>> order;
-        order.reserve(list.byTexture.size());
-        for (const auto& group : list.byTexture) {
-            if (!group.second.vertices.empty()) {
-                order.emplace_back(&group.first, &group.second);
-            }
-        }
-        std::stable_sort(order.begin(), order.end(),
-                         [&](const auto& a, const auto& b) {
-                             const bool aOpaque =
-                                 blendFor(*a.first, list) ==
-                                 shader::BlendMode::Opaque;
-                             const bool bOpaque =
-                                 blendFor(*b.first, list) ==
-                                 shader::BlendMode::Opaque;
-                             return aOpaque && !bOpaque;
-                         });
-
-        for (const auto& entry : order) {
-            const std::string& groupName = *entry.first;
-            const scene::Mesh& mesh = *entry.second;
-            // Die Wiedergabezeit, nicht die Wanduhr: eine angehaltene
-            // Vorschau soll ihre Bildfolge auch anhalten, und beim
-            // Zurueckspulen zurueckspulen.
-            const render::TextureId texture =
-                textureFor(renderer, groupName, elapsed * 0.001f);
-            // Noch unterwegs? Dann diese Gruppe ein, zwei Bilder lang nicht
-            // zeichnen. Mit Ersatzbild und deckender Mischung (die erst das
-            // Bild verraet) blitzte sonst ein weisses Rechteck auf.
-            if (settings_.effectRenderMode != 2 &&
-                textureStillLoading(groupName, elapsed * 0.001f)) {
-                continue;
-            }
-
-            // Die Mischung aus dem Shader. Bis eben stand hier fest "additiv",
-            // und ein alphagemischter Rauch sah damit voellig falsch aus.
-            //
-            // Die beiden Aufzaehlungen haben dieselbe Reihenfolge; der
-            // static_assert weiter unten haelt sie zusammen, falls jemand
-            // eine Art einfuegt.
-            // Die drei Darstellungsarten des Originals.
-            //
-            // Overdraw faerbt nichts ein, sondern zeichnet jede Flaeche als
-            // schwaches, gleichmaessiges Additiv ohne Textur. Wo viele
-            // Flaechen uebereinanderliegen, summiert sich das zu Weiss — und
-            // genau das ist die Frage, die der Modus beantwortet: wo kostet
-            // dieser Effekt Bilder? Der Hilfetext im Original sagt es so:
-            // "Shows areas of high polygon overlap".
-            const bool overdraw = settings_.effectRenderMode == 2;
-            const shader::BlendMode blend =
-                overdraw ? shader::BlendMode::Additive : blendFor(groupName, list);
-            renderer->setBlend(static_cast<render::Blend>(blend));
-            renderer->setFill(settings_.effectRenderMode == 1
-                                  ? render::Fill::Wireframe
-                                  : render::Fill::Solid);
-            // Undurchsichtige Flaechen schreiben in den Tiefenpuffer, die
-            // anderen nicht — sonst verdecken sich durchsichtige Partikel
-            // gegenseitig, und man sieht Loecher statt Rauch.
-            renderer->setDepthWrite(blend == shader::BlendMode::Opaque);
-
-            // Ohne Textur und ohne Farbe im Overdraw-Modus: es soll die
-            // Anzahl der Ueberdeckungen zeigen, nicht wie der Effekt aussieht.
-            //
-            // Die umgefaerbte Fassung liegt in einem Member und nicht in einer
-            // lokalen Kopie: der Zeiger muss den Zeichenaufruf ueberleben, und
-            // ein Ausdruck wie `kopie(mesh).data()` waere schon vorher
-            // ungueltig. Der Member spart nebenbei die Neubelegung je Bild.
-            const scene::Vertex* vertices = mesh.vertices.data();
-            if (overdraw) {
-                overdrawScratch_ = mesh.vertices;
-                // Ein schwaches gleichmaessiges Grau. Zwoelf Ueberdeckungen
-                // ergeben Weiss — das ist die Schwelle, ab der es im Spiel
-                // wehtut.
-                constexpr uint32_t kStep = scene::rgba(21, 21, 21, 255);
-                for (auto& v : overdrawScratch_) v.colour = kStep;
-                vertices = overdrawScratch_.data();
-            }
-
-            renderer->drawTriangles(
-                reinterpret_cast<const render::Vertex*>(vertices),
-                static_cast<int>(mesh.vertices.size()), mesh.indices.data(),
-                static_cast<int>(mesh.indices.size()),
-                overdraw ? render::kNoTexture : texture);
-        }
-        renderer->setDepthWrite(false);
-        if (!list.lines.vertices.empty()) {
-            renderer->setBlend(render::Blend::AlphaBlend);
-            renderer->drawLines(
-                reinterpret_cast<const render::Vertex*>(list.lines.vertices.data()),
-                static_cast<int>(list.lines.vertices.size()), 1.0f);
-        }
-        renderer->setFill(render::Fill::Solid);
-    } else {
-        lastDrawn_ = 0;
-        lastAlive_ = 0;
+        drawParticleGroups(renderer, list, elapsed * 0.001f, settings_.effectRenderMode);
     }
 
     renderer->setDepthWrite(true);

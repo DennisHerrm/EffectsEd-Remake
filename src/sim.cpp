@@ -79,11 +79,25 @@ std::vector<Spawn> schedule(const Effect& effect, Random& random,
 
         // Anzahl. Nicht gesetzt heisst einmal — so verhaelt sich die Engine,
         // wo mSpawnCount mit 1 vorbelegt ist.
+        //
+        // CFxRange::GetRoundedVal (FxScheduler.h):
+        //
+        //     if ( mMin == mMax ) return mMin;              // als int: abgeschnitten
+        //     return (int)( flrand( mMin, mMax ) + 0.5f );   // gerundet
+        //
+        // Und KEINE Untergrenze: `count 0 2` ergibt im Spiel in einem Viertel
+        // der Faelle gar nichts (flrand < 0.5). Hier stand `if (count < 1)
+        // count = 1` — die Vorschau zeigte immer mindestens eines, im Mittel
+        // 1.25 statt 1.0.
         int count = 1;
         if (p.count.set) {
-            count = static_cast<int>(random.pick(p.count) + 0.5f);
+            if (p.count.min == p.count.max || !p.count.ranged) {
+                count = static_cast<int>(p.count.min);
+            } else {
+                count = static_cast<int>(random.pick(p.count) + 0.5f);
+            }
         }
-        if (count < 1) count = 1;
+        if (count < 0) count = 0;
         // FX_MAX_EFFECT_COMPONENTS begrenzt die Segmente, nicht die Anzahl je
         // Segment — aber eine Datei mit count 100000 wuerde die Vorschau
         // aufhaengen, und das hilft niemandem beim Bearbeiten.

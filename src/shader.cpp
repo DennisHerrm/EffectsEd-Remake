@@ -193,9 +193,16 @@ void parseStage(Tokenizer& tok, Stage& stage, Library& library,
             auto rest = tok.restOfLine();
             if (rest.empty()) continue;
             const std::string& g = rest[0];
+            stage.rgbGenSet = true;
             if (iequals(g, "identity")) stage.rgbGen = ColorGen::Identity;
             else if (iequals(g, "identityLighting")) stage.rgbGen = ColorGen::IdentityLighting;
-            else if (iequals(g, "vertex")) stage.rgbGen = ColorGen::Vertex;
+            else if (iequals(g, "vertex")) {
+                stage.rgbGen = ColorGen::Vertex;
+                // ParseStage: `if ( stage->alphaGen == 0 ) stage->alphaGen =
+                // AGEN_VERTEX;` — 0 ist AGEN_IDENTITY, also auch ein schon
+                // ausdruecklich gesetztes identity.
+                if (stage.alphaGen == AlphaGen::Identity) stage.alphaGen = AlphaGen::Vertex;
+            }
             else if (iequals(g, "exactVertex")) stage.rgbGen = ColorGen::ExactVertex;
             else if (iequals(g, "entity")) stage.rgbGen = ColorGen::Entity;
             else if (iequals(g, "oneMinusEntity")) stage.rgbGen = ColorGen::OneMinusEntity;
@@ -218,6 +225,7 @@ void parseStage(Tokenizer& tok, Stage& stage, Library& library,
             auto rest = tok.restOfLine();
             if (rest.empty()) continue;
             const std::string& g = rest[0];
+            stage.alphaGenSet = true;
             if (iequals(g, "identity")) stage.alphaGen = AlphaGen::Identity;
             else if (iequals(g, "vertex")) stage.alphaGen = AlphaGen::Vertex;
             else if (iequals(g, "oneMinusVertex")) stage.alphaGen = AlphaGen::OneMinusVertex;
@@ -407,27 +415,161 @@ float evaluateWave(const WaveForm& wave, float seconds) {
     phase = phase - std::floor(phase);
 
     float value = 0.0f;
-    if (wave.func == "sin") {
+    if (iequals(wave.func, "sin")) {
         value = std::sin(phase * kTwoPi);
-    } else if (wave.func == "square") {
+    } else if (iequals(wave.func, "square")) {
         // squareTable: erste Haelfte 1, zweite -1.
         value = phase < 0.5f ? 1.0f : -1.0f;
-    } else if (wave.func == "triangle") {
-        // triangleTable laeuft 0..1..0, nicht -1..1. Wer hier ein
-        // gleichschenkliges Dreieck um null baut, bekommt die halbe Helligkeit.
-        value = phase < 0.5f ? phase * 2.0f : 2.0f - phase * 2.0f;
-    } else if (wave.func == "sawtooth") {
+    } else if (iequals(wave.func, "triangle")) {
+        // triangleTable (R_Init in tr_init.cpp) ist ZWEISEITIG: 0 -> 1 im
+        // ersten Viertel, zurueck auf 0 bis zur Haelfte, dann gespiegelt
+        // nach -1 und wieder 0:
+        //
+        //     if ( i < SIZE/2 ) { i < SIZE/4 ? i/(SIZE/4) : 1 - table[i-SIZE/4] }
+        //     else               table[i] = -table[i-SIZE/2];
+        //
+        // Hier stand "laeuft 0..1..0, nicht -1..1" — falsch: `rgbGen wave
+        // triangle 0.5 0.5` pulst im Spiel zwischen 0 und 1, bei uns lief es
+        // nur zwischen 0.5 und 1.
+        const float half = phase < 0.5f ? phase : phase - 0.5f;
+        const float tri = half < 0.25f ? half * 4.0f : 2.0f - half * 4.0f;
+        value = phase < 0.5f ? tri : -tri;
+    } else if (iequals(wave.func, "sawtooth")) {
         value = phase;
-    } else if (wave.func == "inversesawtooth") {
+    } else if (iequals(wave.func, "inversesawtooth")) {
         value = 1.0f - phase;
-    } else if (wave.func == "noise") {
-        // Die Engine zieht hier aus einer Rauschtabelle. Wir nehmen einen
-        // wiederholbaren Ersatz: gleiche Zeit, gleicher Wert — sonst flackert
-        // ein angehaltenes Bild.
-        const float x = std::sin(phase * 12.9898f) * 43758.5453f;
-        value = (x - std::floor(x)) * 2.0f - 1.0f;
+    } else if (iequals(wave.func, "noise")) {
+        // EvalWaveForm (tr_shade_calc.cpp): GF_NOISE nimmt nicht die
+        // Tabelle, sondern R_NoiseGet4f — weiches Wertrauschen, zwischen
+        // ganzen Zeitschritten linear verbunden:
+        //
+        //     base + R_NoiseGet4f( 0, 0, 0, (floatTime + phase) * frequency ) * amplitude
+        return wave.base +
+               noiseAt((seconds + wave.phase) * wave.frequency) * wave.amplitude;
+    } else if (iequals(wave.func, "random")) {
+        // GF_RAND: an oder aus, je nach Rauschtabelle.
+        //
+        //     if ( GetNoiseTime( refdef.time + phase ) <= frequency )
+        //         return base + amplitude;
+        //     return base;
+        //
+        // refdef.time ist in Millisekunden; GetNoiseTime liefert 1 + Tabelle,
+        // also 0 bis 2. Hier fehlte die Art ganz — sie ergab die Grundlinie.
+        const int ms = static_cast<int>(seconds * 1000.0f + wave.phase);
+        return noiseTime(ms) <= wave.frequency ? wave.base + wave.amplitude
+                                               : wave.base;
     }
     return wave.base + value * wave.amplitude;
+}
+
+namespace {
+
+// Die Rauschtabelle aus tr_noise.cpp (R_NoiseInit): srand(1001), dann je
+// Eintrag zwei rand()-Aufrufe. rand() ist das der Microsoft-Laufzeit, mit der
+// das Spiel gebaut ist — ein LCG mit 214013/2531011, RAND_MAX 32767. So
+// entsteht dieselbe Tabelle wie im Spiel, und dasselbe Flackern.
+struct NoiseTables {
+    float table[256];
+    int perm[256];
+    NoiseTables() {
+        unsigned state = 1001u;
+        auto msvcRand = [&state]() {
+            state = state * 214013u + 2531011u;
+            return static_cast<int>((state >> 16) & 0x7fffu);
+        };
+        for (int i = 0; i < 256; ++i) {
+            table[i] = static_cast<float>(
+                (static_cast<float>(msvcRand()) / 32767.0f) * 2.0 - 1.0);
+            perm[i] = static_cast<unsigned char>(
+                static_cast<float>(msvcRand()) / 32767.0f * 255.0f);
+        }
+    }
+};
+
+const NoiseTables& noiseTables() {
+    static const NoiseTables tables;
+    return tables;
+}
+
+int noiseVal(int a) { return noiseTables().perm[a & 255]; }
+
+}  // namespace
+
+float noiseTime(int t) {
+    // GetNoiseTime: 1 + s_noise_table[ VAL(t) ].
+    return 1.0f + noiseTables().table[noiseVal(t)];
+}
+
+float noiseAt(float t) {
+    // R_NoiseGet4f( 0, 0, 0, t ): mit x = y = z = 0 bleibt nur die lineare
+    // Verbindung zwischen den ganzen Zeitschritten uebrig.
+    //
+    //     INDEX( x, y, z, t ) = VAL( x + VAL( y + VAL( z + VAL( t ) ) ) )
+    const int it = static_cast<int>(std::floor(t));
+    const float ft = t - static_cast<float>(it);
+    auto value = [](int step) {
+        return noiseTables().table[noiseVal(0 + noiseVal(0 + noiseVal(0 + noiseVal(step))))];
+    };
+    const float a = value(it);
+    const float b = value(it + 1);
+    return a * (1.0f - ft) + b * ft;
+}
+
+bool stageBlends(const Stage& stage) {
+    if (stage.srcBlend == BlendFactor::Unset || stage.dstBlend == BlendFactor::Unset) {
+        return false;
+    }
+    return !(stage.srcBlend == BlendFactor::One && stage.dstBlend == BlendFactor::Zero);
+}
+
+bool stageWritesDepth(const Stage& stage) {
+    return !stageBlends(stage) || stage.depthWrite;
+}
+
+ColorGen effectiveColorGen(const Stage& stage) {
+    if (stage.rgbGenSet) return stage.rgbGen;
+    // ParseStage: "if cgen isn't explicitly specified, use either identity
+    // or identitylighting".
+    if (stageBlends(stage) &&
+        (stage.srcBlend == BlendFactor::One || stage.srcBlend == BlendFactor::SrcAlpha)) {
+        return ColorGen::IdentityLighting;
+    }
+    return ColorGen::Identity;
+}
+
+AlphaGen effectiveAlphaGen(const Stage& stage) { return stage.alphaGen; }
+
+float sortValue(const Shader& shader) {
+    // ParseSort: Namen oder eine Zahl (atof).
+    if (!shader.sort.empty()) {
+        static const struct { const char* name; int value; } kNames[] = {
+            {"portal", kSortPortal},       {"sky", kSortEnvironment},
+            {"opaque", kSortOpaque},       {"decal", kSortDecal},
+            {"seeThrough", kSortSeeThrough}, {"banner", kSortBanner},
+            {"additive", kSortBlend1},     {"nearest", kSortNearest},
+            {"underwater", kSortUnderwater}, {"inside", kSortInside},
+            {"mid_inside", kSortMidInside}, {"middle", kSortMiddle},
+            {"mid_outside", kSortMidOutside}, {"outside", kSortOutside},
+        };
+        for (const auto& entry : kNames) {
+            if (iequals(shader.sort, entry.name)) return static_cast<float>(entry.value);
+        }
+        return std::strtof(shader.sort.c_str(), nullptr);
+    }
+    if (shader.polygonOffset) return kSortDecal;
+    // FinishShader: nur wenn schon Stufe 0 mischt, entscheidet die erste
+    // mischende Stufe.
+    if (!shader.stages.empty() && stageBlends(shader.stages[0])) {
+        for (const auto& stage : shader.stages) {
+            if (!stageBlends(stage)) continue;
+            if (stage.depthWrite) return kSortSeeThrough;
+            if (stage.srcBlend == BlendFactor::One && stage.dstBlend == BlendFactor::One) {
+                return kSortBlend1;
+            }
+            return kSortBlend0;
+        }
+    }
+    return kSortOpaque;
 }
 
 int animFrameAt(int frameCount, float framesPerSecond, bool oneShot,
