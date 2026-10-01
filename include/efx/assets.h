@@ -95,6 +95,12 @@ struct Index {
     const AnimatedShader* animOf(const std::string& shaderName) const;
 
     // Wo die Archive liegen. Für das spätere Herausholen einzelner Dateien.
+    //
+    // In SUCHREIHENFOLGE: vorn steht, was gewinnt. Innerhalb eines Ordners
+    // ist das wie in der Engine das alphabetisch letzte .pk3 (FS_AddGameDirectory
+    // stellt jedes Archiv vor die bisherigen); die ausgepackten Dateien eines
+    // Ordners kommen erst nach all seinen Archiven. Bei mehreren Ordnern
+    // (scanAll) stehen die Archive des zuerst genannten vorn.
     std::vector<std::string> archives;
 
     // Die durchsuchten Ordner, in der Suchreihenfolge. Nötig, um eine
@@ -180,6 +186,10 @@ struct ResolvedTexture {
     std::string archive;   // leer, wenn ausgepackt
     std::string root;      // unter welchem Spielpfad sie liegt
     bool found = false;
+    // Das eingebaute weisse Bild der Engine (`map $whiteimage`): keine
+    // Datei, aber zeichenbar. readFile liefert dafuer ein weisses 8x8-TGA —
+    // dasselbe, das R_CreateBuiltinImages als tr.whiteImage anlegt.
+    bool white = false;
 };
 
 // Sucht die Bilddatei zu einem Shader- oder Texturnamen.

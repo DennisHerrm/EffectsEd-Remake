@@ -50,6 +50,9 @@ public:
     void warn(int line, std::string message) {
         result_.diagnostics.push_back({Severity::Warning, line, std::move(message)});
     }
+    void info(int line, std::string message) {
+        result_.diagnostics.push_back({Severity::Info, line, std::move(message)});
+    }
 
     // --- Skalare ---------------------------------------------------------
 
@@ -99,17 +102,25 @@ public:
         std::vector<std::string> words;
         scanWords(prop.values.empty() ? std::string_view{} : std::string_view(prop.values.front()),
                   words);
-        if (wordsOut) *wordsOut = words;
-        int flags = 0;
-        for (const auto& word : words) {
-            if (iequals(word, "linear")) flags |= kCurveLinear;
-            else if (iequals(word, "nonlinear")) flags |= kCurveNonLinear;
-            else if (iequals(word, "wave")) flags |= kCurveWave;
-            else if (iequals(word, "random")) flags |= kCurveRandom;
-            else if (iequals(word, "clamp")) flags |= kCurveClamp;
-            else warn(prop.line, "Unbekannte Uebergangsart \"" + word + "\"");
+        for (size_t i = 0; i < words.size(); ++i) {
+            const std::string& word = words[i];
+            if (i >= kMaxCurveFlagWords) {
+                // ParseGroupFlags hat vier Plaetze; was dahinter steht,
+                // erreicht die Engine nie. Die Woerter bleiben trotzdem
+                // gemerkt, damit die Zeile beim Speichern unveraendert bleibt.
+                warn(prop.line, "\"" + word +
+                                    "\" ist das " + std::to_string(i + 1) +
+                                    ". Wort — die Engine liest hoechstens vier");
+                continue;
+            }
+            if (!iequals(word, "linear") && !iequals(word, "nonlinear") &&
+                !iequals(word, "wave") && !iequals(word, "random") &&
+                !iequals(word, "clamp")) {
+                warn(prop.line, "Unbekannte Uebergangsart \"" + word + "\"");
+            }
         }
-        return flags;
+        if (wordsOut) *wordsOut = words;
+        return curveFlagsFromWords(words);
     }
 
     // --- Unterbloecke ----------------------------------------------------
@@ -154,31 +165,26 @@ public:
         }
     }
 
-    // rgb erlaubt zusaetzlich eine einzelne Zahl als Graustufe, wie das Spiel.
+    // rgb braucht drei Zahlen (fest) oder sechs (Spanne je Kanal).
+    //
+    // Hier stand "eine einzelne Zahl als Graustufe, wie das Spiel" — das
+    // Spiel tut es nicht. ParseRGBStart/ParseRGBEnd gehen ueber
+    // CPrimitiveTemplate::ParseVector (FxTemplate.cpp, SP und MP gleich):
+    //
+    //     int v = sscanf( val, min[0], min[1], min[2], max[0], max[1], max[2] );
+    //     if ( v < 3 || v == 4 || v == 5 ) return false;   // not a complete value
+    //
+    // Bei einer oder zwei Zahlen bleibt die Farbe also, was sie war: 1 1 1.
+    // Wir zeigten Grau, das Spiel zeigt Weiss.
     void readColorEndpoint(const gp2::Property& prop, Vec3Range& out) {
         if (prop.values.empty()) return;
         float v[6]{};
         size_t n = scanFloats(prop.values.front(), v, 6);
-        if (n == 1) {
-            for (int i = 0; i < 3; ++i) out.min[i] = v[0];
-            out.max = out.min;
-            out.set = true;
-            out.ranged = false;
-            return;
-        }
-        if (n == 2) {
-            // Graustufenspanne.
-            for (int i = 0; i < 3; ++i) {
-                out.min[i] = v[0];
-                out.max[i] = v[1];
-            }
-            out.set = true;
-            out.ranged = true;
-            return;
-        }
         if (n != 3 && n != 6) {
             warn(prop.line, "\"" + prop.name +
-                                "\" im rgb-Block braucht 1, 2, 3 oder 6 Zahlen");
+                                "\" im rgb-Block braucht 3 oder 6 Zahlen, hat " +
+                                std::to_string(n) +
+                                " — die Engine ueberliest die Zeile");
             return;
         }
         for (int i = 0; i < 3; ++i) out.min[i] = v[i];
@@ -200,7 +206,18 @@ public:
         scanWords(prop.values.empty() ? std::string_view{} : std::string_view(prop.values.front()),
                   words);
         uint32_t bits = 0;
-        for (const auto& word : words) {
+        // ParseFlags und ParseSpawnFlags (FxTemplate.cpp, SP und MP) lesen
+        // hoechstens sieben Woerter — ein sscanf mit sieben Plaetzen. Ein
+        // achtes Flag setzt das Spiel nie, also auch wir nicht.
+        constexpr size_t kMaxFlagWords = 7;
+        for (size_t i = 0; i < words.size(); ++i) {
+            const std::string& word = words[i];
+            if (i >= kMaxFlagWords) {
+                warn(prop.line, std::string(what) + " \"" + word + "\" ist das " +
+                                    std::to_string(i + 1) +
+                                    ". Wort — die Engine liest hoechstens sieben");
+                continue;
+            }
             bool found = false;
             for (const auto& entry : table) {
                 if (iequals(word, entry.name)) {
@@ -405,7 +422,45 @@ ReadResult read(std::string_view text) {
     for (const auto& group : parsed.topLevel.subGroups) {
         auto type = typeFromName(group.name);
         if (!type) {
-            reader.error(group.line, "Unbekannter Primitivtyp \"" + group.name + "\"");
+            // Kein Fehler: CFxScheduler::ParseEffect (FxScheduler.cpp) sucht
+            // den Namen in der Tabelle der Primitivtypen und uebergeht alles
+            // andere stumm — die Datei laeuft im Spiel.
+            //
+            // Hier stand `error(...)`. Damit galten 51 ausgelieferte Dateien
+            // als fehlerhaft (alle wegen `forcefeedback`, einem Block aus
+            // Ravens Editor), `efxtool format` liess sie aus, und beim
+            // Speichern verschwand der Block, weil das Modell keinen Platz
+            // dafuer hatte.
+            //
+            // Jetzt wird er wortwoertlich aufbewahrt und an derselben Stelle
+            // zurueckgeschrieben.
+            ForeignGroup foreign;
+            foreign.name = group.name;
+            foreign.line = group.line;
+            foreign.beforePrimitive = result.effect.primitives.size();
+            if (group.sourceEnd > group.sourceBegin && group.sourceEnd <= text.size()) {
+                for (char ch : text.substr(group.sourceBegin,
+                                           group.sourceEnd - group.sourceBegin)) {
+                    if (ch != '\r') foreign.text += ch;
+                }
+            }
+            result.effect.foreignGroups.push_back(std::move(foreign));
+
+            // `forcefeedback` ist Ravens eigener Block: nur ein Hinweis. Jeder
+            // andere Name ist wahrscheinlich ein Tippfehler in einem
+            // Primitivtyp — dann tut der Block im Spiel nichts, und das soll
+            // man erfahren.
+            if (iequals(group.name, "forcefeedback")) {
+                reader.info(group.line,
+                            "Block \"" + group.name +
+                                "\" wertet die Engine nicht aus — er bleibt beim "
+                                "Speichern unveraendert erhalten");
+            } else {
+                reader.warn(group.line,
+                            "Unbekannter Primitivtyp \"" + group.name +
+                                "\" — die Engine uebergeht den Block; er bleibt "
+                                "beim Speichern unveraendert erhalten");
+            }
             continue;
         }
         result.effect.primitives.push_back(reader.readPrimitive(group, *type));

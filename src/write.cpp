@@ -4,6 +4,7 @@
 // durch Tabs getrennt, Leerzeile zwischen den Bloecken. Der alte Editor
 // schreibt Zahlen mit "%1.4g" — das ist die Voreinstellung nur, wenn man sie
 // ausdruecklich waehlt, sonst schreiben wir verlustfrei.
+#include <algorithm>
 #include <charconv>
 #include <cmath>
 #include <cstdio>
@@ -89,21 +90,52 @@ public:
         return text;
     }
 
-    std::string curveText(int flags) const {
+    // Die Kurvenwoerter einer Datei.
+    //
+    // Stehen die gelesenen Woerter noch da und ergeben sie dieselben Bits,
+    // werden sie unveraendert geschrieben — Reihenfolge und Schreibweise wie
+    // beim Autor. Nur wenn die Bits geaendert wurden (die Oberflaeche leert
+    // dann die Woerter), wird neu formuliert.
+    //
+    // Der Fehler, den das behebt: hier stand
+    //
+    //     if ((flags & kCurveClamp) == kCurveClamp) add("clamp");
+    //     else { nonlinear; random }
+    //     ...
+    //     if (flags & kCurveWave) add("wave");
+    //
+    // clamp IST nonlinear|wave (FX_CLAMP 0x0C in FxPrimitives.h). Aus jedem
+    // "linear clamp" wurde so "clamp linear wave" — und die Pruefung meldete
+    // nach dem Speichern einen Fehler, den die Datei vorher nicht hatte
+    // (126 von 583 Raven-Dateien). Schlimmer: random steckte im else-Zweig,
+    // aus "random linear clamp" wurde "clamp linear wave" — das zufaellige
+    // Ausblenden war nach einmal Oeffnen und Speichern weg.
+    std::string curveText(int flags, const std::vector<std::string>& words) const {
+        if (!words.empty() && curveFlagsFromWords(words) == flags) {
+            std::string text;
+            for (const auto& word : words) {
+                if (!text.empty()) text += " ";
+                text += word;
+            }
+            return text;
+        }
+
+        // Neu formuliert in Ravens Reihenfolge: "random linear clamp",
+        // "linear nonlinear". Die beiden Bits der Parametermaske ergeben genau
+        // EIN Wort — nie zwei, sonst steht eine Kollision in der Datei.
         std::string text;
         auto add = [&](const char* name) {
             if (!text.empty()) text += " ";
             text += name;
         };
-        // clamp belegt dieselben Bits wie nonlinear|random und muss zuerst.
-        if ((flags & kCurveClamp) == kCurveClamp) {
-            add("clamp");
-        } else {
-            if (flags & kCurveNonLinear) add("nonlinear");
-            if (flags & kCurveRandom) add("random");
-        }
+        if (flags & kCurveRandom) add("random");
         if (flags & kCurveLinear) add("linear");
-        if (flags & kCurveWave) add("wave");
+        switch (flags & kCurveClamp) {
+            case kCurveNonLinear: add("nonlinear"); break;
+            case kCurveWave: add("wave"); break;
+            case kCurveClamp: add("clamp"); break;
+            default: break;
+        }
         return text;
     }
 
@@ -115,10 +147,32 @@ public:
         if (c.start.set) keyValue(2, "start", rangeText(c.start));
         if (c.end.set) keyValue(2, "end", rangeText(c.end));
         if (c.parm.set) keyValue(2, c.parmPlural ? "parms" : "parm", rangeText(c.parm));
-        if (c.curveFlags) {
-            keyValue(2, c.flagsPlural ? "flags" : "flag", curveText(c.curveFlags));
-        }
+        writeCurveFlags(c.curveFlags, c.curveWords, c.flagsPlural);
         line(indent(1) + "}");
+    }
+
+    // Auch ein Wort ohne Wirkung (unbekannt, oder das fuenfte) bleibt stehen —
+    // deshalb zaehlen hier die Woerter mit, nicht nur die Bits.
+    void writeCurveFlags(int flags, const std::vector<std::string>& words,
+                         bool plural) {
+        const std::string text = curveText(flags, words);
+        if (!text.empty()) keyValue(2, plural ? "flags" : "flag", text);
+    }
+
+    // Ein Block, den die Engine nicht kennt, wortwoertlich (ForeignGroup).
+    // Zeilenweise ueber line(), damit die eingestellten Zeilenenden gelten.
+    void writeForeign(const ForeignGroup& group) {
+        line();
+        size_t from = 0;
+        while (from <= group.text.size()) {
+            const size_t to = group.text.find('\n', from);
+            if (to == std::string::npos) {
+                line(group.text.substr(from));
+                break;
+            }
+            line(group.text.substr(from, to - from));
+            from = to + 1;
+        }
     }
 
     void writeColor(const ColorChannel& c) {
@@ -129,9 +183,7 @@ public:
         if (c.start.set) keyValue(2, "start", vec3Text(c.start));
         if (c.end.set) keyValue(2, "end", vec3Text(c.end));
         if (c.parm.set) keyValue(2, c.parmPlural ? "parms" : "parm", rangeText(c.parm));
-        if (c.curveFlags) {
-            keyValue(2, c.flagsPlural ? "flags" : "flag", curveText(c.curveFlags));
-        }
+        writeCurveFlags(c.curveFlags, c.curveWords, c.flagsPlural);
         line(indent(1) + "}");
     }
 
@@ -177,7 +229,19 @@ std::string write(const Effect& effect, const WriteOptions& options) {
         w.keyValue(0, "repeatDelay", std::to_string(effect.repeatDelay));
     }
 
-    for (const auto& p : effect.primitives) {
+    // Fremde Bloecke an ihrer alten Stelle: vor der Primitive, vor der sie
+    // standen. Wurden inzwischen Primitive geloescht, landen sie am Ende —
+    // verloren geht keiner.
+    auto writeForeignBefore = [&](size_t index) {
+        for (const auto& group : effect.foreignGroups) {
+            const size_t at = std::min(group.beforePrimitive, effect.primitives.size());
+            if (at == index) w.writeForeign(group);
+        }
+    };
+
+    for (size_t index = 0; index < effect.primitives.size(); ++index) {
+        writeForeignBefore(index);
+        const Primitive& p = effect.primitives[index];
         w.line();
         w.line(typeName(p.type));
         w.line("{");
@@ -246,6 +310,7 @@ std::string write(const Effect& effect, const WriteOptions& options) {
 
         w.line("}");
     }
+    writeForeignBefore(effect.primitives.size());
 
     return w.take();
 }

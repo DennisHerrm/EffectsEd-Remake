@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <mutex>
+#include <set>
 
 #include "efx/inflate.h"
 #include "efx/shader.h"
@@ -65,6 +66,158 @@ private:
     const unsigned char* data_;
     size_t size_;
 };
+
+// Pfade vergleichen wie die Engine: FS_PathCmp in files.cpp.
+//
+// Gross-/Kleinschreibung egal, `\` und `:` gelten als `/`. Wichtig ist das
+// Detail, dass FS_PathCmp in GROSSbuchstaben vergleicht: `_` (0x5F) liegt
+// damit HINTER allen Buchstaben, waehrend es bei Kleinbuchstaben davor
+// laege. `assets_x.pk3` sortiert also nach `assetsz.pk3`. Mit einem
+// Vergleich in Kleinbuchstaben waere die Reihenfolge der Archive — und damit,
+// welches gewinnt — an genau solchen Namen verkehrt.
+int enginePathCompare(const std::string& a, const std::string& b) {
+    const size_t n = std::min(a.size(), b.size());
+    for (size_t i = 0; i <= n; ++i) {
+        int c1 = i < a.size() ? static_cast<unsigned char>(a[i]) : 0;
+        int c2 = i < b.size() ? static_cast<unsigned char>(b[i]) : 0;
+        if (c1 >= 'a' && c1 <= 'z') c1 -= 'a' - 'A';
+        if (c2 >= 'a' && c2 <= 'z') c2 -= 'a' - 'A';
+        if (c1 == '\\' || c1 == ':') c1 = '/';
+        if (c2 == '\\' || c2 == ':') c2 = '/';
+        if (c1 < c2) return -1;
+        if (c1 > c2) return 1;
+        if (c1 == 0) return 0;
+    }
+    return 0;
+}
+
+// Ein Pfad in einer Form, in der man ihn als Vorsatz vergleichen kann:
+// Vorwaertsschraegstriche, klein, ohne Schraegstrich am Ende.
+std::string comparablePath(const std::string& path) {
+    std::string out = toLower(path);
+    for (char& c : out) {
+        if (c == '\\') c = '/';
+    }
+    while (!out.empty() && out.back() == '/') out.pop_back();
+    return out;
+}
+
+// Wie R_FindShader in tr_shader.cpp einen Shadernamen nachschlaegt:
+//
+//     COM_StripExtension( name, strippedName, sizeof(strippedName) );
+//     ...
+//     shaderText = FindShaderInShaderText( strippedName );
+//
+// Eine Endung faellt also weg, bevor ueberhaupt gesucht wird. In zwei
+// ausgelieferten Dateien steht `gfx/effects/wcloud.tga` — gemeint und im
+// Spiel gefunden ist der Shader `gfx/effects/wcloud` mit seiner Mischung.
+// Wir verglichen den Namen roh, fanden keinen Shader und zeichneten das
+// nackte Bild mit falscher Mischung.
+std::string shaderKey(const std::string& name) {
+    std::string key = toLower(name);
+    for (char& c : key) {
+        if (c == '\\') c = '/';
+    }
+    const size_t dot = key.rfind('.');
+    const size_t slash = key.rfind('/');
+    if (dot != std::string::npos && (slash == std::string::npos || dot > slash)) {
+        key.erase(dot);
+    }
+    return key;
+}
+
+// Wo gesucht wird, in der Reihenfolge der Suche: ein Archiv oder ein Ordner.
+struct Place {
+    std::string archive;  // gesetzt: in diesem Archiv
+    std::string root;     // sonst: ausgepackt unter diesem Ordner
+};
+
+// Die Suchreihenfolge, wie FS_FOpenFileRead (files.cpp) sie abläuft.
+//
+// FS_AddGameDirectory haengt erst den Ordner selbst in die Suchliste und
+// stellt dann jedes Archiv — alphabetisch sortiert — VOR alle bisherigen:
+//
+//     search->next = fs_searchpaths;  fs_searchpaths = search;
+//
+// Heraus kommt: das alphabetisch LETZTE Archiv zuerst, dann rueckwaerts bis
+// zum ersten, und GANZ ZULETZT die ausgepackten Dateien desselben Ordners.
+// (`fs_dirbeforepak` dreht das um; es steht ab Werk auf 0.)
+//
+// Wir hatten es genau andersherum: ausgepackt vor gepackt, und unter den
+// Archiven das erste vor dem letzten. In Jedi Outcast stehen 26 Effekte in
+// assets0.pk3 UND assets2.pk3 mit verschiedenem Inhalt — wir nahmen die
+// veraltete Fassung.
+//
+// Mehrere Spielpfade (scanAll) bleiben bei unserer eigenen Regel: der zuerst
+// genannte gewinnt, so wie in der Engine `fs_game` vor `base` steht. Innerhalb
+// eines Pfads gilt die Engine-Reihenfolge. `index.archives` ist schon in
+// Suchreihenfolge (scan legt es so an); hier wird nur jedem Archiv sein
+// Ordner zugeordnet. Archive ausserhalb jedes Ordners (ein einzeln
+// geoeffnetes .pk3) kommen zuletzt.
+std::vector<Place> searchPlaces(const Index& index, const std::string& basePath) {
+    std::vector<std::string> roots;
+    std::vector<std::string> rootKeys;
+    auto addRoot = [&](const std::string& root) {
+        if (root.empty()) return;
+        const std::string key = comparablePath(root);
+        for (const auto& known : rootKeys) {
+            if (known == key) return;
+        }
+        roots.push_back(root);
+        rootKeys.push_back(key);
+    };
+    addRoot(basePath);
+    for (const auto& root : index.roots) addRoot(root);
+
+    // Jedes Archiv zu dem Ordner, unter dem es liegt — beim laengsten
+    // passenden Vorsatz, falls Ordner ineinander liegen.
+    const size_t none = roots.size();
+    std::vector<size_t> owner(index.archives.size(), none);
+    for (size_t a = 0; a < index.archives.size(); ++a) {
+        const std::string archive = comparablePath(index.archives[a]);
+        size_t best = none;
+        for (size_t r = 0; r < rootKeys.size(); ++r) {
+            const std::string& key = rootKeys[r];
+            if (archive.size() > key.size() && archive.compare(0, key.size(), key) == 0 &&
+                archive[key.size()] == '/' &&
+                (best == none || key.size() > rootKeys[best].size())) {
+                best = r;
+            }
+        }
+        owner[a] = best;
+    }
+
+    std::vector<Place> places;
+    for (size_t r = 0; r < roots.size(); ++r) {
+        for (size_t a = 0; a < index.archives.size(); ++a) {
+            if (owner[a] == r) places.push_back({index.archives[a], {}});
+        }
+        places.push_back({{}, roots[r]});
+    }
+    for (size_t a = 0; a < index.archives.size(); ++a) {
+        if (owner[a] == none) places.push_back({index.archives[a], {}});
+    }
+    return places;
+}
+
+// Das eingebaute weisse Bild der Engine als TGA.
+//
+// R_CreateBuiltinImages in tr_image.cpp: `tr.whiteImage = R_CreateImage(
+// "*white", data, 8, 8, ...)` mit lauter 255. Eine Shaderstufe `map
+// $whiteimage` zeichnet genau dieses Bild (ParseStage in tr_shader.cpp). Als
+// TGA, damit es denselben Weg geht wie jede Datei: readFile liefert Bytes,
+// image::decode macht ein Bild daraus — der Aufrufer muss nichts wissen.
+std::vector<unsigned char> whiteImageTga() {
+    constexpr int kSide = 8;
+    std::vector<unsigned char> out(18, 0);
+    out[2] = 2;                       // unkomprimiert, Echtfarbe
+    out[12] = kSide;                  // Breite
+    out[14] = kSide;                  // Hoehe
+    out[16] = 32;                     // Bit je Bildpunkt
+    out[17] = 0x28;                   // oben links beginnend, 8 Bit Alpha
+    out.insert(out.end(), static_cast<size_t>(kSide * kSide * 4), 255);
+    return out;
+}
 
 }  // namespace
 
@@ -273,6 +426,16 @@ ResolvedTexture findTexture(const Index& index, const std::string& basePath,
     }
     // Sonderwerte der Engine, hinter denen keine Datei steht.
     const std::string lower = toLower(candidate);
+    if (lower == "$whiteimage") {
+        // Keine Datei, aber ein Bild: das eingebaute weisse (whiteImageTga).
+        // Vorher galt der Shader als bildlos, und die Vorschau zeichnete den
+        // weichen Ersatzfleck statt des weissen Vierecks — bei
+        // gfx/effects/whiteFlash (GL_ONE GL_ONE) ein ganz anderer Blitz.
+        out.path = lower;
+        out.white = true;
+        out.found = true;
+        return out;
+    }
     if (lower.empty() || lower[0] == '$') return out;
 
     // Eine Endung, die schon dransteht, nicht doppelt anhaengen.
@@ -290,49 +453,36 @@ ResolvedTexture findTexture(const Index& index, const std::string& basePath,
     stem = toLower(stem);
 
     std::error_code ec;
-    const fs::path base(basePath);
 
-    // Schritt 4 und 5: Endungen durchprobieren, erst ausgepackt, dann in den
-    // Archiven. Ausgepackte Dateien gewinnen — genauso macht es die Engine,
-    // damit man eine gepackte Datei ueberschreiben kann, ohne sie zu ersetzen.
-    // Alle Wurzeln in der Suchreihenfolge, ausgepackt zuerst.
+    // Schritt 4 und 5: Endungen durchprobieren, an jedem Ort der
+    // Suchreihenfolge (searchPlaces): gepackt vor ausgepackt, das spaetere
+    // Archiv vor dem frueheren — so wie die Engine.
+    //
+    // Erst die Endung, dann der Ort: R_FindImageFile probiert eine Endung
+    // nach der anderen, und jede einzelne Probe laeuft ueber den ganzen
+    // Suchpfad (FS_ReadFile).
     //
     // `basePath` bleibt vorn, damit ein Aufruf mit einem einzelnen Ordner
     // weiter funktioniert; `index.roots` kommt aus scanAll und ist bei einem
     // einzelnen Ordner leer.
-    std::vector<std::string> roots;
-    if (!basePath.empty()) roots.push_back(basePath);
-    for (const auto& root : index.roots) {
-        bool known = false;
-        for (const auto& seen : roots) {
-            if (seen == root) known = true;
-        }
-        if (!known) roots.push_back(root);
-    }
-
-    for (const auto& root : roots) {
-        for (const auto& ext : imageExtensions()) {
-            const std::string relative = stem + ext;
-            if (fs::is_regular_file(fs::path(root) / relative, ec)) {
-                out.path = relative;
-                out.root = root;
-                out.found = true;
-                return out;
-            }
-        }
-    }
+    const std::vector<Place> places = searchPlaces(index, basePath);
+    // Im Bestand steht der Name ohne Endung. Fuehrt er ihn nicht, braucht
+    // kein Archiv geoeffnet zu werden.
+    const bool inArchives =
+        std::binary_search(index.textures.begin(), index.textures.end(), stem);
     for (const auto& ext : imageExtensions()) {
         const std::string relative = stem + ext;
-        // Im Bestand steht der Name ohne Endung — deshalb erst hier pruefen,
-        // ob das Archiv ihn wirklich fuehrt.
-        if (!std::binary_search(index.textures.begin(), index.textures.end(), stem)) {
-            break;
-        }
-        for (const auto& archive : index.archives) {
-            std::string error;
-            if (!readFromZip(archive, relative, &error).empty()) {
+        for (const auto& place : places) {
+            if (place.archive.empty()) {
+                if (fs::is_regular_file(fs::path(place.root) / relative, ec)) {
+                    out.path = relative;
+                    out.root = place.root;
+                    out.found = true;
+                    return out;
+                }
+            } else if (inArchives && !readFromZip(place.archive, relative).empty()) {
                 out.path = relative;
-                out.archive = archive;
+                out.archive = place.archive;
                 out.found = true;
                 return out;
             }
@@ -416,6 +566,23 @@ ResolvedTexture findSound(const Index& index, const std::string& basePath,
     // `S_LoadSound_Actual` liest erst den Namen, wie er dasteht, und ersetzt
     // bei Misserfolg die letzten drei Zeichen durch "mp3". In fast jeder
     // Raven-.efx steht deshalb `.wav`, obwohl im `.pk3` eine `.mp3` liegt.
+    //
+    // Steht GAR KEINE Endung da, haengt die Engine vorher `.wav` an:
+    //
+    //     psExt = &sLoadName[strlen(sLoadName)-4];
+    //     if (*psExt != '.')
+    //         COM_DefaultExtension(sLoadName, sizeof(sLoadName), ".wav");
+    //
+    // und dann greift derselbe Rueckfall auf `.mp3`. Wir probierten den
+    // nackten Namen und fanden nichts — `sound/weapons/disruptor/hit_wall`
+    // in alt_miss.efx spielt im Spiel die .mp3, bei uns blieb es stumm.
+    const size_t slash = base.find_last_of('/');
+    const size_t lastDot = base.find_last_of('.');
+    if (lastDot == std::string::npos ||
+        (slash != std::string::npos && lastDot < slash)) {
+        base += ".wav";
+    }
+
     std::vector<std::string> candidates;
     candidates.push_back(base);
     const size_t dot = base.find_last_of('.');
@@ -433,35 +600,26 @@ ResolvedTexture findSound(const Index& index, const std::string& basePath,
 
     std::error_code ec;
 
-    // Alle Wurzeln, ausgepackt zuerst — dieselbe Reihenfolge wie bei Bildern.
-    // Vorher wurde nur `basePath` durchsucht; wer mehrere Spielpfade hat, fand
-    // in allen ausser dem ersten nichts.
-    std::vector<std::string> roots;
-    if (!basePath.empty()) roots.push_back(basePath);
-    for (const auto& root : index.roots) {
-        bool known = false;
-        for (const auto& seen : roots) {
-            if (seen == root) known = true;
-        }
-        if (!known) roots.push_back(root);
-    }
-
-    for (const auto& root : roots) {
-        for (const auto& relative : candidates) {
-            if (fs::is_regular_file(fs::path(root) / relative, ec)) {
-                out.path = relative;
-                out.root = root;
-                out.found = true;
-                return out;
-            }
-        }
-    }
+    // Alle Orte in der Suchreihenfolge der Engine (searchPlaces) — fuer jede
+    // Endung einmal ganz durch, wie FS_ReadFile es je Versuch tut. Vorher
+    // wurde nur `basePath` durchsucht; wer mehrere Spielpfade hat, fand in
+    // allen ausser dem ersten nichts.
+    const std::vector<Place> places = searchPlaces(index, basePath);
     for (const auto& relative : candidates) {
-        for (const auto& archive : index.archives) {
-            std::string error;
-            if (!readFromZip(archive, relative, &error).empty()) {
+        // Steht der Name in keinem Archiv, keines oeffnen.
+        const bool inArchives =
+            std::binary_search(index.sounds.begin(), index.sounds.end(), relative);
+        for (const auto& place : places) {
+            if (place.archive.empty()) {
+                if (fs::is_regular_file(fs::path(place.root) / relative, ec)) {
+                    out.path = relative;
+                    out.root = place.root;
+                    out.found = true;
+                    return out;
+                }
+            } else if (inArchives && !readFromZip(place.archive, relative).empty()) {
                 out.path = relative;
-                out.archive = archive;
+                out.archive = place.archive;
                 out.found = true;
                 return out;
             }
@@ -492,9 +650,9 @@ Index scanAll(const std::vector<std::string>& basePaths, jobs::Pool* pool,
         for (auto& entry : one.shaderRgbWaves) {
             combined.shaderRgbWaves.push_back(std::move(entry));
         }
-        for (auto& entry : one.shaderAlphaWaves) {
-            combined.shaderAlphaWaves.push_back(std::move(entry));
-        }
+        // Einmal. Hier stand dieselbe Schleife zweimal; die zweite schob die
+        // schon verschobenen Eintraege noch einmal hinterher — mit leerem
+        // Namen. Fuer die Suche harmlos, aber doppelt so viele Eintraege.
         for (auto& entry : one.shaderAlphaWaves) {
             combined.shaderAlphaWaves.push_back(std::move(entry));
         }
@@ -555,31 +713,22 @@ ResolvedTexture findEffect(const Index& index, const std::string& basePath,
     // darunter.
     const std::string relative = "effects/" + stem + ".efx";
 
+    // Suchreihenfolge der Engine (searchPlaces): das spaetere Archiv vor dem
+    // frueheren, gepackt vor ausgepackt.
     std::error_code ec;
-    std::vector<std::string> roots;
-    if (!basePath.empty()) roots.push_back(basePath);
-    for (const auto& root : index.roots) {
-        bool known = false;
-        for (const auto& seen : roots) {
-            if (seen == root) known = true;
-        }
-        if (!known) roots.push_back(root);
-    }
-    for (const auto& root : roots) {
-        if (fs::is_regular_file(fs::path(root) / relative, ec)) {
+    const bool inArchives =
+        std::binary_search(index.effects.begin(), index.effects.end(), stem);
+    for (const auto& place : searchPlaces(index, basePath)) {
+        if (place.archive.empty()) {
+            if (fs::is_regular_file(fs::path(place.root) / relative, ec)) {
+                out.path = relative;
+                out.root = place.root;
+                out.found = true;
+                return out;
+            }
+        } else if (inArchives && !readFromZip(place.archive, relative).empty()) {
             out.path = relative;
-            out.root = root;
-            out.found = true;
-            return out;
-        }
-    }
-    if (!std::binary_search(index.effects.begin(), index.effects.end(), stem)) {
-        return out;
-    }
-    for (const auto& archive : index.archives) {
-        if (!readFromZip(archive, relative).empty()) {
-            out.path = relative;
-            out.archive = archive;
+            out.archive = place.archive;
             out.found = true;
             return out;
         }
@@ -594,6 +743,7 @@ std::vector<unsigned char> readFile(const std::string& basePath,
         if (error) *error = "not resolved";
         return {};
     }
+    if (where.white) return whiteImageTga();
     if (!where.archive.empty()) {
         return readFromZip(where.archive, where.path, error);
     }
@@ -661,7 +811,7 @@ const std::vector<std::string>& imageExtensions() {
 }
 
 std::string Index::mapOf(const std::string& shaderName) const {
-    const std::string key = toLower(shaderName);
+    const std::string key = shaderKey(shaderName);
     for (const auto& entry : shaderMaps) {
         if (entry.first == key) return entry.second;
     }
@@ -669,7 +819,7 @@ std::string Index::mapOf(const std::string& shaderName) const {
 }
 
 const shader::WaveForm* Index::alphaWaveOf(const std::string& shaderName) const {
-    const std::string key = toLower(shaderName);
+    const std::string key = shaderKey(shaderName);
     for (const auto& entry : shaderAlphaWaves) {
         if (entry.first == key) return &entry.second;
     }
@@ -677,7 +827,7 @@ const shader::WaveForm* Index::alphaWaveOf(const std::string& shaderName) const 
 }
 
 const shader::WaveForm* Index::rgbWaveOf(const std::string& shaderName) const {
-    const std::string key = toLower(shaderName);
+    const std::string key = shaderKey(shaderName);
     for (const auto& entry : shaderRgbWaves) {
         if (entry.first == key) return &entry.second;
     }
@@ -687,7 +837,7 @@ const shader::WaveForm* Index::rgbWaveOf(const std::string& shaderName) const {
 const std::vector<shader::TexMod>& Index::texModsOf(
     const std::string& shaderName) const {
     static const std::vector<shader::TexMod> none;
-    const std::string key = toLower(shaderName);
+    const std::string key = shaderKey(shaderName);
     for (const auto& entry : shaderTexMods) {
         if (entry.first == key) return entry.second;
     }
@@ -695,7 +845,7 @@ const std::vector<shader::TexMod>& Index::texModsOf(
 }
 
 const Index::AnimatedShader* Index::animOf(const std::string& shaderName) const {
-    const std::string key = toLower(shaderName);
+    const std::string key = shaderKey(shaderName);
     for (const auto& entry : shaderAnims) {
         if (entry.first == key) return &entry.second;
     }
@@ -711,7 +861,7 @@ const std::string& Index::sourceOf(const std::string& effectName) const {
 }
 
 shader::BlendMode Index::blendOf(const std::string& shaderName) const {
-    const std::string key = toLower(shaderName);
+    const std::string key = shaderKey(shaderName);
     for (const auto& entry : shaderBlends) {
         if (entry.first == key) return entry.second;
     }
@@ -731,8 +881,9 @@ shader::BlendMode Index::blendOf(const std::string& shaderName) const {
     return shader::BlendMode::AlphaBlend;
 }
 
+// Alle Shader-Abfragen gehen ueber shaderKey: ohne Endung, wie R_FindShader.
 bool Index::hasShader(const std::string& name) const {
-    return std::binary_search(shaders.begin(), shaders.end(), toLower(name));
+    return std::binary_search(shaders.begin(), shaders.end(), shaderKey(name));
 }
 
 bool Index::hasTexture(const std::string& name) const {
@@ -766,34 +917,68 @@ void sortUnique(std::vector<std::string>& list) {
     list.erase(std::unique(list.begin(), list.end()), list.end());
 }
 
-}  // namespace
+// Eine .shader-Datei, die gelesen werden soll — ausgepackt oder im Archiv.
+struct ShaderSource {
+    std::string key;      // Pfad im Spiel, klein: "shaders/fx.shader"
+    size_t rank = 0;      // Platz in der Suchreihenfolge, 0 = zuerst
+    std::string archive;  // leer: ausgepackt
+    std::string inner;    // Name im Archiv
+    fs::path file;        // die ausgepackte Datei
+};
 
-Index scanArchive(const std::string& archivePath) {
-    Index index;
-    std::string error;
-    const auto names = readZipDirectory(archivePath, &error);
-    if (names.empty()) {
-        index.notes.push_back(error.empty() ? "archive is empty" : error);
-        return index;
-    }
-    index.archives.push_back(archivePath);
-    index.pk3Count = 1;
-    index.filesSeen = static_cast<int>(names.size());
-
-    shader::Library library;
-    for (const auto& name : names) {
-        if (classify(name) == Kind::Shader) {
-            // Shadernamen stehen im Inhalt, nicht im Dateinamen — also lesen.
-            const auto bytes = readFromZip(archivePath, name);
-            if (bytes.empty()) continue;
-            shader::parseInto(library, std::string(bytes.begin(), bytes.end()), name);
-            ++index.shaderFilesRead;
-        } else {
-            addName(index, name, archivePath);
+// Welche .shader-Dateien in welcher Reihenfolge gelesen werden.
+//
+// ScanAndLoadShaderFiles in tr_shader.cpp:
+//
+//     shaderFiles = ri.FS_ListFiles( "shaders", ".shader", &numShaderFiles );
+//     for ( i = 0; i < numShaderFiles; i++ )
+//         ri.FS_ReadFile( "shaders/" + shaderFiles[i], &buffers[i] );
+//     // free in reverse order, so the temp files are all dumped
+//     for ( i = numShaderFiles - 1; i >= 0 ; i-- )
+//         strcat( textEnd, buffers[i] );
+//
+// Drei Regeln stecken darin:
+//
+//   1. Jeder Dateiname zaehlt einmal (FS_ListFiles liefert ihn einmal), und
+//      FS_ReadFile liest die Fassung, die in der Suchreihenfolge zuerst kommt.
+//   2. Die Liste ist alphabetisch (FS_SortFileList, mit FS_PathCmp).
+//   3. Zusammengehaengt wird RUECKWAERTS, und FindShaderInShaderText nimmt
+//      den ersten Treffer. Ein Shader, der in zwei Dateien steht, kommt also
+//      aus der alphabetisch LETZTEN.
+//
+// Wir lasen in Verzeichnisreihenfolge, und die Archive je nach Arbeitsfaden
+// in wechselnder Reihenfolge — bei doppelten Shadernamen gewann, wer zuerst
+// fertig war.
+std::vector<ShaderSource> engineShaderOrder(std::vector<ShaderSource> sources) {
+    std::sort(sources.begin(), sources.end(),
+              [](const ShaderSource& a, const ShaderSource& b) {
+                  const int order = enginePathCompare(a.key, b.key);
+                  if (order != 0) return order < 0;
+                  return a.rank < b.rank;
+              });
+    std::vector<ShaderSource> unique;
+    for (auto& source : sources) {
+        if (!unique.empty() && enginePathCompare(unique.back().key, source.key) == 0) {
+            continue;  // dieselbe Datei, aber weiter hinten im Suchpfad
         }
+        unique.push_back(std::move(source));
     }
+    std::reverse(unique.begin(), unique.end());
+    return unique;
+}
+
+// Aus den gelesenen Shadern die Tabellen des Bestands bauen.
+//
+// Stand vorher zweimal, wortgleich, in scan und scanArchive.
+void collectShaderInfo(Index& index, const shader::Library& library) {
+    // Nur das ERSTE Vorkommen eines Namens zaehlt — so findet die Engine
+    // ihn (FindShaderInShaderText, erster Treffer). Ein spaeteres Vorkommen
+    // darf auch dann nichts beitragen, wenn das erste keine Bildstufe hat.
+    std::set<std::string> seen;
     for (const auto& entry : library.shaders) {
-        index.shaders.push_back(toLower(entry.name));
+        const std::string name = toLower(entry.name);
+        index.shaders.push_back(name);
+        if (!seen.insert(name).second) continue;
         for (const auto& stage : entry.stages) {
             // Nicht nur `map`.
             //
@@ -813,10 +998,14 @@ Index scanArchive(const std::string& archivePath) {
             // Gemessen an einem echten Bestand: 17 von 531 Shadern beginnen
             // mit animMap, 41 mit clampMap. Jeder zwoelfte war betroffen.
             //
-            // `Shader::previewImage()` beantwortet genau diese Frage schon —
-            // es gab sie hier nur ein zweites Mal, kuerzer und falsch.
+            // `$whiteimage` ist keine Datei, aber ein Bild: das eingebaute
+            // weisse (ParseStage in tr_shader.cpp setzt tr.whiteImage).
+            // findTexture loest es dorthin auf. `$lightmap` und andere
+            // Sonderwerte fuehren weiter zu nichts — die Suche geht zur
+            // naechsten Stufe.
             const std::string* image = nullptr;
-            if (!stage.map.empty() && stage.map[0] != '$') {
+            if (!stage.map.empty() &&
+                (stage.map[0] != '$' || toLower(stage.map) == "$whiteimage")) {
                 image = &stage.map;
             } else if (!stage.clampMap.empty()) {
                 image = &stage.clampMap;
@@ -824,42 +1013,74 @@ Index scanArchive(const std::string& archivePath) {
                 image = &stage.animMaps.front();
             }
             if (image) {
-                index.shaderMaps.emplace_back(toLower(entry.name), *image);
+                index.shaderMaps.emplace_back(name, *image);
                 index.shaderBlends.emplace_back(
-                    toLower(entry.name),
-                    shader::blendModeOf(stage.srcBlend, stage.dstBlend));
+                    name, shader::blendModeOf(stage.srcBlend, stage.dstBlend));
                 // Bildfolge? Dann alle Bilder merken, nicht nur das erste.
                 // Die tcMod-Zeilen mitnehmen: ohne sie steht eine
                 // scrollende Textur still.
                 if (!stage.texMods.empty()) {
-                    index.shaderTexMods.emplace_back(toLower(entry.name),
-                                                     stage.texMods);
+                    index.shaderTexMods.emplace_back(name, stage.texMods);
                 }
                 // `rgbGen wave` mitnehmen: es gibt die Helligkeit vor und
                 // ersetzt damit die Farbe aus der .efx. Steht 135-mal in einer
                 // gewoehnlichen Installation.
                 if (stage.rgbGen == shader::ColorGen::Wave &&
                     !stage.rgbWave.func.empty()) {
-                    index.shaderRgbWaves.emplace_back(toLower(entry.name),
-                                                      stage.rgbWave);
+                    index.shaderRgbWaves.emplace_back(name, stage.rgbWave);
                 }
                 if (stage.alphaGen == shader::AlphaGen::Wave &&
                     !stage.alphaWave.func.empty()) {
-                    index.shaderAlphaWaves.emplace_back(toLower(entry.name),
-                                                        stage.alphaWave);
+                    index.shaderAlphaWaves.emplace_back(name, stage.alphaWave);
                 }
                 if (stage.animMaps.size() > 1) {
                     Index::AnimatedShader anim;
                     anim.frames = stage.animMaps;
                     anim.framesPerSecond = stage.animFrequency;
                     anim.oneShot = stage.animOneShot;
-                    index.shaderAnims.emplace_back(toLower(entry.name),
-                                                   std::move(anim));
+                    index.shaderAnims.emplace_back(name, std::move(anim));
                 }
                 break;
             }
         }
     }
+}
+
+}  // namespace
+
+Index scanArchive(const std::string& archivePath) {
+    Index index;
+    std::string error;
+    const auto names = readZipDirectory(archivePath, &error);
+    if (names.empty()) {
+        index.notes.push_back(error.empty() ? "archive is empty" : error);
+        return index;
+    }
+    index.archives.push_back(archivePath);
+    index.pk3Count = 1;
+    index.filesSeen = static_cast<int>(names.size());
+
+    std::vector<ShaderSource> shaderSources;
+    for (const auto& name : names) {
+        if (classify(name) == Kind::Shader) {
+            // Shadernamen stehen im Inhalt, nicht im Dateinamen — also lesen.
+            ShaderSource source;
+            source.key = comparablePath(name);
+            source.archive = archivePath;
+            source.inner = name;
+            shaderSources.push_back(std::move(source));
+        } else {
+            addName(index, name, archivePath);
+        }
+    }
+    shader::Library library;
+    for (const auto& source : engineShaderOrder(std::move(shaderSources))) {
+        const auto bytes = readFromZip(archivePath, source.inner);
+        if (bytes.empty()) continue;
+        shader::parseInto(library, std::string(bytes.begin(), bytes.end()), source.inner);
+        ++index.shaderFilesRead;
+    }
+    collectShaderInfo(index, library);
     sortUnique(index.shaders);
     sortUnique(index.textures);
     sortUnique(index.models);
@@ -884,7 +1105,7 @@ Index scan(const std::string& basePath, jobs::Pool* pool,
     // beschaeftigen.
     constexpr int kMaxFiles = 400000;
     std::vector<fs::path> pk3Files;
-    std::vector<fs::path> shaderFiles;
+    std::vector<ShaderSource> shaderSources;
 
     for (fs::recursive_directory_iterator it(base, ec), end; it != end; it.increment(ec)) {
         if (ec) break;
@@ -908,11 +1129,31 @@ Index scan(const std::string& basePath, jobs::Pool* pool,
             continue;
         }
         if (classify(relative) == Kind::Shader) {
-            shaderFiles.push_back(it->path());
+            ShaderSource source;
+            source.key = comparablePath(relative);
+            source.file = it->path();
+            shaderSources.push_back(std::move(source));
             continue;
         }
         addName(index, relative, base.string());
     }
+
+    // Die Archive in die Reihenfolge der Engine bringen.
+    //
+    // FS_AddGameDirectory sortiert die Dateinamen mit paksort (FS_PathCmp)
+    // und stellt jedes Archiv VOR die bisherigen — das alphabetisch letzte
+    // wird zuerst durchsucht. `index.archives` steht danach in genau dieser
+    // Suchreihenfolge: vorn das, was gewinnt (siehe searchPlaces).
+    //
+    // Vorher stand hier die Reihenfolge des Verzeichnisdurchlaufs, und vorn
+    // gewann assets0.pk3 — das Archiv, das die Engine als LETZTES fragt.
+    std::sort(pk3Files.begin(), pk3Files.end(),
+              [&](const fs::path& a, const fs::path& b) {
+                  std::error_code inner;
+                  return enginePathCompare(
+                             fs::relative(a, base, inner).generic_string(),
+                             fs::relative(b, base, inner).generic_string()) > 0;
+              });
     index.pk3Count = static_cast<int>(pk3Files.size());
     for (const auto& archive : pk3Files) index.archives.push_back(archive.string());
 
@@ -920,7 +1161,6 @@ Index scan(const std::string& basePath, jobs::Pool* pool,
     // Fall, fuer den der Arbeitsverteiler gebaut wurde: zwanzig Dateien, jede
     // ein paar Megabyte, und nur das Verzeichnis am Ende wird gebraucht.
     std::mutex mutex;
-    std::vector<std::string> packedShaderPaths;
 
     auto readOnePk3 = [&](size_t i) {
         std::string error;
@@ -933,7 +1173,12 @@ Index scan(const std::string& basePath, jobs::Pool* pool,
         }
         for (const auto& name : names) {
             if (classify(name) == Kind::Shader) {
-                packedShaderPaths.push_back(pk3Files[i].string() + "|" + name);
+                ShaderSource source;
+                source.key = comparablePath(name);
+                source.rank = i;  // pk3Files steht schon in Suchreihenfolge
+                source.archive = pk3Files[i].string();
+                source.inner = name;
+                shaderSources.push_back(std::move(source));
             } else {
                 addName(index, name, pk3Files[i].string());
             }
@@ -951,109 +1196,64 @@ Index scan(const std::string& basePath, jobs::Pool* pool,
         for (size_t i = 0; i < pk3Files.size(); ++i) readOnePk3(i);
     }
 
+    // Ausgepackte Dateien kommen in der Suchreihenfolge NACH allen Archiven
+    // desselben Ordners (siehe searchPlaces).
+    for (auto& source : shaderSources) {
+        if (source.archive.empty()) source.rank = pk3Files.size();
+    }
+
+    // Woher ein Effekt kommt: der erste Eintrag gewinnt (sourceOf). Die
+    // Archive wurden womoeglich parallel gelesen, ihre Eintraege stehen also
+    // in zufaelliger Folge — hier in die Suchreihenfolge bringen, damit der
+    // Browser dieselbe Quelle nennt, aus der die Datei dann geladen wird.
+    {
+        std::vector<std::pair<std::string, size_t>> rankOf;
+        for (size_t i = 0; i < pk3Files.size(); ++i) {
+            rankOf.emplace_back(pk3Files[i].string(), i);
+        }
+        auto rank = [&](const std::string& source) {
+            for (const auto& entry : rankOf) {
+                if (entry.first == source) return entry.second;
+            }
+            return pk3Files.size();  // ausgepackt: zuletzt
+        };
+        std::stable_sort(index.effectSources.begin(), index.effectSources.end(),
+                         [&](const auto& a, const auto& b) {
+                             if (a.first != b.first) return a.first < b.first;
+                             return rank(a.second) < rank(b.second);
+                         });
+    }
+
     // Zuletzt die .shader-Dateien. Nur diese muessen tatsaechlich gelesen
     // werden, weil die Shadernamen im Inhalt stehen und nicht im Dateinamen.
+    // Reihenfolge und Auswahl wie in der Engine (engineShaderOrder).
     shader::Library library;
-    for (const auto& path : shaderFiles) {
+    for (const auto& source : engineShaderOrder(std::move(shaderSources))) {
         if (cancel && cancel->cancelled()) break;
-        std::ifstream file(path);
-        if (!file) continue;
-        const std::string text((std::istreambuf_iterator<char>(file)),
-                               std::istreambuf_iterator<char>());
-        shader::parseInto(library, text, path.filename().string());
-        ++index.shaderFilesRead;
-    }
-    // Shader aus den Archiven. Bis eben blieben sie ungelesen, weil ihre
-    // Namen im Dateiinhalt stehen und nicht im Dateinamen — jetzt geht es.
-    for (const auto& entry : packedShaderPaths) {
-        if (cancel && cancel->cancelled()) break;
-        const size_t bar = entry.rfind('|');
-        if (bar == std::string::npos) continue;
-        const std::string archive = entry.substr(0, bar);
-        const std::string inner = entry.substr(bar + 1);
-
-        std::string error;
-        const auto bytes = readFromZip(archive, inner, &error);
-        if (bytes.empty()) {
-            if (!error.empty()) index.notes.push_back(inner + ": " + error);
-            continue;
+        std::string text;
+        if (source.archive.empty()) {
+            std::ifstream file(source.file);
+            if (!file) continue;
+            text.assign((std::istreambuf_iterator<char>(file)),
+                        std::istreambuf_iterator<char>());
+            shader::parseInto(library, text, source.file.filename().string());
+        } else {
+            // Shader aus den Archiven. Lange blieben sie ungelesen, weil ihre
+            // Namen im Dateiinhalt stehen und nicht im Dateinamen.
+            std::string error;
+            const auto bytes = readFromZip(source.archive, source.inner, &error);
+            if (bytes.empty()) {
+                if (!error.empty()) index.notes.push_back(source.inner + ": " + error);
+                continue;
+            }
+            text.assign(bytes.begin(), bytes.end());
+            shader::parseInto(library, text, source.inner);
         }
-        const std::string text(bytes.begin(), bytes.end());
-        shader::parseInto(library, text, inner);
         ++index.shaderFilesRead;
     }
 
     // Erst jetzt einsammeln — vorher fehlten die aus den Archiven.
-    for (const auto& entry : library.shaders) {
-        index.shaders.push_back(toLower(entry.name));
-        // Die erste Stufe mit einer echten Bilddatei. `$whiteimage` und
-        // `$lightmap` sind Sonderwerte der Engine und fuehren zu keiner Datei.
-        for (const auto& stage : entry.stages) {
-            // Nicht nur `map`.
-            //
-            // Hier stand `if (!stage.map.empty() ...)` — und damit fiel jeder
-            // Shader durch, dessen erste Stufe eine Bildfolge oder ein
-            // geklemmtes Bild benutzt:
-            //
-            //     gfx/exp/rocket_explosion { oneshotanimmap 6 gfx/exp/rocket_1.tga ... }
-            //
-            // `map` ist dort leer, es gab also keinen Eintrag, und findTexture
-            // fiel auf "der Shadername ist der Bildname" zurueck. Eine Datei
-            // `gfx/exp/rocket_explosion.tga` gibt es nicht — die Textur galt
-            // als fehlend, und gezeichnet wurde der weiche Ersatzfleck. Bei
-            // additiver Mischung saettigt der zu Weiss: aus einer Explosion
-            // wurde ein weisser Klotz.
-            //
-            // Gemessen an einem echten Bestand: 17 von 531 Shadern beginnen
-            // mit animMap, 41 mit clampMap. Jeder zwoelfte war betroffen.
-            //
-            // `Shader::previewImage()` beantwortet genau diese Frage schon —
-            // es gab sie hier nur ein zweites Mal, kuerzer und falsch.
-            const std::string* image = nullptr;
-            if (!stage.map.empty() && stage.map[0] != '$') {
-                image = &stage.map;
-            } else if (!stage.clampMap.empty()) {
-                image = &stage.clampMap;
-            } else if (!stage.animMaps.empty()) {
-                image = &stage.animMaps.front();
-            }
-            if (image) {
-                index.shaderMaps.emplace_back(toLower(entry.name), *image);
-                index.shaderBlends.emplace_back(
-                    toLower(entry.name),
-                    shader::blendModeOf(stage.srcBlend, stage.dstBlend));
-                // Bildfolge? Dann alle Bilder merken, nicht nur das erste.
-                // Die tcMod-Zeilen mitnehmen: ohne sie steht eine
-                // scrollende Textur still.
-                if (!stage.texMods.empty()) {
-                    index.shaderTexMods.emplace_back(toLower(entry.name),
-                                                     stage.texMods);
-                }
-                // `rgbGen wave` mitnehmen: es gibt die Helligkeit vor und
-                // ersetzt damit die Farbe aus der .efx. Steht 135-mal in einer
-                // gewoehnlichen Installation.
-                if (stage.rgbGen == shader::ColorGen::Wave &&
-                    !stage.rgbWave.func.empty()) {
-                    index.shaderRgbWaves.emplace_back(toLower(entry.name),
-                                                      stage.rgbWave);
-                }
-                if (stage.alphaGen == shader::AlphaGen::Wave &&
-                    !stage.alphaWave.func.empty()) {
-                    index.shaderAlphaWaves.emplace_back(toLower(entry.name),
-                                                        stage.alphaWave);
-                }
-                if (stage.animMaps.size() > 1) {
-                    Index::AnimatedShader anim;
-                    anim.frames = stage.animMaps;
-                    anim.framesPerSecond = stage.animFrequency;
-                    anim.oneShot = stage.animOneShot;
-                    index.shaderAnims.emplace_back(toLower(entry.name),
-                                                   std::move(anim));
-                }
-                break;
-            }
-        }
-    }
+    collectShaderInfo(index, library);
 
     sortUnique(index.shaders);
     sortUnique(index.textures);
