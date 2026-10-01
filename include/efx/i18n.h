@@ -547,6 +547,7 @@ enum class Str {
     PropAdvancedFlags,
     PropDefaultHint,
     ListRename,
+    AboutOriginal,
     HintFileNew,
     HintFileOpen,
     HintFileSave,

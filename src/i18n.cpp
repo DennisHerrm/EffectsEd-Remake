@@ -537,6 +537,7 @@ const Entry kTable[] = {
     {"Advanced: all flags", "Erweitert: alle Flags", "高级：全部标志", "詳細：すべてのフラグ"},  // PropAdvancedFlags
     {"Grey values are engine defaults and are not written to the file", "Graue Werte sind Vorgaben der Engine und stehen nicht in der Datei", "灰色数值是引擎默认值，不会写入文件", "灰色の値はエンジンの既定値で、ファイルには書き込まれません"},  // PropDefaultHint
     {"Rename", "Umbenennen", "重命名", "名前を変更"},  // ListRename
+    {"Modelled on Raven Software's EffectsEd 1.1 (2001-2003) by Dave Blumenthal, Jeff Dischler, Aurelio Reis, Ste Cork and Mike Crowns.", "Nachgebaut nach Raven Softwares EffectsEd 1.1 (2001-2003) von Dave Blumenthal, Jeff Dischler, Aurelio Reis, Ste Cork und Mike Crowns.", "仿照 Raven Software 的 EffectsEd 1.1（2001-2003），原作者 Dave Blumenthal、Jeff Dischler、Aurelio Reis、Ste Cork、Mike Crowns。", "Raven Software の EffectsEd 1.1（2001-2003、Dave Blumenthal、Jeff Dischler、Aurelio Reis、Ste Cork、Mike Crowns）を基に再構築。"},  // AboutOriginal
     {"Create a new document", "Neues Dokument anlegen", "新建文档", "新しいドキュメントを作成"},  // HintFileNew
     {"Open an existing document", "Vorhandenes Dokument öffnen", "打开现有文档", "既存のドキュメントを開く"},  // HintFileOpen
     {"Save the active document", "Aktives Dokument speichern", "保存当前文档", "アクティブなドキュメントを保存"},  // HintFileSave
