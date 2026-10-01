@@ -35,6 +35,7 @@ App::App() {
     // beim Schliessen des letzten Reiters, und fuer diesen einen Fall ueberall
     // auf Leerheit zu pruefen waere der schlechtere Tausch.
     documents_.emplace_back();
+    documents_.back().undo.reset(documents_.back().effect);
 }
 
 Document& App::doc() {
@@ -95,6 +96,8 @@ void App::activateDocument(int index) {
     doc().particles.stop();   // Geometrie behalten: der Reiter kommt wieder
     audio_.stopAll();
     activeDocument_ = index;
+    // Auch die Reiterleiste umschalten (Strg+Tab, Speichern-Frage).
+    wantDocumentTab_ = true;
 }
 
 void App::closeDocument(int index) {
@@ -280,14 +283,6 @@ void App::clearRendererChange() { rendererChangePending_ = false; }
 // ---------------------------------------------------------------------------
 // Dateien
 
-void App::newEffect() {
-    doc().effect = Effect{};
-    doc().filePath.clear();
-    doc().selectedPrimitive = -1;
-    doc().dirty = false;
-    doc().parseDiagnostics.clear();
-    doc().diagnostics.clear();
-}
 
 bool App::openFile(const std::string& path) {
     // In einen neuen Reiter, wenn der aktuelle schon belegt ist.
@@ -326,6 +321,9 @@ bool App::openFile(const std::string& path) {
     refreshDiagnostics();
 
     buildPreviewStopped();
+    // Wer eine Datei oeffnet, will sie sehen — nicht die Startseite. Beim
+    // Doppelklick auf eine .efx blieb vorher die Bibliothek vorn.
+    showEditor();
 
     diag::info(std::to_string(doc().effect.primitives.size()) + " primitives");
     return true;
@@ -946,6 +944,15 @@ namespace {
 
 void App::buildFrame(render::Renderer* renderer, int windowWidth, int windowHeight,
                      float dpiScale) {
+    // Eine Feldaenderung ist abgeschlossen, sobald kein Feld mehr aktiv ist.
+    if (fieldEditOpen_ && !ImGui::IsAnyItemActive()) {
+        fieldEditOpen_ = false;
+        recordChange(tr(Str::UndoFieldChange));
+    }
+    if (previewDirty_) {
+        previewDirty_ = false;
+        refreshPreview();
+    }
     // Vorgemerkte Wiederholung erledigen, bevor gezeichnet wird.
     //
     // Der Neustart plant den ganzen Effekt neu und laedt gegebenenfalls
@@ -1119,46 +1126,49 @@ void App::buildFrame(render::Renderer* renderer, int windowWidth, int windowHeig
 // Startseite tat Strg+B nichts, und das ist genau die Taste, die von dort
 // wegfuehrt.
 void App::handleShortcuts() {
-    if (!ImGui::GetIO().WantCaptureKeyboard) {
-        const bool ctrl = ImGui::GetIO().KeyCtrl;
-        if (ctrl && ImGui::IsKeyPressed(ImGuiKey_W, false)) {
-            closeDocument(activeDocument_);
-        }
-        if (ctrl && ImGui::IsKeyPressed(ImGuiKey_T, false)) newDocument();
-        if (ctrl && ImGui::IsKeyPressed(ImGuiKey_B, false)) {
-            // Zum Startreiter und zurueck.
-            startTabActive_ = !startTabActive_;
-            wantStartTab_ = startTabActive_;   // einmalig auswaehlen
-            if (startTabActive_ && browserEntries_.empty()) refreshBrowser();
-        }
-        if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Tab, false)) {
-            // Zum naechsten Reiter, rundherum — wie im Browser.
-            activateDocument((activeDocument_ + 1) %
-                             static_cast<int>(documents_.size()));
-        }
-        // Ab hier geht es um das bearbeitete Dokument. Auf der Startseite
-        // gibt es keins — Rueckgaengig oder Segment loeschen waeren dort
-        // bestenfalls wirkungslos und schlimmstenfalls falsch.
-        if (startTabActive_) return;
+    // WantTextInput statt WantCaptureKeyboard: nur waehrend getippt wird,
+    // gehoeren die Tasten dem Feld. Vorher genuegte ein einziger Klick auf
+    // irgendein Element, und die Leertaste kam nie mehr an — im Original
+    // gilt sie "application wide", egal wo der Fokus steht.
+    const ImGuiIO& io = ImGui::GetIO();
+    if (io.WantTextInput) return;
+    // Waehrend ein Fenster wie "Neues Segment" offen ist, gehoeren die Tasten
+    // dem Fenster.
+    if (ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) return;
 
-        if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Z, false)) applyUndo();
-        if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Y, false)) applyRedo();
-        // Leertaste: derselbe Weg wie die Knoepfe. Sie soll umschalten,
-        // nicht anhalten — wer im Bild arbeitet, will kurz stoppen und
-        // weitersehen, nicht von vorn beginnen.
-        if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) pressPlay();
-        if (ImGui::IsKeyPressed(ImGuiKey_Insert, false)) showNewSegmentDialog_ = true;
-        if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) && doc().selectedPrimitive >= 0 &&
-            doc().selectedPrimitive < static_cast<int>(doc().effect.primitives.size())) {
-            doc().effect.primitives.erase(doc().effect.primitives.begin() + doc().selectedPrimitive);
-            recordChange(tr(Str::UndoDeleteSegment));
-            if (doc().selectedPrimitive >= static_cast<int>(doc().effect.primitives.size())) {
-                doc().selectedPrimitive = static_cast<int>(doc().effect.primitives.size()) - 1;
-            }
-            doc().dirty = true;
-            refreshDiagnostics();
-        }
+    const bool ctrl = io.KeyCtrl;
+    const bool shift = io.KeyShift;
+    const auto pressed = [](ImGuiKey key) { return ImGui::IsKeyPressed(key, false); };
+
+    if (ctrl && pressed(ImGuiKey_N)) cmdNew();
+    if (ctrl && pressed(ImGuiKey_O)) cmdOpen();
+    if (ctrl && pressed(ImGuiKey_S)) cmdSave();
+    if (ctrl && pressed(ImGuiKey_W)) requestCloseDocument(activeDocument_);
+    if (ctrl && pressed(ImGuiKey_T)) newDocument();
+    if (pressed(ImGuiKey_F5)) rescanAssets();
+    if (ctrl && pressed(ImGuiKey_B)) {
+        // Wie der Menuepunkt: ein- und ausschalten.
+        startTabActive_ = !startTabActive_;
+        wantStartTab_ = startTabActive_;   // einmalig auswaehlen
+        if (startTabActive_ && browserEntries_.empty()) refreshBrowser();
     }
+    if (ctrl && pressed(ImGuiKey_Tab) && !documents_.empty()) {
+        // Zum naechsten Reiter, wie in jedem Browser.
+        activateDocument((activeDocument_ + 1) % static_cast<int>(documents_.size()));
+    }
+
+    // Was folgt, betrifft den Effekt — auf der Startseite gibt es keinen.
+    if (startTabActive_) return;
+
+    if (ctrl && pressed(ImGuiKey_Z)) applyUndo();
+    if (ctrl && pressed(ImGuiKey_Y)) applyRedo();
+    if (ctrl && pressed(ImGuiKey_D)) cmdCloneSegment();
+    if (!ctrl && !shift && pressed(ImGuiKey_Space)) pressPlay();
+    if (pressed(ImGuiKey_Insert)) showNewSegmentDialog_ = true;
+    if (pressed(ImGuiKey_Delete)) cmdDeleteSegment();
+    // Shift+C wie im Original; Strg+Umschalt+C in die Zwischenablage.
+    if (shift && !ctrl && pressed(ImGuiKey_C)) pendingScreenshot_ = 1;
+    if (shift && ctrl && pressed(ImGuiKey_C)) pendingScreenshot_ = 2;
 }
 
 }  // namespace efx::gui

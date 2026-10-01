@@ -18,6 +18,8 @@
 #include <shellapi.h>
 #include <commdlg.h>
 #include <shlobj.h>
+// Nur die Typen; die Funktionen holt logCrashStack zur Laufzeit.
+#include <dbghelp.h>
 
 #include "resource.h"
 
@@ -32,6 +34,7 @@
 #include <cstdio>
 
 #include "app.h"
+#include "selbsttest.h"
 #include "efx/diag.h"
 #include "efx/i18n.h"
 #include "efx/jobs.h"
@@ -49,6 +52,7 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM,
 namespace {
 
 bool g_quit = false;
+bool g_closeRequested = false;
 int g_width = 1280;
 int g_height = 860;
 bool g_resized = false;
@@ -67,6 +71,11 @@ LRESULT WINAPI wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_SYSCOMMAND:
             if ((wParam & 0xfff0) == SC_KEYMENU) return 0;  // Alt-Menue aus
             return DefWindowProcW(hwnd, msg, wParam, lParam);
+        case WM_CLOSE:
+            // Nicht gleich schliessen: die Oberflaeche fragt erst, ob
+            // ungespeicherte Aenderungen gesichert werden sollen.
+            g_closeRequested = true;
+            return 0;
         case WM_DESTROY:
             g_quit = true;
             PostQuitMessage(0);
@@ -671,7 +680,10 @@ static bool runSession(efx::gui::App& app, efx::render::Backend preferred,
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
         ImGuiIO& io = ImGui::GetIO();
-        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+        // Keine Tastaturnavigation: mit ihr loest die Leertaste das zuletzt
+        // angeklickte Element aus (ein Haekchen schaltete um, statt dass
+        // der Effekt abspielte). Im Original spielt die Leertaste ab, egal
+        // wo der Fokus steht. Tab zwischen Eingabefeldern geht weiterhin.
 
         // Der Fensterzustand gehoert neben die Einstellungen, nicht ins
         // Arbeitsverzeichnis.
@@ -756,6 +768,10 @@ static bool runSession(efx::gui::App& app, efx::render::Backend preferred,
             DispatchMessageW(&msg);
         }
         if (g_quit) break;
+        if (g_closeRequested) {
+            g_closeRequested = false;
+            app.requestQuit();
+        }
 
         if (g_resized) {
             renderer->resizeSwapChain(g_width, g_height);
@@ -764,9 +780,11 @@ static bool runSession(efx::gui::App& app, efx::render::Backend preferred,
 
         renderer->newFrame();
         ImGui_ImplWin32_NewFrame();
+        efx::gui::selbsttestVorBild();
         ImGui::NewFrame();
 
         app.buildFrame(renderer.get(), g_width, g_height, dpiScale);
+        efx::gui::selbsttestNachBild(app, renderer.get());
 
         ImGui::Render();
         const auto& palette =
@@ -776,7 +794,9 @@ static bool runSession(efx::gui::App& app, efx::render::Backend preferred,
         renderer->clear(palette.windowBg.r, palette.windowBg.g, palette.windowBg.b,
                         1.0f);
         renderer->renderImGui();
-        renderer->present(true);
+        // Im Selbsttest ohne Warten auf den Bildschirm: der Test braucht
+        // viele Bilder, nicht schoene.
+        renderer->present(!efx::gui::selbsttestAktiv());
 
         efx::render::Backend target{};
         if (app.wantsRendererChange(target)) {
@@ -845,6 +865,107 @@ static bool runSession(efx::gui::App& app, efx::render::Backend preferred,
 // verhindert.
 //
 // `SetUnhandledExceptionFilter` gibt es seit Windows XP.
+// Die Aufrufkette zum Absturz, Bild fuer Bild.
+//
+// Eine nackte Adresse wie 0x00007FF61A0D8597 sagt nach dem naechsten Start
+// nichts mehr — Windows laedt das Programm jedesmal woanders hin. Deshalb
+// steht je Bild der Abstand zum Modulanfang dabei (der bleibt gleich), und
+// wenn die .pdb neben der .exe liegt, auch Funktion, Datei und Zeile.
+//
+// dbghelp.dll wird zur Laufzeit geholt: sie gibt es auf jedem Windows, aber
+// fest gebunden stuende sie in der Importtabelle, die check_win7_exe.py
+// absichtlich klein haelt.
+static void logCrashStack(EXCEPTION_POINTERS* info) {
+    HMODULE dbghelp = LoadLibraryW(L"dbghelp.dll");
+    if (!dbghelp) return;
+    using SymInitializeFn = BOOL(WINAPI*)(HANDLE, PCSTR, BOOL);
+    using SymSetOptionsFn = DWORD(WINAPI*)(DWORD);
+    using StackWalk64Fn = BOOL(WINAPI*)(DWORD, HANDLE, HANDLE, LPSTACKFRAME64, PVOID,
+                                        PREAD_PROCESS_MEMORY_ROUTINE64,
+                                        PFUNCTION_TABLE_ACCESS_ROUTINE64,
+                                        PGET_MODULE_BASE_ROUTINE64,
+                                        PTRANSLATE_ADDRESS_ROUTINE64);
+    using SymFromAddrFn = BOOL(WINAPI*)(HANDLE, DWORD64, PDWORD64, PSYMBOL_INFO);
+    using SymGetLineFn = BOOL(WINAPI*)(HANDLE, DWORD64, PDWORD, PIMAGEHLP_LINE64);
+    auto symInit = reinterpret_cast<SymInitializeFn>(
+        reinterpret_cast<void*>(GetProcAddress(dbghelp, "SymInitialize")));
+    auto symOptions = reinterpret_cast<SymSetOptionsFn>(
+        reinterpret_cast<void*>(GetProcAddress(dbghelp, "SymSetOptions")));
+    auto walk = reinterpret_cast<StackWalk64Fn>(
+        reinterpret_cast<void*>(GetProcAddress(dbghelp, "StackWalk64")));
+    auto fromAddr = reinterpret_cast<SymFromAddrFn>(
+        reinterpret_cast<void*>(GetProcAddress(dbghelp, "SymFromAddr")));
+    auto lineFromAddr = reinterpret_cast<SymGetLineFn>(
+        reinterpret_cast<void*>(GetProcAddress(dbghelp, "SymGetLineFromAddr64")));
+    auto tableAccess = reinterpret_cast<PFUNCTION_TABLE_ACCESS_ROUTINE64>(
+        reinterpret_cast<void*>(GetProcAddress(dbghelp, "SymFunctionTableAccess64")));
+    auto moduleBase = reinterpret_cast<PGET_MODULE_BASE_ROUTINE64>(
+        reinterpret_cast<void*>(GetProcAddress(dbghelp, "SymGetModuleBase64")));
+    if (!symInit || !walk || !tableAccess || !moduleBase) return;
+
+    const HANDLE process = GetCurrentProcess();
+    const HANDLE thread = GetCurrentThread();
+    if (symOptions) symOptions(0x00000002 /*UNDNAME*/ | 0x00000010 /*LOAD_LINES*/);
+    symInit(process, nullptr, TRUE);
+
+    CONTEXT context = *info->ContextRecord;
+    STACKFRAME64 frame{};
+#if defined(_M_X64) || defined(__x86_64__)
+    const DWORD machine = IMAGE_FILE_MACHINE_AMD64;
+    frame.AddrPC.Offset = context.Rip;
+    frame.AddrFrame.Offset = context.Rbp;
+    frame.AddrStack.Offset = context.Rsp;
+#else
+    const DWORD machine = IMAGE_FILE_MACHINE_I386;
+    frame.AddrPC.Offset = context.Eip;
+    frame.AddrFrame.Offset = context.Ebp;
+    frame.AddrStack.Offset = context.Esp;
+#endif
+    frame.AddrPC.Mode = frame.AddrFrame.Mode = frame.AddrStack.Mode = AddrModeFlat;
+
+    alignas(SYMBOL_INFO) char symbolBuffer[sizeof(SYMBOL_INFO) + 256];
+    for (int depth = 0; depth < 24; ++depth) {
+        if (!walk(machine, process, thread, &frame, &context, nullptr, tableAccess,
+                  moduleBase, nullptr)) {
+            break;
+        }
+        const DWORD64 pc = frame.AddrPC.Offset;
+        if (pc == 0) break;
+        const DWORD64 base = moduleBase(process, pc);
+        char moduleName[MAX_PATH] = "?";
+        if (base) {
+            GetModuleFileNameA(reinterpret_cast<HMODULE>(base), moduleName, MAX_PATH);
+        }
+        const char* shortName = std::strrchr(moduleName, '\\');
+        shortName = shortName ? shortName + 1 : moduleName;
+
+        std::string where = "?";
+        if (fromAddr) {
+            auto* symbol = reinterpret_cast<SYMBOL_INFO*>(symbolBuffer);
+            std::memset(symbolBuffer, 0, sizeof(symbolBuffer));
+            symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
+            symbol->MaxNameLen = 255;
+            DWORD64 displacement = 0;
+            if (fromAddr(process, pc, &displacement, symbol)) where = symbol->Name;
+        }
+        if (lineFromAddr) {
+            IMAGEHLP_LINE64 line{};
+            line.SizeOfStruct = sizeof(line);
+            DWORD lineDisplacement = 0;
+            if (lineFromAddr(process, pc, &lineDisplacement, &line) && line.FileName) {
+                const char* file = std::strrchr(line.FileName, '\\');
+                where += std::string("  ") + (file ? file + 1 : line.FileName) + ":" +
+                         std::to_string(line.LineNumber);
+            }
+        }
+        char text[512];
+        std::snprintf(text, sizeof(text), "  #%-2d %s+0x%llX  %s", depth, shortName,
+                      static_cast<unsigned long long>(base ? pc - base : pc),
+                      where.c_str());
+        efx::diag::warn(text);
+    }
+}
+
 static LONG WINAPI logCrash(EXCEPTION_POINTERS* info) {
     if (info && info->ExceptionRecord) {
         char text[256];
@@ -866,6 +987,7 @@ static LONG WINAPI logCrash(EXCEPTION_POINTERS* info) {
                               info->ExceptionRecord->ExceptionInformation[1]));
             efx::diag::warn(text);
         }
+        logCrashStack(info);
     }
     return EXCEPTION_CONTINUE_SEARCH;
 }
@@ -876,7 +998,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR commandLine, int) {
     announceDpiAwareness();
 
     // Als Allererstes das Protokoll. Vor allem, was abstuerzen koennte.
-    efx::paths::setOverrideDirForTesting("");
+    // Im Selbsttest liegen Einstellungen und Protokoll in einem eigenen
+    // Ordner — der Test fasst die echten Einstellungen nie an.
+    if (!efx::gui::selbsttestVorbereiten()) efx::paths::setOverrideDirForTesting("");
     efx::diag::open(efx::paths::startupLogPath());
     // Gleich nach dem Protokoll: ab hier hinterlaesst ein Absturz eine Spur.
     SetUnhandledExceptionFilter(logCrash);

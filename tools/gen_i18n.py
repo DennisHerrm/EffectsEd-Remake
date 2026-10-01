@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 # Erzeugt i18n.h und i18n.cpp aus einer Tabelle. Von Hand waere die Gefahr zu
 # gross, dass eine Spalte verrutscht.
+import os as _os
+_ROOT = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
 S = [
  # (Kennung, English, Deutsch, 中文, 日本語)
  ("AppTitle","EffectsEd","EffectsEd","EffectsEd","EffectsEd"),
@@ -50,7 +52,7 @@ S = [
  ("EffectsEnabled","Segment Enabled","Segment aktiv","启用片段","セグメント有効"),
  ("EffectsPlay","Play","Abspielen","播放","再生"),
  ("EffectsPause","Pause","Anhalten","暂停","一時停止"),
- ("EffectsStop","Stop","Beenden","停止","停止"),
+ ("EffectsStop","Stop","Stopp","停止","停止"),
  ("EffectsRepeat","Repeat","Wiederholen","循环","繰り返し"),
  ("EffectsOrientUp","Orient Up","Nach oben ausrichten","朝上","上向き"),
  ("EffectsOrientSide","Orient Sideways","Seitwärts ausrichten","朝侧面","横向き"),
@@ -544,6 +546,12 @@ S = [
  ("VImpactKills","impactKills only works together with usePhysics.","impactKills wirkt nur zusammen mit usePhysics.","impactKills 仅在配合 usePhysics 时有效。","impactKills は usePhysics と併用したときのみ効きます。"),
  ("VModelEmpty","useModel set but no models list.","useModel gesetzt, aber keine models-Liste.","设置了 useModel 但没有 models 列表。","useModel が設定されていますが models のリストがありません。"),
  ("VElectricityFlags","on Electricity these flags mean something else —%s. That is intended, not accidental.","bei Electricity bedeuten diese Flags etwas anderes —%s. Das ist beabsichtigt, nicht versehentlich.","在 Electricity 上这些标志含义不同 —%s。这是有意为之，而非误设。","Electricity ではこれらのフラグは別の意味です —%s。意図的なもので、間違いではありません。"),
+ # --- Ungespeicherte Aenderungen, Feldbearbeitung (Nacht 1./2.10.2026)
+ ("UndoFieldChange","field changed","Feld geändert","字段已更改","フィールド変更"),
+ ("SaveChangesTitle","Save Changes","Änderungen speichern","保存更改","変更を保存"),
+ ("SaveChangesText","Save changes to %s?","Änderungen an %s speichern?","是否保存对 %s 的更改？","%s への変更を保存しますか？"),
+ ("SaveChangesYes","Save","Speichern","保存","保存"),
+ ("SaveChangesNo","Don't Save","Nicht speichern","不保存","保存しない"),
 ]
 
 # --- Formatplatzhalter pruefen -------------------------------------------
@@ -627,7 +635,7 @@ const char* trIn(Language language, Str id);
 
 }  // namespace efx::i18n
 '''
-open('/home/claude/efxed/include/efx/i18n.h','w').write(h)
+open(_ROOT + '/include/efx/i18n.h','w',encoding='utf-8',newline='\n').write(h)
 
 def esc(s):
     return s.replace('\\','\\\\').replace('"','\\"')
@@ -717,5 +725,5 @@ Language fromSystemLocale(const std::string& locale) {
 
 }  // namespace efx::i18n
 '''
-open('/home/claude/efxed/src/i18n.cpp','w').write(c)
+open(_ROOT + '/src/i18n.cpp','w',encoding='utf-8',newline='\n').write(c)
 print("i18n erzeugt:", len(S), "Texte x 4 Sprachen =", len(S)*4)

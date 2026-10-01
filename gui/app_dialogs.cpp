@@ -406,19 +406,24 @@ void App::drawNewSegmentDialog() {
     if (newSegmentType_ < 0 || newSegmentType_ >= kCount) newSegmentType_ = 0;
 
     ImGui::TextUnformatted(tr(Str::NewSegmentType));
-    ImGui::BeginChild("typelist", ImVec2(240, 280), ImGuiChildFlags_Borders);
+    // So hoch, dass alle dreizehn Typen ohne Rollen passen. Fest 280 Punkte
+    // schnitten bei 150 % Skalierung die letzten fuenf ab — der Selbsttest
+    // fand "OrientedParticle", "Particle", "Sound" und "Tail" nicht.
+    const float listHeight = ImGui::GetTextLineHeightWithSpacing() * (kCount + 0.5f) +
+                             ImGui::GetStyle().WindowPadding.y * 2.0f;
+    ImGui::BeginChild("typelist", ImVec2(ImGui::GetFontSize() * 16.0f, listHeight),
+                      ImGuiChildFlags_Borders);
     for (int i = 0; i < kCount; ++i) {
         if (ImGui::Selectable(typeName(kTypes[i]), newSegmentType_ == i)) {
             newSegmentType_ = i;
         }
         // Doppelklick uebernimmt sofort — im Original genauso.
         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
+            // Doppelklick = Ok. Vorher legte der Doppelklick ein Primitive{}
+            // mit anderen Vorgaben an als Ok (freshPrimitive) und trug den
+            // Rueckgaengig-Schritt ein, BEVOR der Typ gesetzt war.
             newSegmentType_ = i;
-            doc().effect.primitives.push_back(Primitive{});
-            recordChange(tr(Str::UndoNewSegment));
-            doc().effect.primitives.back().type = kTypes[i];
-            doc().selectedPrimitive = static_cast<int>(doc().effect.primitives.size()) - 1;
-            doc().dirty = true;
+            cmdAddSegment(kTypes[i]);
             ImGui::CloseCurrentPopup();
         }
     }
@@ -430,10 +435,7 @@ void App::drawNewSegmentDialog() {
         // Mit brauchbaren Anfangswerten: ein neues CameraShake ohne Staerke
         // und Reichweite tut gar nichts, und das sieht aus wie ein Fehler im
         // Programm.
-        doc().effect.primitives.push_back(freshPrimitive(kTypes[newSegmentType_]));
-        doc().selectedPrimitive = static_cast<int>(doc().effect.primitives.size()) - 1;
-        doc().dirty = true;
-        refreshDiagnostics();
+        cmdAddSegment(kTypes[newSegmentType_]);
         ImGui::CloseCurrentPopup();
     }
     if (ImGui::Button(tr(Str::MsgCancel), ImVec2(120, 0))) ImGui::CloseCurrentPopup();
@@ -649,6 +651,8 @@ void App::drawPickerDialog() {
         pickerTarget_->push_back(*shown[pickerSelected_]);
         doc().dirty = true;
         refreshDiagnostics();
+        fieldEditOpen_ = true;
+        previewDirty_ = true;
         ImGui::CloseCurrentPopup();
     }
     ImGui::EndDisabled();
@@ -799,6 +803,7 @@ void App::drawDriverInfoDialog() {
 }
 
 void App::drawDialogs() {
+    drawSaveChangesDialog();
 
     drawDriverInfoDialog();
     drawSunDialog();

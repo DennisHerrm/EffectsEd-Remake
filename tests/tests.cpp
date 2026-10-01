@@ -220,6 +220,36 @@ void testRealFiles(const std::filesystem::path& dataDir) {
     g_dataFiles = filesInFolder;
 }
 
+void testNumberText() {
+    std::cout << "== Zahlen im Dateitext ==\n";
+    // Verlustfrei UND lesbar: keine Exponentenschreibweise. Vorher schrieb
+    // exactFloat "%.*g" mit kleinster Genauigkeit, und aus 1500 wurde
+    // "1.5e+03" — gefunden vom Selbsttest der Oberflaeche, weil hier nur
+    // Rundlaeufe verglichen wurden und nie der Text.
+    efx::Effect effect;
+    efx::Primitive p = efx::freshPrimitive(efx::PrimitiveType::Particle);
+    p.life = efx::Range::span(1500.0f, 2500.0f);
+    p.count = efx::Range::single(10.0f);
+    p.delay = efx::Range::span(-2.5f, 0.001f);
+    p.gravity = efx::Range::span(123456.0f, 0.1f);
+    effect.primitives.push_back(p);
+    efx::WriteOptions exact;
+    exact.numbers = efx::NumberFormat::Exact;
+    const std::string text = efx::write(effect, exact);
+    check(text.find("1500 2500") != std::string::npos, "1500 2500 bleibt 1500 2500");
+    check(text.find("count") != std::string::npos && text.find("\t10\r\n") != std::string::npos,
+          "10 bleibt 10");
+    check(text.find("-2.5 0.001") != std::string::npos, "-2.5 0.001 bleibt so");
+    check(text.find("123456 0.1") != std::string::npos, "123456 0.1 bleibt so");
+    check(text.find("e+") == std::string::npos && text.find("e-") == std::string::npos,
+          "kein Exponent im Text");
+    const efx::ReadResult back = efx::read(text);
+    check(!back.hasErrors() && back.effect.primitives.size() == 1 &&
+              back.effect.primitives[0].gravity.min == 123456.0f &&
+              back.effect.primitives[0].delay.max == 0.001f,
+          "und es laeuft exakt zurueck");
+}
+
 void testPrecision() {
     std::cout << "== Zahlgenauigkeit ==\n";
     // Der alte Editor schreibt %1.4g; 0.988235 wird dabei zu 0.9882.
@@ -11645,6 +11675,7 @@ int main(int argc, char** argv) {
         std::cout << "(Kein Datenverzeichnis " << dataDir << ", uebersprungen)\n";
     }
     testPrecision();
+    testNumberText();
     testFlags();
     testTolerance();
     testKnownRavenBugs();

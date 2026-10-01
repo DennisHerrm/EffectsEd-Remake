@@ -9,14 +9,43 @@
 // Zustaendigkeiten die Stelle, an der ein Leser aufgibt.
 #include "app.h"
 #include "efx/i18n.h"
+#include "testmarke.h"
 
+#include <algorithm>
 #include <cstdio>
+#include <string>
 namespace efx::gui {
 
 using i18n::Str;
 using i18n::tr;
 
 namespace {
+
+// Spaltenmasse der Eigenschaftsseite — aus der Schriftgroesse, nicht in
+// festen Punkten. Mit festen 140/146/220 Punkten lief eine Zeile bei 150 %
+// Windows-Skalierung ueber den rechten Rand hinaus: das "~"-Haekchen war
+// abgeschnitten und nicht mehr anzuklicken (gefunden vom Selbsttest).
+float labelColumn() { return ImGui::GetFontSize() * 7.5f; }
+
+float tildeWidth() {
+    const ImGuiStyle& style = ImGui::GetStyle();
+    return ImGui::GetFrameHeight() + style.ItemInnerSpacing.x + ImGui::CalcTextSize("~").x;
+}
+
+// Breite fuer die Zahlenfelder rechts der Beschriftung, abzueglich "~".
+float fieldsWidth() {
+    const float avail = ImGui::GetContentRegionAvail().x - tildeWidth() -
+                        ImGui::GetStyle().ItemSpacing.x;
+    return std::max(avail, ImGui::GetFontSize() * 4.0f);
+}
+
+void labelCell(const char* label) {
+    if (label && label[0]) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(label);
+        ImGui::SameLine(labelColumn());
+    }
+}
 
 // Die Uebergangsart eines Kanals. Steht hier, weil nur die Eingabeelemente
 // sie brauchen — vorher lag sie in app.cpp und war von dort aus nicht
@@ -31,8 +60,10 @@ bool editCurveFlags(int& flags, std::vector<std::string>& words) {
     else if (bits == efx::kCurveNonLinear) parmType = 1;
 
     const char* names[] = {efx::i18n::tr(Str::CurveNone), "nonlinear", "wave", "clamp"};
-    ImGui::SetNextItemWidth(120.0f);
-    if (ImGui::BeginCombo("##parmType", names[parmType])) {
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 9.0f);
+    const bool comboOffen = ImGui::BeginCombo("##parmType", names[parmType]);
+    testmarke::marke("kurve");
+    if (comboOffen) {
         for (int i = 0; i < 4; ++i) {
             if (ImGui::Selectable(names[i], parmType == i)) {
                 flags &= ~efx::kCurveClamp;
@@ -48,7 +79,9 @@ bool editCurveFlags(int& flags, std::vector<std::string>& words) {
 
     ImGui::SameLine();
     bool linear = (flags & efx::kCurveLinear) != 0;
-    if (ImGui::Checkbox(tr(Str::CurveLinear), &linear)) {
+    const bool linearGeklickt = ImGui::Checkbox(tr(Str::CurveLinear), &linear);
+    testmarke::marke("linear");
+    if (linearGeklickt) {
         flags = linear ? (flags | efx::kCurveLinear) : (flags & ~efx::kCurveLinear);
         words.clear();
         changed = true;
@@ -56,7 +89,9 @@ bool editCurveFlags(int& flags, std::vector<std::string>& words) {
     ImGui::SameLine();
     bool random = (flags & efx::kCurveRandom) != 0 &&
                   (flags & efx::kCurveClamp) != efx::kCurveClamp;
-    if (ImGui::Checkbox(tr(Str::CurveRandom), &random)) {
+    const bool randomGeklickt = ImGui::Checkbox(tr(Str::CurveRandom), &random);
+    testmarke::marke("random");
+    if (randomGeklickt) {
         flags = random ? (flags | efx::kCurveRandom) : (flags & ~efx::kCurveRandom);
         words.clear();
         changed = true;
@@ -78,6 +113,7 @@ bool App::beginGroup(const char* id, const char* label, bool* enabled) {
     bool open = true;
     if (enabled) {
         ImGui::Checkbox(label, enabled);
+        testmarke::marke("an");
         open = *enabled;
     } else {
         ImGui::TextUnformatted(label);
@@ -112,6 +148,7 @@ void App::endGroup() {
 
 bool App::editColorChannel(ColorChannel& channel) {
     ImGui::PushID("rgb");
+    testmarke::Bereich bereich("rgb");
     bool changed = false;
 
     bool present = channel.present;
@@ -120,6 +157,7 @@ bool App::editColorChannel(ColorChannel& channel) {
         // moeglich, aber niemand tut es gern.
         auto colourRow = [&](const char* id, const char* label, Vec3Range& value) {
             ImGui::PushID(id);
+            testmarke::Bereich zeile(id);
 
             // ZWEI Farbfelder, wenn eine Spanne eingestellt ist — eines fuer
             // den kleinsten, eines fuer den groessten Wert.
@@ -132,9 +170,11 @@ bool App::editColorChannel(ColorChannel& channel) {
             auto swatch = [&](const char* which, Vec3& target) {
                 ImGui::PushID(which);
                 float colour[3] = {target[0], target[1], target[2]};
-                if (ImGui::ColorEdit3("##swatch", colour,
-                                      ImGuiColorEditFlags_NoInputs |
-                                          ImGuiColorEditFlags_NoLabel)) {
+                const bool swatchChanged = ImGui::ColorEdit3(
+                    "##swatch", colour,
+                    ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+                testmarke::marke(which);
+                if (swatchChanged) {
                     for (int i = 0; i < 3; ++i) target[i] = colour[i];
                     value.set = true;
                     changed = true;
@@ -154,7 +194,7 @@ bool App::editColorChannel(ColorChannel& channel) {
             }
             ImGui::SameLine();
             ImGui::PopID();
-            return editVec3Range(id, label, value, 0.01f);
+            return editVec3Range("wert", label, value, 0.01f);
         };
         changed |= colourRow("start", tr(Str::FieldStart), channel.start);
         changed |= colourRow("end", tr(Str::FieldEnd), channel.end);
@@ -204,6 +244,7 @@ bool App::editFlags(Primitive& p) {
 bool App::editRange(const char* id, const char* label, Range& range, float speed,
                     float low, float high) {
     ImGui::PushID(id);
+    testmarke::Bereich bereich(id);
     bool changed = false;
 
     // Kein Ankreuzfeld mehr vor jedem einzelnen Feld.
@@ -216,20 +257,24 @@ bool App::editRange(const char* id, const char* label, Range& range, float speed
     // Stattdessen: das Feld gilt als gesetzt, sobald jemand es anfasst. Wer es
     // wieder loswerden will, nimmt das Haekchen der Gruppe. Genau so verhaelt
     // sich der alte Editor.
-    ImGui::TextUnformatted(label);
-    ImGui::SameLine(140.0f);
-
-    const float width = range.ranged ? 70.0f : 146.0f;
+    labelCell(label);
+    const float spacing = ImGui::GetStyle().ItemInnerSpacing.x;
+    const float total = fieldsWidth();
+    const float width = range.ranged ? (total - spacing) * 0.5f : total;
     ImGui::SetNextItemWidth(width);
-    if (ImGui::DragFloat("##min", &range.min, speed, low, high, "%.4g")) {
+    const bool minChanged = ImGui::DragFloat("##min", &range.min, speed, low, high, "%.4g");
+    testmarke::marke("min");
+    if (minChanged) {
         if (!range.ranged) range.max = range.min;
         range.set = true;
         changed = true;
     }
     if (range.ranged) {
-        ImGui::SameLine(0.0f, 6.0f);
+        ImGui::SameLine(0.0f, spacing);
         ImGui::SetNextItemWidth(width);
-        if (ImGui::DragFloat("##max", &range.max, speed, low, high, "%.4g")) {
+        const bool maxChanged = ImGui::DragFloat("##max", &range.max, speed, low, high, "%.4g");
+        testmarke::marke("max");
+        if (maxChanged) {
             range.set = true;
             changed = true;
         }
@@ -237,7 +282,9 @@ bool App::editRange(const char* id, const char* label, Range& range, float speed
 
     ImGui::SameLine();
     bool ranged = range.ranged;
-    if (ImGui::Checkbox("~", &ranged)) {
+    const bool rangedClicked = ImGui::Checkbox("~", &ranged);
+    testmarke::marke("ranged");
+    if (rangedClicked) {
         range.ranged = ranged;
         if (!ranged) range.max = range.min;
         changed = true;
@@ -253,35 +300,44 @@ bool App::editRange(const char* id, const char* label, Range& range, float speed
 bool App::editVec3Range(const char* id, const char* label, Vec3Range& value,
                         float speed) {
     ImGui::PushID(id);
+    testmarke::Bereich bereich(id);
     bool changed = false;
 
-    if (label && label[0]) {
-        ImGui::TextUnformatted(label);
-        ImGui::SameLine(140.0f);
-    }
-    ImGui::SetNextItemWidth(value.ranged ? 150.0f : 220.0f);
-    if (ImGui::DragFloat3("##min", value.min.v, speed, 0.0f, 0.0f, "%.4g")) {
+    // Ein Vektor mit Spanne steht auf zwei Zeilen (Min oben, Max darunter).
+    // Sechs Zahlen in einer Zeile passten in keine Eigenschaftsseite.
+    labelCell(label);
+    const float rowStart = ImGui::GetCursorPosX();
+    ImGui::SetNextItemWidth(fieldsWidth());
+    const bool minChanged = ImGui::DragFloat3("##min", value.min.v, speed, 0.0f, 0.0f, "%.4g");
+    testmarke::marke("min");
+    if (minChanged) {
         if (!value.ranged) value.max = value.min;
         value.set = true;
         changed = true;
     }
+    // Das "~" gleich hinter die erste Zeile; die zweite Zeile beginnt
+    // unter dem ersten Feld.
+    ImGui::SameLine();
+    bool ranged = value.ranged;
+    const bool rangedClicked = ImGui::Checkbox("~", &ranged);
+    testmarke::marke("ranged");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr(Str::FieldRangedHint));
     if (value.ranged) {
-        ImGui::SameLine(0.0f, 6.0f);
-        ImGui::SetNextItemWidth(150.0f);
-        if (ImGui::DragFloat3("##max", value.max.v, speed, 0.0f, 0.0f, "%.4g")) {
+        ImGui::SetCursorPosX(rowStart);
+        ImGui::SetNextItemWidth(fieldsWidth());
+        const bool maxChanged = ImGui::DragFloat3("##max", value.max.v, speed, 0.0f, 0.0f, "%.4g");
+        testmarke::marke("max");
+        if (maxChanged) {
             value.set = true;
             changed = true;
         }
     }
 
-    ImGui::SameLine();
-    bool ranged = value.ranged;
-    if (ImGui::Checkbox("~", &ranged)) {
+    if (rangedClicked) {
         value.ranged = ranged;
         if (!ranged) value.max = value.min;
         changed = true;
     }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr(Str::FieldRangedHint));
 
     ImGui::PopID();
     return changed;
@@ -290,6 +346,7 @@ bool App::editVec3Range(const char* id, const char* label, Vec3Range& value,
 bool App::editChannel(const char* id, const char* label, Channel& channel,
                       float speed) {
     ImGui::PushID(id);
+    testmarke::Bereich bereich(id);
     bool changed = false;
 
     bool present = channel.present;
@@ -311,6 +368,7 @@ bool App::editChannel(const char* id, const char* label, Channel& channel,
 bool App::editStringList(const char* id, const char* label,
                          std::vector<std::string>& list, const char* hint) {
     ImGui::PushID(id);
+    testmarke::Bereich bereich(id);
     bool changed = false;
 
     ImGui::TextUnformatted(label);
@@ -322,12 +380,15 @@ bool App::editStringList(const char* id, const char* label,
         char buffer[256];
         std::snprintf(buffer, sizeof(buffer), "%s", list[i].c_str());
         ImGui::SetNextItemWidth(-90.0f);
-        if (ImGui::InputText("##entry", buffer, sizeof(buffer))) {
+        const bool entryChanged = ImGui::InputText("##entry", buffer, sizeof(buffer));
+        testmarke::marke(("eintrag" + std::to_string(i)).c_str());
+        if (entryChanged) {
             list[i] = buffer;
             changed = true;
         }
         ImGui::SameLine();
         if (ImGui::SmallButton("X")) removeAt = static_cast<int>(i);
+        testmarke::marke(("weg" + std::to_string(i)).c_str());
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr(Str::FieldRemoveEntry));
         ImGui::PopID();
     }
@@ -336,7 +397,9 @@ bool App::editStringList(const char* id, const char* label,
         changed = true;
     }
 
-    if (ImGui::SmallButton(tr(Str::FieldAddEntry))) {
+    const bool addClicked = ImGui::SmallButton(tr(Str::FieldAddEntry));
+    testmarke::marke("dazu");
+    if (addClicked) {
         list.emplace_back(hint ? hint : "");
         changed = true;
     }
@@ -345,7 +408,9 @@ bool App::editStringList(const char* id, const char* label,
     if (std::string(id) == "shaders" || std::string(id) == "models" ||
         std::string(id) == "sounds") {
         ImGui::SameLine();
-        if (ImGui::SmallButton("...")) {
+        const bool chooseClicked = ImGui::SmallButton("...");
+        testmarke::marke("waehlen");
+        if (chooseClicked) {
             pickerTarget_ = &list;
             pickerKind_ = std::string(id) == "models"  ? PickerKind::Models
                           : std::string(id) == "sounds" ? PickerKind::Sounds

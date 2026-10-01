@@ -1,0 +1,1029 @@
+// selbsttest.cpp — efxed prueft seine eigene Oberflaeche.
+//
+// Aufruf:  set EFXED_SELBSTTEST=alles  und efxed.exe starten.
+//          Andere Werte waehlen einen Teil (siehe `teile()` unten), mehrere
+//          mit Komma: EFXED_SELBSTTEST=segmente,speichern
+//
+// Was der Test tut: er klickt mit simulierter Maus auf Menues, Knoepfe und
+// Felder, tippt Werte ein und prueft danach das DATENMODELL — steht im Effekt,
+// was der Knopf verspricht? Gefunden wird jedes Element ueber seine
+// Beschriftung (oder eine Testmarke, siehe testmarke.h) und an der Stelle
+// geklickt, an der ImGui es gezeichnet hat. Ein Knopf, der verdeckt oder
+// abgeschnitten ist, faellt damit ebenfalls auf.
+//
+// Vorbild ist der Selbsttest von behaved. Woher die Elemente kommen: mit
+// IMGUI_ENABLE_TEST_ENGINE (gui/imgui_config.h) meldet ImGui jedes Element an
+// die Haken ganz unten in dieser Datei — aber nur, solange
+// `TestEngineHookItems` gesetzt ist, und das geschieht ausschliesslich hier.
+//
+// Was NICHT geklickt wird, ohne es vorher umzuleiten: alles, was ein
+// Windows-Fenster oeffnet (Dateidialog, Ordnerauswahl, Browser). Der Test
+// ersetzt diese Rueckrufe durch eigene, die einen vorbereiteten Pfad liefern —
+// so werden Oeffnen und Speichern trotzdem echt durchlaufen.
+//
+// Ergebnis: Zeilen "Selbsttest OK/FEHLER" im Startprotokoll und eine
+// Zusammenfassung in selbsttest_ergebnis.txt im (umgelenkten)
+// Einstellungsordner. Danach beendet sich das Programm selbst.
+#include "selbsttest.h"
+
+#include <windows.h>
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <deque>
+#include <filesystem>
+#include <fstream>
+#include <functional>
+#include <memory>
+#include <sstream>
+#include <string>
+#include <vector>
+
+#include "app.h"
+#include "efx/diag.h"
+#include "efx/i18n.h"
+#include "efx/image.h"
+#include "efx/io.h"
+#include "efx/paths.h"
+#include "imgui.h"
+#include "imgui_internal.h"
+#include "testmarke.h"
+
+namespace fs = std::filesystem;
+
+namespace efx::gui {
+
+using i18n::Str;
+using i18n::tr;
+
+// ===========================================================================
+// Was ImGui in diesem Bild gezeichnet hat
+// ===========================================================================
+namespace {
+
+struct Element {
+    ImGuiID id = 0;
+    std::string label;   // leer, wenn nur ItemAdd kam
+    std::string marke;   // Testmarke, falls gesetzt
+    ImRect rect;
+    ImRect clip;
+    std::string fenster;  // oberstes Fenster
+    std::string innen;    // Fenster, in dem es steht
+};
+
+std::vector<Element> g_elemente;
+bool g_an = false;
+std::vector<std::string> g_bereiche;
+
+bool g_mausAn = false;
+ImVec2 g_maus{};
+
+void setzeMaus(ImVec2 p) {
+    g_mausAn = true;
+    g_maus = p;
+    ImGui::GetIO().AddMousePosEvent(p.x, p.y);
+}
+
+std::string sichtbarerText(const std::string& label) {
+    const size_t ende = label.find("##");
+    return ende == std::string::npos ? label : label.substr(0, ende);
+}
+
+}  // namespace
+
+void selbsttestMerkeElement(ImGuiContext* ctx, ImGuiID id, const ImRect& bb) {
+    if (ctx->CurrentWindow == nullptr) return;
+    Element e;
+    e.id = id;
+    e.rect = bb;
+    e.clip = ctx->CurrentWindow->ClipRect;
+    e.fenster = ctx->CurrentWindow->RootWindow ? ctx->CurrentWindow->RootWindow->Name
+                                               : ctx->CurrentWindow->Name;
+    e.innen = ctx->CurrentWindow->Name;
+    g_elemente.push_back(std::move(e));
+}
+
+void selbsttestMerkeText(ImGuiContext* ctx, ImGuiID id, const char* label) {
+    if (label == nullptr) return;
+    for (auto it = g_elemente.rbegin(); it != g_elemente.rend(); ++it) {
+        if (it->id == id) {
+            it->label = label;
+            return;
+        }
+    }
+    selbsttestMerkeElement(ctx, id, ctx->LastItemData.Rect);
+    if (!g_elemente.empty()) g_elemente.back().label = label;
+}
+
+// --- Testmarken (testmarke.h) ---------------------------------------------
+namespace testmarke {
+
+bool aktiv() { return g_an; }
+void bereichBetreten(const char* name) { g_bereiche.emplace_back(name); }
+void bereichVerlassen() {
+    if (!g_bereiche.empty()) g_bereiche.pop_back();
+}
+
+void marke(const char* name) {
+    if (!g_an) return;
+    std::string pfad;
+    for (const auto& b : g_bereiche) {
+        pfad += b;
+        pfad += '/';
+    }
+    pfad += name;
+    ImGuiContext& g = *GImGui;
+    const ImGuiID id = g.LastItemData.ID;
+    // Meist ist das Element schon gemeldet — dann nur die Marke nachtragen.
+    for (auto it = g_elemente.rbegin(); it != g_elemente.rend(); ++it) {
+        if (it->id == id && id != 0) {
+            it->marke = pfad;
+            return;
+        }
+    }
+    selbsttestMerkeElement(&g, id, g.LastItemData.Rect);
+    if (!g_elemente.empty()) g_elemente.back().marke = pfad;
+}
+
+}  // namespace testmarke
+
+// ===========================================================================
+// Der Test selbst. Eine Klasse, weil App sie als Freund kennt: die Schritte
+// lesen und setzen das Innenleben (Dokument, Einstellungen) direkt.
+// ===========================================================================
+class Selbsttest {
+public:
+    struct Schritt {
+        std::string text;
+        std::function<bool(int)> tun;
+    };
+
+    static App* app;
+    static render::Renderer* renderer;
+    static std::vector<Schritt> schritte;
+    static size_t schritt;
+    static int imSchritt;
+    static int bild;
+    static int ok;
+    static int fehler;
+    static std::vector<std::string> fehlerListe;
+    static std::string arbeitsOrdner;
+    static std::string fotoOrdner;
+    static std::deque<std::string> dateiAntworten;
+    static std::vector<std::string> geoeffnetPerShell;
+    static std::string aktuellerTeil;
+
+    // --- Melden ------------------------------------------------------------
+    static void meldeOk(const std::string& text) {
+        ++ok;
+        diag::info("Selbsttest OK: [" + aktuellerTeil + "] " + text);
+    }
+    static void meldeFehler(const std::string& text) {
+        ++fehler;
+        const std::string zeile = "[" + aktuellerTeil + "] " + text;
+        fehlerListe.push_back(zeile);
+        diag::warn("Selbsttest FEHLER: " + zeile);
+    }
+    static void pruefe(bool bedingung, const std::string& text) {
+        if (bedingung) meldeOk(text); else meldeFehler(text);
+    }
+
+    // --- Finden ------------------------------------------------------------
+    // `label` mit "*" am Ende: Anfang genuegt ("Undo*" findet "Undo: x").
+    static const Element* finde(const std::string& label, const std::string& fenster,
+                                int nte = 0) {
+        int gezaehlt = 0;
+        const bool praefix = !label.empty() && label.back() == '*';
+        const std::string anfang = praefix ? label.substr(0, label.size() - 1) : label;
+        for (const Element& e : g_elemente) {
+            if (e.label.empty()) continue;
+            if (!fenster.empty() && e.fenster.find(fenster) == std::string::npos &&
+                e.innen.find(fenster) == std::string::npos) {
+                continue;
+            }
+            if (praefix) {
+                if (e.label.rfind(anfang, 0) != 0) continue;
+            } else if (e.label != label && sichtbarerText(e.label) != label) {
+                continue;
+            }
+            if (gezaehlt == nte) return &e;
+            ++gezaehlt;
+        }
+        return nullptr;
+    }
+    static const Element* findeMarke(const std::string& marke, int nte = 0) {
+        int gezaehlt = 0;
+        for (const Element& e : g_elemente) {
+            if (e.marke != marke) continue;
+            if (gezaehlt == nte) return &e;
+            ++gezaehlt;
+        }
+        return nullptr;
+    }
+    // Teilelemente innerhalb eines Elements (die drei Felder eines DragFloat3),
+    // von links nach rechts.
+    static std::vector<const Element*> innerhalb(const Element& gruppe) {
+        std::vector<const Element*> teile;
+        for (const Element& e : g_elemente) {
+            if (&e == &gruppe || e.id == 0 || e.id == gruppe.id) continue;
+            if (e.rect.Min.x >= gruppe.rect.Min.x - 0.5f &&
+                e.rect.Max.x <= gruppe.rect.Max.x + 0.5f &&
+                e.rect.Min.y >= gruppe.rect.Min.y - 0.5f &&
+                e.rect.Max.y <= gruppe.rect.Max.y + 0.5f &&
+                e.rect.GetWidth() < gruppe.rect.GetWidth() - 1.0f) {
+                teile.push_back(&e);
+            }
+        }
+        std::sort(teile.begin(), teile.end(), [](const Element* a, const Element* b) {
+            return a->rect.Min.x < b->rect.Min.x;
+        });
+        return teile;
+    }
+
+    static bool ganzSichtbar(const Element& e) {
+        const ImVec2 sp = ImGui::GetStyle().ItemSpacing;
+        const float sx = sp.x * 0.5f + 0.5f;
+        const float sy = sp.y * 0.5f + 0.5f;
+        return e.clip.GetWidth() > 0.0f && e.clip.GetHeight() > 0.0f &&
+               e.rect.Min.x >= e.clip.Min.x - sx && e.rect.Min.y >= e.clip.Min.y - sy &&
+               e.rect.Max.x <= e.clip.Max.x + sx && e.rect.Max.y <= e.clip.Max.y + sy;
+    }
+
+    static std::string wasImGuiSieht() {
+        ImGuiContext& g = *GImGui;
+        auto name = [](ImGuiID id) -> std::string {
+            if (id == 0) return "-";
+            for (const Element& e : g_elemente) {
+                if (e.id == id) {
+                    return (e.label.empty() ? (e.marke.empty() ? "(ohne Namen)" : e.marke)
+                                            : e.label) +
+                           " in " + e.innen;
+                }
+            }
+            return "?";
+        };
+        return "aktiv: " + name(g.ActiveId) + ", unter der Maus: " + name(g.HoveredId) +
+               ", Fenster " + (g.HoveredWindow ? g.HoveredWindow->Name : "-");
+    }
+
+    // --- Grundschritte -----------------------------------------------------
+    //
+    // Ein Schritt laeuft ueber mehrere Bilder: tun(b) bekommt die Nummer des
+    // Bildes im Schritt und meldet mit true, dass er fertig ist. Mausereignisse
+    // brauchen ein Bild, bis ImGui sie sieht — deshalb Stelle, Druecken und
+    // Loslassen in getrennten Bildern.
+
+    // Klick auf ein Element. `suche` liefert es aus dem aktuellen Bild.
+    static Schritt klickAuf(const std::string& was,
+                            std::function<const Element*()> suche, int taste = 0,
+                            bool doppelt = false, bool sichtbarPruefen = true) {
+        auto kennung = std::make_shared<ImGuiID>(0);
+        return {was, [=](int b) {
+                    ImGuiIO& io = ImGui::GetIO();
+                    if (b == 0) {
+                        const Element* e = suche();
+                        if (e == nullptr) {
+                            meldeFehler(was + ": nicht gefunden");
+                            return true;
+                        }
+                        if (sichtbarPruefen && !ganzSichtbar(*e)) {
+                            char z[200];
+                            std::snprintf(z, sizeof(z),
+                                          ": nicht ganz sichtbar (%.0f,%.0f-%.0f,%.0f; "
+                                          "sichtbar %.0f,%.0f-%.0f,%.0f)",
+                                          double(e->rect.Min.x), double(e->rect.Min.y),
+                                          double(e->rect.Max.x), double(e->rect.Max.y),
+                                          double(e->clip.Min.x), double(e->clip.Min.y),
+                                          double(e->clip.Max.x), double(e->clip.Max.y));
+                            meldeFehler(was + z);
+                        }
+                        *kennung = e->id;
+                        setzeMaus(ImVec2(e->rect.Min.x + std::min(e->rect.GetWidth() * 0.5f, 40.0f),
+                                         e->rect.GetCenter().y));
+                        return false;
+                    }
+                    if (b == 1) {
+                        io.AddMouseButtonEvent(taste, true);
+                        return false;
+                    }
+                    if (b == 2) {
+                        ImGuiContext& g = *GImGui;
+                        const bool getroffen = taste == 0
+                                                   ? (g.ActiveId == *kennung ||
+                                                      g.ActiveIdPreviousFrame == *kennung ||
+                                                      g.HoveredIdPreviousFrame == *kennung)
+                                                   : g.HoveredIdPreviousFrame == *kennung;
+                        if (!getroffen && *kennung != 0) {
+                            meldeFehler(was + ": Klick kam nicht an (" + wasImGuiSieht() + ")");
+                        }
+                        io.AddMouseButtonEvent(taste, false);
+                        return false;
+                    }
+                    if (doppelt) {
+                        if (b == 3) {
+                            io.AddMouseButtonEvent(taste, true);
+                            return false;
+                        }
+                        if (b == 4) {
+                            io.AddMouseButtonEvent(taste, false);
+                            return false;
+                        }
+                        return b >= 7;
+                    }
+                    return b >= 5;
+                }};
+    }
+
+    static Schritt klick(const std::string& label, const std::string& fenster = "",
+                         int nte = 0, int taste = 0) {
+        return klickAuf("Klick \"" + sichtbarerText(label) + "\"" +
+                            (fenster.empty() ? "" : " in " + fenster),
+                        [=] { return finde(label, fenster, nte); }, taste);
+    }
+    static Schritt klickMarke(const std::string& marke, int nte = 0, bool doppelt = false) {
+        return klickAuf(std::string(doppelt ? "Doppelklick" : "Klick") + " Marke " + marke,
+                        [=] { return findeMarke(marke, nte); }, 0, doppelt);
+    }
+    // Ein Teilfeld (0..2) eines DragFloat3 doppelt anklicken.
+    static Schritt doppelklickTeil(const std::string& marke, int teil) {
+        return klickAuf("Doppelklick Marke " + marke + "[" + std::to_string(teil) + "]",
+                        [=]() -> const Element* {
+                            const Element* g = findeMarke(marke);
+                            if (!g) return nullptr;
+                            const auto t = innerhalb(*g);
+                            return teil < static_cast<int>(t.size()) ? t[size_t(teil)] : nullptr;
+                        },
+                        0, true);
+    }
+
+    // Menue: oben anklicken, dann den Eintrag. Untermenues ueber `zwischen`.
+    static void menue(std::vector<Schritt>& s, Str oben, const std::string& eintrag,
+                      const std::string& zwischen = "") {
+        s.push_back(klick(tr(oben), "##main"));
+        if (!zwischen.empty()) s.push_back(klick(zwischen, "##Menu"));
+        s.push_back(klick(eintrag, "##Menu"));
+        // Ein gesperrter Eintrag laesst das Menue offen — dann aufraeumen,
+        // sonst faengt das Menue den naechsten Klick. Ein Dialog, den der
+        // Eintrag geoeffnet hat, bleibt offen.
+        s.push_back(menuesZu());
+    }
+    static void menue(std::vector<Schritt>& s, Str oben, Str eintrag) {
+        menue(s, oben, tr(eintrag));
+    }
+    static void menue(std::vector<Schritt>& s, Str oben, Str zwischen, Str eintrag) {
+        menue(s, oben, tr(eintrag), tr(zwischen));
+    }
+
+    static Schritt taste(ImGuiKey key, bool ctrl = false, bool shift = false,
+                         bool alt = false) {
+        const std::string name = std::string(ctrl ? "Strg+" : "") + (shift ? "Umschalt+" : "") +
+                                 (alt ? "Alt+" : "") + ImGui::GetKeyName(key);
+        return {"Taste " + name, [=](int b) {
+                    ImGuiIO& io = ImGui::GetIO();
+                    if (b == 0) {
+                        if (ctrl) io.AddKeyEvent(ImGuiMod_Ctrl, true);
+                        if (shift) io.AddKeyEvent(ImGuiMod_Shift, true);
+                        if (alt) io.AddKeyEvent(ImGuiMod_Alt, true);
+                        io.AddKeyEvent(key, true);
+                        return false;
+                    }
+                    if (b == 1) {
+                        io.AddKeyEvent(key, false);
+                        if (ctrl) io.AddKeyEvent(ImGuiMod_Ctrl, false);
+                        if (shift) io.AddKeyEvent(ImGuiMod_Shift, false);
+                        if (alt) io.AddKeyEvent(ImGuiMod_Alt, false);
+                        return false;
+                    }
+                    return b >= 3;
+                }};
+    }
+    static Schritt tippe(const std::string& text) {
+        return {"Tippe \"" + text + "\"", [=](int b) {
+                    if (b == 0) {
+                        ImGui::GetIO().AddInputCharactersUTF8(text.c_str());
+                        return false;
+                    }
+                    return b >= 2;
+                }};
+    }
+    // Ein Zahlenfeld (DragFloat) ueber Doppelklick in Texteingabe versetzen,
+    // alles ersetzen, Enter.
+    static void feld(std::vector<Schritt>& s, const std::string& marke, const std::string& text,
+                     int teil = -1) {
+        s.push_back(teil < 0 ? klickMarke(marke, 0, true) : doppelklickTeil(marke, teil));
+        s.push_back(taste(ImGuiKey_A, true));
+        s.push_back(tippe(text));
+        s.push_back(taste(ImGuiKey_Enter));
+    }
+    static Schritt warte(int bilder, const std::string& was = "") {
+        return {was.empty() ? "Warte " + std::to_string(bilder) + " Bilder" : was,
+                [=](int b) { return b >= bilder; }};
+    }
+    static Schritt warteBis(const std::string& was, std::function<bool()> bedingung,
+                            int maxBilder = 600) {
+        return {"Warte bis " + was, [=](int b) {
+                    if (bedingung()) return true;
+                    if (b >= maxBilder) {
+                        meldeFehler("Zeitueberschreitung: " + was);
+                        return true;
+                    }
+                    return false;
+                }};
+    }
+    static Schritt pruefSchritt(const std::string& text, std::function<bool()> bedingung) {
+        return {"Pruefe " + text, [=](int) {
+                    pruefe(bedingung(), text);
+                    return true;
+                }};
+    }
+    static Schritt tu(const std::string& text, std::function<void()> f) {
+        return {text, [=](int) {
+                    f();
+                    return true;
+                }};
+    }
+    static Schritt teil(const std::string& name) {
+        return {"=== Teil " + name, [=](int) {
+                    aktuellerTeil = name;
+                    diag::info("Selbsttest: === " + name + " ===");
+                    return true;
+                }};
+    }
+    // Kein Popup und kein Menue offen? Sonst faengt das naechste Klicken ins
+    // Leere — und der Test meldete zwanzig Folgefehler fuer einen.
+    // `melden`: ein offenes Fenster ist ein Fehler (sonst nur aufraeumen).
+    // Nur Menues schliessen, offene Dialoge (modal) stehen lassen.
+    static Schritt menuesZu() {
+        return {"Menues schliessen", [=](int b) {
+                    if (b == 0) ImGui::ClosePopupsExceptModals();
+                    return b >= 2;
+                }};
+    }
+    static Schritt allesZu(bool melden = false) {
+        return {"Alles geschlossen?", [=](int b) {
+                    ImGuiContext& g = *GImGui;
+                    if (b == 0 && !g.OpenPopupStack.empty()) {
+                        std::string offen;
+                        for (const auto& p : g.OpenPopupStack) {
+                            offen += p.Window ? p.Window->Name : "?";
+                            offen += " ";
+                        }
+                        if (melden) meldeFehler("noch offen: " + offen);
+                        ImGui::ClosePopupToLevel(0, true);
+                    }
+                    return b >= 2;
+                }};
+    }
+    static Schritt foto(const std::string& name) {
+        return {"Foto " + name, [=](int) {
+                    if (fotoOrdner.empty() || renderer == nullptr) return true;
+                    std::vector<unsigned char> rgba;
+                    int w = 0, h = 0;
+                    if (!renderer->readViewport(rgba, w, h)) {
+                        meldeFehler("Foto " + name + ": Ansicht nicht lesbar");
+                        return true;
+                    }
+                    const auto tga = image::encodeTga(rgba.data(), w, h);
+                    std::ofstream f(fotoOrdner + "/" + name + ".tga", std::ios::binary);
+                    f.write(reinterpret_cast<const char*>(tga.data()),
+                            static_cast<std::streamsize>(tga.size()));
+                    return true;
+                }};
+    }
+
+    // --- Zugriff auf das Programm --------------------------------------------
+    static Document& doc() { return app->doc(); }
+    static Effect& effekt() { return app->doc().effect; }
+    static int anzahlSegmente() { return static_cast<int>(effekt().primitives.size()); }
+    static Primitive* gewaehlt() {
+        const int i = doc().selectedPrimitive;
+        if (i < 0 || i >= anzahlSegmente()) return nullptr;
+        return &effekt().primitives[size_t(i)];
+    }
+    static std::string text() { return write(effekt()); }
+
+    static std::string leseDatei(const std::string& pfad) {
+        std::ifstream f(pfad, std::ios::binary);
+        std::stringstream ss;
+        ss << f.rdbuf();
+        return ss.str();
+    }
+    static void schreibeDatei(const std::string& pfad, const std::string& inhalt) {
+        std::ofstream f(pfad, std::ios::binary);
+        f << inhalt;
+    }
+
+    // Das Datei-Oeffnen/Speichern des naechsten Klicks beantworten.
+    static Schritt dateiAntwort(const std::string& pfad) {
+        return tu("Dateidialog antwortet " + pfad, [=] { dateiAntworten.push_back(pfad); });
+    }
+
+    // ======================================================================
+    // Die Teile
+    // ======================================================================
+
+    // Ein neues, leeres Dokument im aktiven Reiter.
+    static void frischesDokument(std::vector<Schritt>& s) {
+        s.push_back(allesZu());
+        s.push_back(tu("frisches Dokument", [] {
+            app->documents_.clear();
+            app->documents_.emplace_back();
+            app->activeDocument_ = 0;
+            app->doc().undo.reset(app->doc().effect);
+            app->showEditor();
+        }));
+        s.push_back(warte(3));
+    }
+
+    // Ein Segment ueber Effects > New Segment anlegen.
+    static void neuesSegment(std::vector<Schritt>& s, PrimitiveType typ) {
+        menue(s, Str::MenuEffects, Str::EffectsNewSegment);
+        s.push_back(klick(typeName(typ), "###newsegment"));
+        s.push_back(klick(tr(Str::MsgOk), "###newsegment"));
+        s.push_back(warte(2));
+    }
+
+    static std::vector<Schritt> teilStart() {
+        std::vector<Schritt> s;
+        s.push_back(teil("start"));
+        s.push_back(pruefSchritt("Programm laeuft, Hauptfenster gezeichnet",
+                                 [] { return finde(tr(Str::MenuFile), "##main") != nullptr; }));
+        // Alle fuenf Hauptmenues sind da und sichtbar.
+        for (Str m : {Str::MenuFile, Str::MenuEdit, Str::MenuView, Str::MenuEffects,
+                      Str::MenuHelp}) {
+            s.push_back(klick(tr(m), "##main"));
+            s.push_back(allesZu());
+        }
+        return s;
+    }
+
+    static std::vector<Schritt> teilSegmente() {
+        std::vector<Schritt> s;
+        s.push_back(teil("segmente"));
+        frischesDokument(s);
+        // Jeden der dreizehn Typen ueber den Dialog anlegen.
+        const PrimitiveType typen[] = {
+            PrimitiveType::CameraShake, PrimitiveType::Cylinder, PrimitiveType::Decal,
+            PrimitiveType::Electricity, PrimitiveType::Emitter, PrimitiveType::ScreenFlash,
+            PrimitiveType::FxRunner, PrimitiveType::Light, PrimitiveType::Line,
+            PrimitiveType::OrientedParticle, PrimitiveType::Particle, PrimitiveType::Sound,
+            PrimitiveType::Tail,
+        };
+        int n = 0;
+        for (PrimitiveType t : typen) {
+            ++n;
+            neuesSegment(s, t);
+            s.push_back(pruefSchritt(std::string("Neues Segment ") + typeName(t) + " angelegt",
+                                     [n, t] {
+                                         return anzahlSegmente() == n && gewaehlt() &&
+                                                gewaehlt()->type == t;
+                                     }));
+            s.push_back(pruefSchritt(std::string("Neues Segment ") + typeName(t) +
+                                         " ist rueckgaengig machbar",
+                                     [] { return doc().undo.canUndo(); }));
+            s.push_back(pruefSchritt(std::string("Neues Segment ") + typeName(t) +
+                                         " hat dieselben Vorgaben wie freshPrimitive",
+                                     [t] {
+                                         if (!gewaehlt()) return false;
+                                         Effect a, b;
+                                         a.primitives.push_back(*gewaehlt());
+                                         b.primitives.push_back(freshPrimitive(t));
+                                         return write(a) == write(b);
+                                     }));
+        }
+        // Doppelklick im Dialog legt ebenfalls an — mit denselben Vorgaben.
+        s.push_back(tu("Zaehler merken", [] {}));
+        menue(s, Str::MenuEffects, Str::EffectsNewSegment);
+        s.push_back(klickAuf("Doppelklick Particle",
+                             [] { return finde(typeName(PrimitiveType::Particle), "###newsegment"); },
+                             0, true));
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("Doppelklick legt Particle an", [] {
+            return anzahlSegmente() == 14 && gewaehlt() && gewaehlt()->type == PrimitiveType::Particle;
+        }));
+        s.push_back(pruefSchritt("Doppelklick: Vorgaben wie freshPrimitive", [] {
+            if (!gewaehlt()) return false;
+            Effect a, b;
+            a.primitives.push_back(*gewaehlt());
+            b.primitives.push_back(freshPrimitive(PrimitiveType::Particle));
+            return write(a) == write(b);
+        }));
+        s.push_back(allesZu());
+
+        // Klonen: Menue Edit > Clone.
+        s.push_back(tu("Segment 3 waehlen", [] { doc().selectedPrimitive = 2; }));
+        menue(s, Str::MenuEdit, Str::EditCloneEffect);
+        s.push_back(pruefSchritt("Klonen fuegt eine Kopie hinter dem Original ein", [] {
+            return anzahlSegmente() == 15 && doc().selectedPrimitive == 3 &&
+                   effekt().primitives.size() > 3 &&
+                   effekt().primitives[3].type == effekt().primitives[2].type;
+        }));
+        // Loeschen ueber den Werkzeugknopf.
+        s.push_back(klick("##delSegment", "##main"));
+        s.push_back(pruefSchritt("Werkzeugknopf Loeschen entfernt das Segment",
+                                 [] { return anzahlSegmente() == 14; }));
+        // Loeschen ueber die Entf-Taste.
+        s.push_back(taste(ImGuiKey_Delete));
+        s.push_back(pruefSchritt("Entf entfernt das Segment", [] { return anzahlSegmente() == 13; }));
+        // Rueckgaengig und Wiederholen.
+        s.push_back(taste(ImGuiKey_Z, true));
+        s.push_back(pruefSchritt("Strg+Z holt es zurueck", [] { return anzahlSegmente() == 14; }));
+        s.push_back(taste(ImGuiKey_Y, true));
+        s.push_back(pruefSchritt("Strg+Y loescht es wieder", [] { return anzahlSegmente() == 13; }));
+        menue(s, Str::MenuEdit, std::string(tr(Str::EditUndo)) + "*");
+        s.push_back(pruefSchritt("Edit > Undo holt es zurueck", [] { return anzahlSegmente() == 14; }));
+
+        // Abgeschaltetes Segment bleibt abgeschaltet, wenn ein anderes geloescht wird.
+        s.push_back(tu("Segment 5 abschalten, Segment 1 waehlen", [] {
+            doc().segmentEnabled.assign(effekt().primitives.size(), true);
+            if (doc().segmentEnabled.size() > 4) doc().segmentEnabled[4] = false;
+            doc().selectedPrimitive = 0;
+        }));
+        s.push_back(klick("##delSegment", "##main"));
+        s.push_back(pruefSchritt("Nach dem Loeschen von Segment 1 ist das vorher fuenfte "
+                                 "(jetzt vierte) noch abgeschaltet",
+                                 [] {
+                                     return doc().segmentEnabled.size() == effekt().primitives.size() &&
+                                            doc().segmentEnabled.size() > 3 &&
+                                            !doc().segmentEnabled[3];
+                                 }));
+        // Strg+D klont wie der Menuepunkt.
+        s.push_back(tu("Segment 1 waehlen", [] { doc().selectedPrimitive = 0; }));
+        s.push_back(taste(ImGuiKey_D, true));
+        s.push_back(pruefSchritt("Strg+D klont", [] { return anzahlSegmente() == 14; }));
+        return s;
+    }
+
+    static std::vector<Schritt> teilSpeichern() {
+        std::vector<Schritt> s;
+        s.push_back(teil("speichern"));
+        frischesDokument(s);
+        neuesSegment(s, PrimitiveType::Particle);
+        neuesSegment(s, PrimitiveType::Line);
+        const std::string pfad = arbeitsOrdner + "/speichern_test.efx";
+        s.push_back(tu("alte Datei weg", [pfad] { std::error_code ec; fs::remove(pfad, ec); }));
+        s.push_back(dateiAntwort(pfad));
+        menue(s, Str::MenuFile, Str::FileSaveAs);
+        s.push_back(pruefSchritt("Save As schreibt die Datei", [pfad] { return fs::exists(pfad); }));
+        s.push_back(pruefSchritt("Save As: Inhalt = write(Effekt)",
+                                 [pfad] { return leseDatei(pfad) == text(); }));
+        s.push_back(pruefSchritt("Save As: Dokument heisst jetzt wie die Datei",
+                                 [pfad] { return doc().filePath == pfad && !doc().dirty; }));
+        // Aenderung, dann Strg+S — ohne Dialog in dieselbe Datei.
+        s.push_back(tu("Segment 1 umbenennen", [] {
+            if (!effekt().primitives.empty()) effekt().primitives[0].name = "umbenannt";
+            doc().dirty = true;
+        }));
+        s.push_back(taste(ImGuiKey_S, true));
+        s.push_back(pruefSchritt("Strg+S speichert ohne Dialog",
+                                 [pfad] { return leseDatei(pfad).find("umbenannt") != std::string::npos; }));
+        // Neu oeffnen ueber File > Open.
+        frischesDokument(s);
+        s.push_back(dateiAntwort(pfad));
+        menue(s, Str::MenuFile, Str::FileOpen);
+        s.push_back(pruefSchritt("File > Open laedt die Datei",
+                                 [pfad] { return anzahlSegmente() == 2 && doc().filePath == pfad; }));
+        s.push_back(pruefSchritt("Geoeffnet = gespeichert", [pfad] { return text() == leseDatei(pfad); }));
+        s.push_back(pruefSchritt("Nach dem Oeffnen ist die Bearbeitungsansicht vorn",
+                                 [] { return !app->startTabActive_; }));
+        // Strg+O und Strg+N.
+        s.push_back(dateiAntwort(pfad));
+        s.push_back(taste(ImGuiKey_O, true));
+        s.push_back(pruefSchritt("Strg+O oeffnet (zweiter Reiter)", [] {
+            return app->documents_.size() >= 2 && anzahlSegmente() == 2;
+        }));
+        s.push_back(taste(ImGuiKey_N, true));
+        s.push_back(pruefSchritt("Strg+N: neuer leerer Effekt", [] { return anzahlSegmente() == 0; }));
+        // Datei mit der Toolbar oeffnen.
+        s.push_back(dateiAntwort(pfad));
+        s.push_back(klick("##open", "##main"));
+        s.push_back(pruefSchritt("Werkzeugknopf Oeffnen laedt", [] { return anzahlSegmente() == 2; }));
+        return s;
+    }
+
+    static std::vector<Schritt> teilAnsicht() {
+        std::vector<Schritt> s;
+        s.push_back(teil("ansicht"));
+        frischesDokument(s);
+        neuesSegment(s, PrimitiveType::Particle);
+        struct Umschalter { Str eintrag; bool layout::Settings::*wert; };
+        const Umschalter liste[] = {
+            {Str::ViewMainToolbar, &layout::Settings::showMainToolbar},
+            {Str::ViewEffectsToolbar, &layout::Settings::showEffectsToolbar},
+            {Str::ViewPlaybackToolbar, &layout::Settings::showPlaybackToolbar},
+            {Str::ViewWorldToolbar, &layout::Settings::showWorldToolbar},
+            {Str::ViewStatusBar, &layout::Settings::showStatusBar},
+            {Str::ViewDrawAxes, &layout::Settings::drawAxes},
+            {Str::ViewWindVector, &layout::Settings::drawWindVector},
+            {Str::ViewDrawRoom, &layout::Settings::drawRoom},
+            {Str::ViewDrawGrid, &layout::Settings::drawGrid},
+        };
+        for (const auto& u : liste) {
+            auto vorher = std::make_shared<bool>(false);
+            const std::string name = tr(u.eintrag);
+            auto wert = u.wert;
+            s.push_back(tu("merken " + name, [=] { *vorher = app->settings_.*wert; }));
+            menue(s, Str::MenuView, u.eintrag);
+            s.push_back(pruefSchritt("View > " + name + " schaltet um",
+                                     [=] { return app->settings_.*wert != *vorher; }));
+            menue(s, Str::MenuView, u.eintrag);
+            s.push_back(pruefSchritt("View > " + name + " schaltet zurueck",
+                                     [=] { return app->settings_.*wert == *vorher; }));
+        }
+        // Raumtextur und Darstellungsart.
+        const Str texturen[] = {Str::TextureNone, Str::TextureBrick, Str::TextureDirt,
+                                Str::TextureStucco};
+        for (int i = 0; i < 4; ++i) {
+            menue(s, Str::MenuView, Str::ViewTexturedRoom, texturen[i]);
+            s.push_back(pruefSchritt(std::string("Textured Room ") + tr(texturen[i]),
+                                     [i] { return app->settings_.roomTexture == i; }));
+            s.push_back(warte(2));
+            s.push_back(foto(std::string("raum_textur_") + std::to_string(i)));
+        }
+        const Str arten[] = {Str::RenderTextured, Str::RenderWireframe, Str::RenderOverdraw};
+        for (int i = 2; i >= 0; --i) {
+            menue(s, Str::MenuView, Str::ViewRenderOptions, arten[i]);
+            s.push_back(pruefSchritt(std::string("Render Options ") + tr(arten[i]),
+                                     [i] { return app->settings_.effectRenderMode == i; }));
+        }
+        // Ausrichtung.
+        const Str ausrichtung[] = {Str::EffectsOrientUp, Str::EffectsOrientSide,
+                                   Str::EffectsOrientDown};
+        for (int i = 2; i >= 0; --i) {
+            menue(s, Str::MenuEffects, ausrichtung[i]);
+            s.push_back(pruefSchritt(std::string("Effects > ") + tr(ausrichtung[i]),
+                                     [i] { return app->settings_.orientation == i; }));
+        }
+        // Play Sounds umschalten.
+        auto tonVorher = std::make_shared<bool>(false);
+        s.push_back(tu("Ton merken", [=] { *tonVorher = app->settings_.playSounds; }));
+        menue(s, Str::MenuEffects, Str::EffectsPlaySounds);
+        s.push_back(pruefSchritt("Play Sounds schaltet um",
+                                 [=] { return app->settings_.playSounds != *tonVorher; }));
+        menue(s, Str::MenuEffects, Str::EffectsPlaySounds);
+        // Ansicht zuruecksetzen.
+        s.push_back(tu("Kamera verdrehen", [] { app->camera_.lookFrom(camera::Orbit::View::Top); }));
+        menue(s, Str::MenuView, Str::ViewResetCamera);
+        s.push_back(pruefSchritt("Reset View stellt die Kamera zurueck", [] {
+            camera::Orbit frisch;
+            frisch.reset(app->settings_.worldScale);
+            return std::fabs(frisch.distance() - app->camera_.distance()) < 0.01f;
+        }));
+        return s;
+    }
+
+    static std::vector<Schritt> teilWiedergabe() {
+        std::vector<Schritt> s;
+        s.push_back(teil("wiedergabe"));
+        frischesDokument(s);
+        neuesSegment(s, PrimitiveType::Particle);
+        s.push_back(tu("Lebensdauer 2000 ms", [] {
+            if (gewaehlt()) gewaehlt()->life = Range::single(2000.0f);
+        }));
+        menue(s, Str::MenuEffects, Str::EffectsPlay);
+        s.push_back(pruefSchritt("Effects > Play spielt ab",
+                                 [] { return doc().clock.state() == timeline::State::Playing; }));
+        s.push_back(warte(10));
+        s.push_back(pruefSchritt("Beim Abspielen ist ein Teilchen aktiv", [] { return app->lastAlive_ > 0; }));
+        s.push_back(foto("wiedergabe_partikel"));
+        menue(s, Str::MenuEffects, Str::EffectsPause);
+        s.push_back(pruefSchritt("Effects > Pause haelt an",
+                                 [] { return doc().clock.state() == timeline::State::Paused; }));
+        auto zeit = std::make_shared<float>(0.0f);
+        s.push_back(tu("Zeit merken", [=] { *zeit = doc().clock.timeMs(); }));
+        s.push_back(warte(10));
+        s.push_back(pruefSchritt("In der Pause steht die Zeit", [=] { return doc().clock.timeMs() == *zeit; }));
+        menue(s, Str::MenuEffects, Str::EffectsPause);
+        s.push_back(pruefSchritt("Pause noch einmal: laeuft weiter",
+                                 [] { return doc().clock.state() == timeline::State::Playing; }));
+        menue(s, Str::MenuEffects, Str::EffectsStop);
+        s.push_back(pruefSchritt("Effects > Stop haelt an",
+                                 [] { return doc().clock.state() == timeline::State::Stopped; }));
+        // Leertaste.
+        s.push_back(taste(ImGuiKey_Space));
+        s.push_back(pruefSchritt("Leertaste spielt ab",
+                                 [] { return doc().clock.state() == timeline::State::Playing; }));
+        s.push_back(klick("##tlStop", "##main"));
+        s.push_back(pruefSchritt("Stop-Knopf haelt an",
+                                 [] { return doc().clock.state() == timeline::State::Stopped; }));
+        return s;
+    }
+
+    static std::vector<Schritt> teilEigenschaften() {
+        std::vector<Schritt> s;
+        s.push_back(teil("eigenschaften"));
+        frischesDokument(s);
+        neuesSegment(s, PrimitiveType::Particle);
+        s.push_back(warte(3));
+        feld(s, "count/min", "7");
+        s.push_back(pruefSchritt("Count eintippen setzt count = 7", [] {
+            return gewaehlt() && gewaehlt()->count.set && gewaehlt()->count.min == 7.0f;
+        }));
+        s.push_back(pruefSchritt("Feldaenderung steht im Rueckgaengig-Verlauf",
+                                 [] { return doc().undo.canUndo(); }));
+        s.push_back(taste(ImGuiKey_Z, true));
+        s.push_back(pruefSchritt("Strg+Z nimmt die Feldaenderung zurueck",
+                                 [] { return gewaehlt() && gewaehlt()->count.min != 7.0f; }));
+        feld(s, "life/min", "1500");
+        s.push_back(pruefSchritt("Life eintippen setzt life = 1500",
+                                 [] { return gewaehlt() && gewaehlt()->life.min == 1500.0f; }));
+        s.push_back(tu("Lage der Life-Felder melden", [] {
+            for (const char* m : {"life/min", "life/ranged", "count/min", "count/ranged"}) {
+                if (const Element* e = findeMarke(m)) {
+                    char z[200];
+                    std::snprintf(z, sizeof(z), "%s: %.0f..%.0f (sichtbar %.0f..%.0f) in %s", m,
+                                  double(e->rect.Min.x), double(e->rect.Max.x),
+                                  double(e->clip.Min.x), double(e->clip.Max.x), e->innen.c_str());
+                    diag::info(z);
+                }
+            }
+        }));
+        s.push_back(klickMarke("life/ranged"));
+        s.push_back(pruefSchritt("Haekchen ~ macht Life zu einer Spanne",
+                                 [] { return gewaehlt() && gewaehlt()->life.ranged; }));
+        s.push_back(warte(2));
+        feld(s, "life/max", "2500");
+        s.push_back(pruefSchritt("Life max = 2500", [] {
+            return gewaehlt() && gewaehlt()->life.max == 2500.0f && gewaehlt()->life.min == 1500.0f;
+        }));
+        s.push_back(pruefSchritt("Text der Datei enthaelt life 1500 2500", [] {
+            const bool da = text().find("1500 2500") != std::string::npos;
+            if (!da) schreibeDatei(arbeitsOrdner + "/eigenschaften_text.efx", text());
+            return da;
+        }));
+        return s;
+    }
+
+    static std::vector<Schritt> ende() {
+        std::vector<Schritt> s;
+        s.push_back(teil("ende"));
+        s.push_back(allesZu());
+        s.push_back(tu("Ergebnis schreiben und beenden", [] {
+            std::ostringstream o;
+            o << "efxed Selbsttest: " << ok << " OK, " << fehler << " FEHLER\n";
+            for (const auto& f : fehlerListe) o << "FEHLER " << f << "\n";
+            schreibeDatei(paths::configDir() + "/selbsttest_ergebnis.txt", o.str());
+            diag::info("Selbsttest fertig: " + std::to_string(ok) + " OK, " +
+                       std::to_string(fehler) + " FEHLER");
+            // Ungespeicherte Testdokumente sollen beim Beenden nicht fragen.
+            for (auto& d : app->documents_) d.dirty = false;
+            app->wantsQuit_ = true;
+        }));
+        return s;
+    }
+
+    static std::vector<Schritt> alle(const std::string& auswahl) {
+        struct Teil { const char* name; std::vector<Schritt> (*f)(); };
+        const Teil teile[] = {
+            {"start", &teilStart},
+            {"segmente", &teilSegmente},
+            {"speichern", &teilSpeichern},
+            {"ansicht", &teilAnsicht},
+            {"wiedergabe", &teilWiedergabe},
+            {"eigenschaften", &teilEigenschaften},
+        };
+        std::vector<Schritt> s;
+        for (const Teil& t : teile) {
+            const bool gewollt = auswahl == "alles" || auswahl == "1" ||
+                                 ("," + auswahl + ",").find("," + std::string(t.name) + ",") !=
+                                     std::string::npos;
+            if (!gewollt) continue;
+            for (Schritt& x : t.f()) s.push_back(std::move(x));
+        }
+        for (Schritt& x : ende()) s.push_back(std::move(x));
+        return s;
+    }
+};
+
+App* Selbsttest::app = nullptr;
+render::Renderer* Selbsttest::renderer = nullptr;
+std::vector<Selbsttest::Schritt> Selbsttest::schritte;
+size_t Selbsttest::schritt = 0;
+int Selbsttest::imSchritt = 0;
+int Selbsttest::bild = 0;
+int Selbsttest::ok = 0;
+int Selbsttest::fehler = 0;
+std::vector<std::string> Selbsttest::fehlerListe;
+std::string Selbsttest::arbeitsOrdner;
+std::string Selbsttest::fotoOrdner;
+std::deque<std::string> Selbsttest::dateiAntworten;
+std::vector<std::string> Selbsttest::geoeffnetPerShell;
+std::string Selbsttest::aktuellerTeil = "vorlauf";
+
+// ===========================================================================
+// Einstieg
+// ===========================================================================
+namespace {
+std::string g_auswahl;
+}
+
+bool selbsttestVorbereiten() {
+    const char* modus = std::getenv("EFXED_SELBSTTEST");
+    if (modus == nullptr || modus[0] == '\0') return false;
+    g_auswahl = modus;
+    g_an = true;
+    // Eigener Einstellungsordner: der Test liest und schreibt NIE die echten
+    // Einstellungen. Neben der .exe, damit mehrere Laeufe nebeneinander gehen.
+    wchar_t exe[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    fs::path ordner = fs::path(exe).parent_path() / "selbsttest";
+    std::error_code ec;
+    fs::remove_all(ordner, ec);
+    fs::create_directories(ordner / "arbeit", ec);
+    paths::setOverrideDirForTesting(ordner.string());
+    Selbsttest::arbeitsOrdner = (ordner / "arbeit").string();
+    if (const char* f = std::getenv("EFXED_FOTOS"); f && f[0]) {
+        Selbsttest::fotoOrdner = f;
+        fs::create_directories(Selbsttest::fotoOrdner, ec);
+    }
+    return true;
+}
+
+bool selbsttestAktiv() { return g_an; }
+
+void selbsttestVorBild() {
+    if (!g_an) return;
+    if (g_mausAn) ImGui::GetIO().AddMousePosEvent(g_maus.x, g_maus.y);
+}
+
+void selbsttestNachBild(App& app, render::Renderer* renderer) {
+    if (!g_an) return;
+    using T = Selbsttest;
+    T::renderer = renderer;
+    ImGuiContext& g = *ImGui::GetCurrentContext();
+    g.TestEngineHookItems = true;
+    ++T::bild;
+
+    if (T::bild == 1) {
+        T::app = &app;
+        // Die Fenster von Windows durch eigene Antworten ersetzen.
+        app.setFileDialog([](bool save, const char*, const char*) -> std::string {
+            if (T::dateiAntworten.empty()) {
+                T::meldeFehler(std::string("unerwarteter Dateidialog (") +
+                               (save ? "Speichern" : "Oeffnen") + ")");
+                return {};
+            }
+            std::string p = T::dateiAntworten.front();
+            T::dateiAntworten.pop_front();
+            return p;
+        });
+        app.setFolderDialog([](const char*, const char*) -> std::string {
+            if (T::dateiAntworten.empty()) {
+                T::meldeFehler("unerwartete Ordnerauswahl");
+                return {};
+            }
+            std::string p = T::dateiAntworten.front();
+            T::dateiAntworten.pop_front();
+            return p;
+        });
+        app.setShellOpen([](const std::string& p) { T::geoeffnetPerShell.push_back(p); });
+        // Englisch, wie das Original — die Beschriftungen kommen ohnehin aus tr().
+        i18n::setLanguage(i18n::Language::English);
+        app.settings().languageCode = "en";
+        // Kein Ton aus dem Lautsprecher, solange getestet wird.
+        app.settings().playSounds = false;
+        T::schritte = T::alle(g_auswahl);
+        diag::info("Selbsttest: " + std::to_string(T::schritte.size()) + " Schritte (" +
+                   g_auswahl + ")");
+    }
+
+    // Ein paar Bilder Vorlauf, bis alles einmal gezeichnet ist.
+    if (T::bild > 5 && T::schritt < T::schritte.size()) {
+        if (T::imSchritt == 0) diag::info("Selbsttest Schritt: " + T::schritte[T::schritt].text);
+        // Kopie: ein Schritt darf weitere einfuegen, dabei zieht der Vektor um.
+        const std::function<bool(int)> tun = T::schritte[T::schritt].tun;
+        if (tun(T::imSchritt)) {
+            ++T::schritt;
+            T::imSchritt = 0;
+        } else if (++T::imSchritt > 6000) {
+            T::meldeFehler(T::schritte[T::schritt].text + ": haengt");
+            ++T::schritt;
+            T::imSchritt = 0;
+        }
+    }
+    g_elemente.clear();
+}
+
+}  // namespace efx::gui
+
+// ===========================================================================
+// Die Haken, die ImGui mit IMGUI_ENABLE_TEST_ENGINE aufruft. Im globalen
+// Namensraum, so deklariert sie imgui_internal.h.
+// ===========================================================================
+void ImGuiTestEngineHook_ItemAdd(ImGuiContext* ctx, ImGuiID id, const ImRect& bb,
+                                 const ImGuiLastItemData*) {
+    efx::gui::selbsttestMerkeElement(ctx, id, bb);
+}
+
+void ImGuiTestEngineHook_ItemInfo(ImGuiContext* ctx, ImGuiID id, const char* label,
+                                  ImGuiItemStatusFlags) {
+    efx::gui::selbsttestMerkeText(ctx, id, label);
+}
+
+void ImGuiTestEngineHook_Log(ImGuiContext*, const char*, ...) {}
+
+const char* ImGuiTestEngine_FindItemDebugLabel(ImGuiContext*, ImGuiID) { return nullptr; }

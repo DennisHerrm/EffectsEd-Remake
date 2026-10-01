@@ -501,6 +501,11 @@ enum class Str {
     VImpactKills,
     VModelEmpty,
     VElectricityFlags,
+    UndoFieldChange,
+    SaveChangesTitle,
+    SaveChangesText,
+    SaveChangesYes,
+    SaveChangesNo,
     Count,
 };
 

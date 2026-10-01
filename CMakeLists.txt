@@ -10,6 +10,11 @@ if(MSVC)
     # Redistributable.
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     add_compile_options(/W4 /permissive- /utf-8 /MP)
+    # Symbole auch im Release-Bau, in eine eigene .pdb. Die .exe bleibt gleich
+    # gross und gleich schnell; liegt die .pdb daneben, nennt das
+    # Absturzprotokoll Funktion, Datei und Zeile statt einer nackten Adresse.
+    add_compile_options($<$<CONFIG:Release>:/Zi>)
+    add_link_options($<$<CONFIG:Release>:/DEBUG> $<$<CONFIG:Release>:/OPT:REF> $<$<CONFIG:Release>:/OPT:ICF>)
     # Zeigerverkuerzung ist unter x64 nie harmlos, MSVC meldet sie aber nur
     # als Warnung — und eine Warnung unter zwoelf anderen uebersieht man.
     #   C4311/C4302  Zeiger -> zu schmale Zahl
@@ -121,7 +126,10 @@ if(WIN32)
     target_include_directories(imgui PUBLIC
         ${imgui_SOURCE_DIR}
         ${imgui_SOURCE_DIR}/backends
+        ${CMAKE_CURRENT_SOURCE_DIR}/gui
     )
+    # Testhaken fuer den Selbsttest (gui/imgui_config.h, gui/selbsttest.cpp).
+    target_compile_definitions(imgui PUBLIC IMGUI_USER_CONFIG="imgui_config.h")
     if(MSVC)
         # ImGui ist nicht unser Code — dessen Warnungen sollen unsere nicht
         # zudecken.
@@ -149,6 +157,8 @@ if(WIN32)
         gui/renderer_gl3.cpp
     gui/audio_win32.cpp
     gui/icons.cpp
+    gui/selbsttest.cpp
+    gui/app_commands.cpp
     )
     target_link_libraries(efxed PRIVATE
         efxcore imgui

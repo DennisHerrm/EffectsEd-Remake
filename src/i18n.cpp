@@ -52,7 +52,7 @@ const Entry kTable[] = {
     {"Segment Enabled", "Segment aktiv", "启用片段", "セグメント有効"},  // EffectsEnabled
     {"Play", "Abspielen", "播放", "再生"},  // EffectsPlay
     {"Pause", "Anhalten", "暂停", "一時停止"},  // EffectsPause
-    {"Stop", "Beenden", "停止", "停止"},  // EffectsStop
+    {"Stop", "Stopp", "停止", "停止"},  // EffectsStop
     {"Repeat", "Wiederholen", "循环", "繰り返し"},  // EffectsRepeat
     {"Orient Up", "Nach oben ausrichten", "朝上", "上向き"},  // EffectsOrientUp
     {"Orient Sideways", "Seitwärts ausrichten", "朝侧面", "横向き"},  // EffectsOrientSide
@@ -491,6 +491,11 @@ const Entry kTable[] = {
     {"impactKills only works together with usePhysics.", "impactKills wirkt nur zusammen mit usePhysics.", "impactKills 仅在配合 usePhysics 时有效。", "impactKills は usePhysics と併用したときのみ効きます。"},  // VImpactKills
     {"useModel set but no models list.", "useModel gesetzt, aber keine models-Liste.", "设置了 useModel 但没有 models 列表。", "useModel が設定されていますが models のリストがありません。"},  // VModelEmpty
     {"on Electricity these flags mean something else —%s. That is intended, not accidental.", "bei Electricity bedeuten diese Flags etwas anderes —%s. Das ist beabsichtigt, nicht versehentlich.", "在 Electricity 上这些标志含义不同 —%s。这是有意为之，而非误设。", "Electricity ではこれらのフラグは別の意味です —%s。意図的なもので、間違いではありません。"},  // VElectricityFlags
+    {"field changed", "Feld geändert", "字段已更改", "フィールド変更"},  // UndoFieldChange
+    {"Save Changes", "Änderungen speichern", "保存更改", "変更を保存"},  // SaveChangesTitle
+    {"Save changes to %s?", "Änderungen an %s speichern?", "是否保存对 %s 的更改？", "%s への変更を保存しますか？"},  // SaveChangesText
+    {"Save", "Speichern", "保存", "保存"},  // SaveChangesYes
+    {"Don't Save", "Nicht speichern", "不保存", "保存しない"},  // SaveChangesNo
 };
 
 static_assert(sizeof(kTable) / sizeof(kTable[0]) == static_cast<size_t>(Str::Count),
