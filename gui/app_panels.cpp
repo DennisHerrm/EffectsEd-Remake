@@ -479,7 +479,9 @@ void App::drawToolbar(float dpiScale) {
         for (int i = 0; i < layout::worldScaleCount(); ++i) {
             if (layout::worldScales()[i].unitsPerFoot == settings_.worldScale) current = i;
         }
-        if (ImGui::BeginCombo("##worldScale", layout::worldScales()[current].label())) {
+        const bool scaleOpen = ImGui::BeginCombo("##worldScale", layout::worldScales()[current].label());
+        testmarke::marke("weltmassstab");
+        if (scaleOpen) {
             for (int i = 0; i < layout::worldScaleCount(); ++i) {
                 const auto& scale = layout::worldScales()[i];
                 if (ImGui::Selectable(scale.label(), i == current)) {
