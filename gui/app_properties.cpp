@@ -28,6 +28,7 @@
 //   - Der Name steht nicht hier, sondern wird in der Segmentliste umbenannt
 //     (Doppelklick oder F2) — wie im Original.
 #include "app.h"
+#include "imgui_internal.h"
 #include "efx/diag.h"
 #include "efx/i18n.h"
 #include "testmarke.h"
@@ -152,6 +153,88 @@ void frameEnd(bool wasOpen) {
     ImGui::Dummy(ImVec2(0.0f, ImGui::GetStyle().ItemSpacing.y * 0.5f));
 }
 
+// --- Spinner ----------------------------------------------------------------
+//
+// Jedes Zahlenfeld des Originals hat Pfeile (Up-Down-Control). Gemessen
+// (ORIGINAL-INVENTAR 4.2): ein Klick geht um einen festen Schritt je Feld und
+// RUNDET auf ein Vielfaches davon (Life 50 -> 200 -> 300, Alpha 0.55 -> 0.7),
+// an den Bereichsgrenzen wird geklemmt. Gedrueckt halten wiederholt.
+//
+// Schritt und Grenzen gelten fuer die naechsten Zeilen; SpinScope setzt sie
+// und stellt sie danach wieder her. Ohne Angabe: Schritt 1, unbegrenzt.
+struct Spin {
+    float step = 1.0f;
+    float lo = -1.0e30f;
+    float hi = 1.0e30f;
+};
+Spin g_spin;
+
+struct SpinScope {
+    Spin saved;
+    SpinScope(float step, float lo = -1.0e30f, float hi = 1.0e30f) : saved(g_spin) {
+        g_spin = Spin{step, lo, hi};
+    }
+    ~SpinScope() { g_spin = saved; }
+    SpinScope(const SpinScope&) = delete;
+    SpinScope& operator=(const SpinScope&) = delete;
+};
+
+// Ein Schritt nach oben oder unten, gerundet wie im Original.
+float spinStep(float value, int direction, const Spin& spin) {
+    const double step = spin.step > 0.0f ? spin.step : 1.0;
+    // Der kleine Zuschlag faengt Gleitkommareste ab: 0.65 / 0.1 ist 6.4999...
+    const double scaled = (static_cast<double>(value) + direction * step) / step;
+    const double rounded = std::floor(scaled + 0.5 + 1.0e-6) * step;
+    return static_cast<float>(std::clamp(rounded, static_cast<double>(spin.lo),
+                                         static_cast<double>(spin.hi)));
+}
+
+// Die beiden Pfeile rechts neben einem Feld. Gibt -1, 0 oder +1 zurueck.
+int spinner(const char* mark) {
+    const float h = ImGui::GetFrameHeight();
+    const float w = std::round(h * 0.6f);
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    const float half = std::floor(h * 0.5f);
+    int direction = 0;
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    ImGui::PushItemFlag(ImGuiItemFlags_ButtonRepeat, true);
+    for (int k = 0; k < 2; ++k) {
+        const ImVec2 pos(at.x, at.y + (k == 0 ? 0.0f : half));
+        const ImVec2 size(w, k == 0 ? half : h - half);
+        ImGui::SetCursorScreenPos(pos);
+        ImGui::PushID(k);
+        if (ImGui::InvisibleButton("##spin", size)) direction = k == 0 ? 1 : -1;
+        const std::string name = std::string(mark) + (k == 0 ? "+" : "-");
+        testmarke::marke(name.c_str());
+        const bool hot = ImGui::IsItemHovered();
+        const bool held = ImGui::IsItemActive();
+        draw->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y),
+                            ImGui::GetColorU32(held  ? ImGuiCol_FrameBgActive
+                                               : hot ? ImGuiCol_FrameBgHovered
+                                                     : ImGuiCol_FrameBg));
+        // Ein kleines Dreieck, nach oben bzw. unten.
+        const float cx = pos.x + size.x * 0.5f;
+        const float cy = pos.y + size.y * 0.5f;
+        const float r = std::max(2.0f, std::min(size.x, size.y) * 0.28f);
+        const ImU32 ink = ImGui::GetColorU32(ImGuiCol_Text);
+        if (k == 0) {
+            draw->AddTriangleFilled(ImVec2(cx - r, cy + r * 0.5f), ImVec2(cx + r, cy + r * 0.5f),
+                                    ImVec2(cx, cy - r * 0.6f), ink);
+        } else {
+            draw->AddTriangleFilled(ImVec2(cx - r, cy - r * 0.5f), ImVec2(cx, cy + r * 0.6f),
+                                    ImVec2(cx + r, cy - r * 0.5f), ink);
+        }
+        ImGui::PopID();
+    }
+    ImGui::PopItemFlag();
+    // Den Platz als ein Element belegen, damit die Zeile weiterlaeuft.
+    ImGui::SetCursorScreenPos(at);
+    ImGui::Dummy(ImVec2(w, h));
+    return direction;
+}
+
+float spinnerWidth() { return std::round(ImGui::GetFrameHeight() * 0.6f); }
+
 // --- Zahlenzeilen -----------------------------------------------------------
 //
 // Ein Wertepaar. `fallback`: was die Engine nimmt, wenn nichts in der Datei
@@ -161,16 +244,30 @@ bool pairFields(float& low, float& high, bool set, float speed, float lo, float 
     bool changed = false;
     if (!set) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
     ImGui::SetCursorScreenPos(ImVec2(minX(), ImGui::GetCursorScreenPos().y));
-    ImGui::SetNextItemWidth(g_page.field);
+    ImGui::SetNextItemWidth(g_page.field - spinnerWidth());
     float a = low;
-    const bool minChanged = ImGui::DragFloat("##min", &a, speed, lo, hi, format);
+    bool minChanged = ImGui::DragFloat("##min", &a, speed, lo, hi, format);
     testmarke::marke("min");
     ImGui::SameLine(0.0f, 0.0f);
+    ImGui::PushID("minSpin");
+    if (const int d = spinner("min"); d != 0) {
+        a = spinStep(low, d, g_spin);
+        minChanged = true;
+    }
+    ImGui::PopID();
+    ImGui::SameLine(0.0f, 0.0f);
     ImGui::SetCursorScreenPos(ImVec2(maxX(), ImGui::GetCursorScreenPos().y));
-    ImGui::SetNextItemWidth(g_page.field);
+    ImGui::SetNextItemWidth(g_page.field - spinnerWidth());
     float b = high;
-    const bool maxChanged = ImGui::DragFloat("##max", &b, speed, lo, hi, format);
+    bool maxChanged = ImGui::DragFloat("##max", &b, speed, lo, hi, format);
     testmarke::marke("max");
+    ImGui::SameLine(0.0f, 0.0f);
+    ImGui::PushID("maxSpin");
+    if (const int d = spinner("max"); d != 0) {
+        b = spinStep(high, d, g_spin);
+        maxChanged = true;
+    }
+    ImGui::PopID();
     if (!set) ImGui::PopStyleColor();
     // Min bleibt <= Max: wer Min ueber Max zieht, nimmt Max mit, und
     // umgekehrt. Das Original schrieb "life 900 100" in die Datei.
@@ -336,7 +433,10 @@ bool channelGroup(const char* id, Str title, Channel& c, Str startLabel, Str end
     ImGui::EndDisabled();
     changed |= transitionRow(c.curveFlags, c.curveWords);
     ImGui::BeginDisabled((c.curveFlags & kCurveClamp) == 0);
-    changed |= rowRange("parm", tr(Str::FieldParm), c.parm, 0.0f, 1.0f);
+    {
+        const SpinScope spin(1.0f);   // Parameter: Schritt 1, unbegrenzt (gemessen)
+        changed |= rowRange("parm", tr(Str::FieldParm), c.parm, 0.0f, 1.0f);
+    }
     ImGui::EndDisabled();
     changed |= randomBox(c.curveFlags, c.curveWords);
     frameEnd(open);
@@ -475,7 +575,10 @@ bool App::editColorChannel(ColorChannel& c) {
     ImGui::EndDisabled();
     changed |= transitionRow(c.curveFlags, c.curveWords);
     ImGui::BeginDisabled((c.curveFlags & kCurveClamp) == 0);
-    changed |= rowRange("parm", tr(Str::FieldParm), c.parm, 0.0f, 1.0f);
+    {
+        const SpinScope spin(1.0f);   // Parameter: Schritt 1, unbegrenzt (gemessen)
+        changed |= rowRange("parm", tr(Str::FieldParm), c.parm, 0.0f, 1.0f);
+    }
     ImGui::EndDisabled();
     changed |= randomBox(c.curveFlags, c.curveWords);
     frameEnd(open);
@@ -580,7 +683,10 @@ void App::drawTab(fields::Tab tab, Primitive& p) {
         // --- Generation ---------------------------------------------------------
         case fields::Tab::Generation: {
             minMaxHeader();
-            changed |= rowRange("delay", tr(Str::FieldDelayMs), p.delay, 0.0f, 10.0f, 0.0f, 1.0e7f);
+            {
+                const SpinScope spin(10.0f, 0.0f);
+                changed |= rowRange("delay", tr(Str::FieldDelayMs), p.delay, 0.0f, 10.0f, 0.0f, 1.0e7f);
+            }
             {
                 ImGui::SetCursorScreenPos(ImVec2(minX(), ImGui::GetCursorScreenPos().y));
                 ImGui::BeginDisabled(!applies(fields::Field::Count));
@@ -589,10 +695,16 @@ void App::drawTab(fields::Tab tab, Primitive& p) {
                 ImGui::EndDisabled();
             }
             ImGui::BeginDisabled(!applies(fields::Field::Count));
-            changed |= rowRange("count", tr(Str::FieldCount), p.count, kDefaultCount, 1.0f, 0.0f, 1000.0f, "%.0f");
+            {
+                const SpinScope spin(1.0f, 0.0f, 1000.0f);
+                changed |= rowRange("count", tr(Str::FieldCount), p.count, kDefaultCount, 1.0f, 0.0f, 1000.0f, "%.0f");
+            }
             ImGui::EndDisabled();
             ImGui::BeginDisabled(!applies(fields::Field::Life));
-            changed |= rowRange("life", tr(Str::FieldLifeMs), p.life, kDefaultLife, 10.0f, 0.0f, 1.0e7f);
+            {
+                const SpinScope spin(100.0f, 0.0f);
+                changed |= rowRange("life", tr(Str::FieldLifeMs), p.life, kDefaultLife, 10.0f, 0.0f, 1.0e7f);
+            }
             ImGui::EndDisabled();
 
             // Sichtweite. Das Haekchen schaltet die Zeile; der Wert ist eine
@@ -691,9 +803,15 @@ void App::drawTab(fields::Tab tab, Primitive& p) {
                     changed = true;
                 }
                 ImGui::Unindent();
-                changed |= rowRange("radius", tr(Str::FieldRadiusWidth), p.radius, kDefaultRadius);
+                {
+                    const SpinScope spin(1.0f, 0.0f);
+                    changed |= rowRange("radius", tr(Str::FieldRadiusWidth), p.radius, kDefaultRadius);
+                }
                 ImGui::BeginDisabled(!onCylinder);
-                changed |= rowRange("height", tr(Str::FieldHeight), p.height, kDefaultRadius);
+                {
+                    const SpinScope spin(1.0f, 0.0f);
+                    changed |= rowRange("height", tr(Str::FieldHeight), p.height, kDefaultRadius);
+                }
                 ImGui::EndDisabled();
                 ImGui::SetCursorScreenPos(ImVec2(minX(), ImGui::GetCursorScreenPos().y));
                 changed |= flagBox(tr(Str::OriginAxisFromOffset), p.spawnFlags, kSpawnAxisFromSphere,
@@ -702,9 +820,12 @@ void App::drawTab(fields::Tab tab, Primitive& p) {
             }
             ImGui::EndDisabled();
 
-            changed |= channelGroup("size", Str::GroupSizeWidth, p.size, Str::FieldStartSize,
-                                    Str::FieldEndSize, kDefaultCurve, 0.5f,
-                                    applies(fields::Field::Size));
+            {
+                const SpinScope spin(1.0f, 0.0f);
+                changed |= channelGroup("size", Str::GroupSizeWidth, p.size, Str::FieldStartSize,
+                                        Str::FieldEndSize, kDefaultCurve, 0.5f,
+                                        applies(fields::Field::Size));
+            }
 
             // Drehung steht im Original hier nur bei Typen ohne Bewegungsseite
             // (Decal); bei allen anderen auf der Seite Motion.
@@ -795,7 +916,10 @@ void App::drawTab(fields::Tab tab, Primitive& p) {
                 testmarke::marke("physik/teuer");
             }
             ImGui::Unindent();
-            changed |= rowRange("bounce", tr(Str::FieldBounceOnly), p.elasticity, 0.0f, 0.05f);
+            {
+                const SpinScope spin(0.1f, 0.0f);
+                changed |= rowRange("bounce", tr(Str::FieldBounceOnly), p.elasticity, 0.0f, 0.05f);
+            }
             {
                 const bool open = frameBegin("impacts", tr(Str::PhysicsImpacts));
                 changed |= flagBox(tr(Str::PhysicsKillOnImpact), p.flags, kFlagKillOnImpact, false,
@@ -880,9 +1004,12 @@ void App::drawTab(fields::Tab tab, Primitive& p) {
             changed |= flagBox(tr(Str::ColorModulateAlpha), p.flags, kFlagUseAlpha, true,
                                "modulate");
             minMaxHeader();
-            changed |= channelGroup("alpha", Str::GroupAlphaTransparency, p.alpha, Str::FieldStartAlpha,
-                                    Str::FieldEndAlpha, kDefaultCurve, 0.01f,
-                                    applies(fields::Field::Alpha));
+            {
+                const SpinScope spin(0.1f, 0.0f, 1.0f);
+                changed |= channelGroup("alpha", Str::GroupAlphaTransparency, p.alpha, Str::FieldStartAlpha,
+                                        Str::FieldEndAlpha, kDefaultCurve, 0.01f,
+                                        applies(fields::Field::Alpha));
+            }
             ImGui::EndDisabled();
             break;
         }
@@ -935,7 +1062,10 @@ void App::drawTab(fields::Tab tab, Primitive& p) {
                 // Die Unruhe steht in der Datei unter "bounce" (mElasticity) —
                 // der Kern liest sie dort (particles.cpp). Vorher schrieb
                 // dieses Feld in `variance`, und der Blitz blieb unbeeindruckt.
-                changed |= rowRange("chaos", tr(Str::LineChaos), p.elasticity, 0.0f, 0.05f);
+                {
+                    const SpinScope spin(0.1f, 0.0f);
+                    changed |= rowRange("chaos", tr(Str::LineChaos), p.elasticity, 0.0f, 0.05f);
+                }
                 changed |= flagBox(tr(Str::LineTaper), p.flags, kFlagElectricityTaper, false, "taper");
                 changed |= flagBox(tr(Str::LineBranch), p.flags, kFlagElectricityBranch, false, "branch");
                 changed |= flagBox(tr(Str::LineGrow), p.flags, kFlagElectricityGrow, false, "grow");
@@ -949,11 +1079,17 @@ void App::drawTab(fields::Tab tab, Primitive& p) {
         case fields::Tab::Tail:
         case fields::Tab::LengthSize2:
             minMaxHeader();
-            changed |= channelGroup("length", Str::FieldLength, p.length, Str::FieldStartLength,
-                                    Str::FieldEndLength, kDefaultCurve, 0.5f);
-            changed |= channelGroup("size2", Str::GroupSize2Width2, p.size2, Str::FieldStartSize2,
-                                    Str::FieldEndSize2, kDefaultCurve, 0.5f,
-                                    applies(fields::Field::Size2));
+            {
+                const SpinScope spin(1.0f, 0.0f);
+                changed |= channelGroup("length", Str::FieldLength, p.length, Str::FieldStartLength,
+                                        Str::FieldEndLength, kDefaultCurve, 0.5f);
+            }
+            {
+                const SpinScope spin(1.0f, 0.0f);
+                changed |= channelGroup("size2", Str::GroupSize2Width2, p.size2, Str::FieldStartSize2,
+                                        Str::FieldEndSize2, kDefaultCurve, 0.5f,
+                                        applies(fields::Field::Size2));
+            }
             break;
 
         // --- Model ----------------------------------------------------------------
@@ -1048,7 +1184,10 @@ void App::drawTab(fields::Tab tab, Primitive& p) {
         // --- CameraShake ----------------------------------------------------------
         case fields::Tab::CameraShake: {
             minMaxHeader();
-            changed |= rowRange("radius", tr(Str::FieldRadius), p.radius, kDefaultRadius, 5.0f, 0.0f, 1.0e6f);
+            {
+                const SpinScope spin(1.0f, 0.0f);
+                changed |= rowRange("radius", tr(Str::FieldRadius), p.radius, kDefaultRadius, 5.0f, 0.0f, 1.0e6f);
+            }
             // Zwei senkrechte Regler wie im Original: links Min, rechts Max,
             // 0 = nichts, 8 = Beben, 16 = Wahnsinn. Min bleibt <= Max — das
             // Original liess "intensity 12 6" zu (Fotos des Anwenders).

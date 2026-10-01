@@ -1150,6 +1150,70 @@ public:
         return s;
     }
 
+    // --- Spinner: Pfeile neben jedem Zahlenfeld wie im Original -----------
+    static std::vector<Schritt> teilSpinner() {
+        std::vector<Schritt> s;
+        s.push_back(teil("spinner"));
+        frischesDokument(s);
+        neuesSegment(s, PrimitiveType::Particle);
+        s.push_back(klick(tr(Str::TabGeneration), "properties"));
+        s.push_back(tu("Life 50", [] {
+            gewaehlt()->life = Range::single(50.0f);
+            app->recordChange("test");
+        }));
+        s.push_back(warte(2));
+        s.push_back(fensterFoto("spinner_generation"));
+        // Gemessen: Life 50 -> 200 -> 300 (Schritt 100, auf Vielfache gerundet).
+        s.push_back(klickMarke("life/min+"));
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("Life-Pfeil hoch: 50 -> 200 (gerundet wie im Original)", [] {
+            return gewaehlt()->life.min == 200.0f && gewaehlt()->life.max == 200.0f;
+        }));
+        s.push_back(klickMarke("life/min+"));
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("noch einmal: 300", [] { return gewaehlt()->life.min == 300.0f; }));
+        s.push_back(klickMarke("life/max-"));
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("Max-Pfeil runter: 200, Min folgt (Min <= Max)", [] {
+            return gewaehlt()->life.max == 200.0f && gewaehlt()->life.min == 200.0f;
+        }));
+        s.push_back(taste(ImGuiKey_Z, true));
+        s.push_back(pruefSchritt("Spinner-Klick ist rueckgaengig machbar",
+                                 [] { return gewaehlt()->life.max == 300.0f; }));
+        // Grenze: Count 0 bleibt beim Pfeil runter 0.
+        s.push_back(tu("Count 0", [] {
+            gewaehlt()->count = Range::single(0.0f);
+            app->recordChange("test");
+        }));
+        s.push_back(warte(2));
+        s.push_back(klickMarke("count/min-"));
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("Count 0, Pfeil runter: bleibt 0 (Grenze 0..1000)",
+                                 [] { return gewaehlt()->count.min == 0.0f; }));
+        // Alpha: Schritt 0.1, 0.55 -> 0.7 -> 0.8 (gemessen).
+        s.push_back(klick(tr(Str::TabColor), "properties"));
+        s.push_back(tu("Alpha 0.55", [] {
+            gewaehlt()->alpha.present = true;
+            gewaehlt()->alpha.start = Range::single(0.55f);
+            app->recordChange("test");
+        }));
+        s.push_back(warte(2));
+        s.push_back(klickMarke("alpha/start/min+"));
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("Alpha-Pfeil hoch: 0.55 -> 0.7", [] {
+            return std::fabs(gewaehlt()->alpha.start.min - 0.7f) < 1e-5f;
+        }));
+        s.push_back(klickMarke("alpha/start/min+"));
+        s.push_back(klickMarke("alpha/start/min+"));
+        s.push_back(klickMarke("alpha/start/min+"));
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("Alpha bleibt bei 1 stehen (Grenze 0..1)", [] {
+            return std::fabs(gewaehlt()->alpha.start.min - 1.0f) < 1e-5f;
+        }));
+        s.push_back(fensterFoto("spinner_color"));
+        return s;
+    }
+
     static std::vector<Schritt> teilWiedergabe() {
         std::vector<Schritt> s;
         s.push_back(teil("wiedergabe"));
@@ -2570,6 +2634,7 @@ public:
             {"dokumente", &teilDokumente},
             {"werkzeug", &teilWerkzeug},
             {"nachlegen", &teilNachlegen},
+            {"spinner", &teilSpinner},
             {"felder", &teilFelder},
         };
         // Nicht in "alles": dauert mit allen Effekten mehrere Minuten.
