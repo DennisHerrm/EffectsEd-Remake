@@ -865,14 +865,14 @@ private:
     }
 
     bool uploadVertices(const Vertex* data, int count) {
-        vertexBase_ = appendRing(vertexBuffer_, vertexCapacity_, vertexUsed_, data, count,
-                                 D3D11_BIND_VERTEX_BUFFER);
+        vertexBase_ = static_cast<int>(appendRing(vertexBuffer_, vertexCapacity_, vertexUsed_, data, count,
+                                 D3D11_BIND_VERTEX_BUFFER));
         return vertexBase_ >= 0;
     }
 
     bool uploadIndices(const unsigned short* data, int count) {
-        indexBase_ = appendRing(indexBuffer_, indexCapacity_, indexUsed_, data, count,
-                                D3D11_BIND_INDEX_BUFFER);
+        indexBase_ = static_cast<int>(appendRing(indexBuffer_, indexCapacity_, indexUsed_, data, count,
+                                D3D11_BIND_INDEX_BUFFER));
         return indexBase_ >= 0;
     }
 
@@ -911,8 +911,8 @@ private:
     UINT indexCapacity_ = 0;
     UINT vertexUsed_ = 0;
     UINT indexUsed_ = 0;
-    long long vertexBase_ = 0;
-    long long indexBase_ = 0;
+    int vertexBase_ = 0;
+    int indexBase_ = 0;
     ComPtr<ID3D11ShaderResourceView> whiteSrv_;
     ComPtr<ID3D11SamplerState> sampler_;
     ComPtr<ID3D11SamplerState> clampSampler_;
