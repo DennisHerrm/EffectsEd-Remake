@@ -321,6 +321,12 @@ void buildFonts(float dpiScale, bool fullCjk) {
             builder.AddRanges(current == efx::i18n::Language::Japanese
                                   ? io.Fonts->GetGlyphRangesJapanese()
                                   : io.Fonts->GetGlyphRangesChineseSimplifiedCommon());
+            // Dazu jedes Zeichen, das die Oberflaeche in dieser Sprache
+            // wirklich benutzt. Die "Common"-Tabelle von ImGui enthaelt nicht
+            // alle: im Menue stand "编?" statt "编辑" (Selbsttest-Foto).
+            for (int i = 0; i < static_cast<int>(efx::i18n::Str::Count); ++i) {
+                builder.AddText(efx::i18n::trIn(current, static_cast<efx::i18n::Str>(i)));
+            }
         }
         builder.BuildRanges(&ranges);
 

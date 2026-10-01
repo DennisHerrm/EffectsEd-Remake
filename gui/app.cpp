@@ -1,4 +1,5 @@
 #include "app.h"
+#include "testmarke.h"
 #include "app_shared.h"
 
 #include <fstream>
@@ -885,6 +886,7 @@ void App::drawViewport(render::Renderer* renderer, float width, float height) {
         const ImVec2 uv0(0.0f, flipped ? 1.0f : 0.0f);
         const ImVec2 uv1(1.0f, flipped ? 0.0f : 1.0f);
         ImGui::Image(toImTexture(texture), ImVec2(innerW, innerH), uv0, uv1);
+        testmarke::marke("ansicht");
 
         // Erst die Fahne, dann die Kamera: beide haengen an der linken
         // Maustaste, und wer die Fahne greift, will nicht drehen.
