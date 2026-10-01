@@ -1690,7 +1690,10 @@ public:
 
         // Wiedergabe-Einstellungen: Modus aendern, Abbrechen -> unveraendert.
         auto modus = std::make_shared<int>(0);
-        s.push_back(tu("Wiedergabemodus merken", [=] { *modus = static_cast<int>(app->playback_.mode); }));
+        s.push_back(tu("Wiedergabemodus merken", [=] {
+            *modus = static_cast<int>(app->playback_.mode);
+            doc().clock.setEndMode(*modus == 0 ? timeline::EndMode::Stop : timeline::EndMode::Repeat);
+        }));
         menue(s, Str::MenuEffects, Str::EffectsPlaybackSettings);
         s.push_back(warteBis("Wiedergabe offen", [] { return dialogOffen("###playback"); }, 30));
         s.push_back(fensterFoto("dialog_wiedergabe"));
@@ -1702,6 +1705,10 @@ public:
         s.push_back(klick(tr(Str::MsgCancel), "###playback"));
         s.push_back(pruefSchritt("Wiedergabe: Abbrechen laesst den Modus, wie er war",
                                  [=] { return static_cast<int>(app->playback_.mode) == *modus; }));
+        s.push_back(pruefSchritt("Wiedergabe: Abbrechen laesst auch die Uhr, wie sie war", [=] {
+            const bool einmal = *modus == 0;
+            return (doc().clock.endMode() == timeline::EndMode::Stop) == einmal;
+        }));
         s.push_back(allesZu());
 
         // Eigener Ursprung: Abbrechen -> unveraendert.
