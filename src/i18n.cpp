@@ -537,6 +537,8 @@ const Entry kTable[] = {
     {"Advanced: all flags", "Erweitert: alle Flags", "高级：全部标志", "詳細：すべてのフラグ"},  // PropAdvancedFlags
     {"Grey values are engine defaults and are not written to the file", "Graue Werte sind Vorgaben der Engine und stehen nicht in der Datei", "灰色数值是引擎默认值，不会写入文件", "灰色の値はエンジンの既定値で、ファイルには書き込まれません"},  // PropDefaultHint
     {"Rename", "Umbenennen", "重命名", "名前を変更"},  // ListRename
+    {"Unnamed", "Unbenannt", "未命名", "名前なし"},  // ListUnnamedPrefix
+    {"Copy of", "Kopie von", "副本：", "コピー："},  // ListCopyOf
     {"X", "X", "X", "X"},  // BoxX
     {"Y", "Y", "Y", "Y"},  // BoxY
     {"Z", "Z", "Z", "Z"},  // BoxZ

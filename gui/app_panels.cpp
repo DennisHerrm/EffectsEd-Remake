@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <filesystem>
 #include "app_shared.h"
 #include "testmarke.h"
 
@@ -38,6 +39,22 @@ void App::drawMenuBar() {
         if (ImGui::MenuItem(tr(Str::FileSaveAs))) cmdSaveAs();
         ImGui::Separator();
         if (ImGui::MenuItem(tr(Str::FileReloadAssets), "F5")) rescanAssets();
+        ImGui::Separator();
+        // Zuletzt geoeffnet, bis 16 wie im Original. Die Liste wurde schon
+        // immer gefuehrt, aber nirgends angezeigt.
+        if (ImGui::BeginMenu(tr(Str::FileRecent), !settings_.recentFiles.empty())) {
+            int number = 0;
+            std::string chosen;
+            for (const std::string& path : settings_.recentFiles) {
+                if (++number > 16) break;
+                std::error_code ec;
+                const bool exists = std::filesystem::exists(path, ec);
+                const std::string label = std::to_string(number % 10) + "  " + path;
+                if (ImGui::MenuItem(label.c_str(), nullptr, false, exists)) chosen = path;
+            }
+            ImGui::EndMenu();
+            if (!chosen.empty()) openFile(chosen);
+        }
         ImGui::Separator();
         if (ImGui::MenuItem(tr(Str::FileExit), "Alt+F4")) requestQuit();
         ImGui::EndMenu();
@@ -980,7 +997,8 @@ void App::drawSegmentList(float width, float height) {
             ImGui::PopID();
             ImGui::SameLine();
 
-            const std::string label = p.name.empty() ? tr(Str::ListUnnamed) : p.name;
+            // Ohne Namen wie im Original "Unnamed <Typ> <Nummer>".
+            const std::string label = displayName(i);
             // Umbenennen in der Zeile, wie im Original (dort: ein zweiter
             // Klick auf die gewaehlte Zeile). Hier: Doppelklick, F2 oder
             // Kontextmenue. Enter uebernimmt, Esc verwirft.
@@ -1066,10 +1084,31 @@ void App::drawSegmentList(float width, float height) {
             ImGui::Text("%d", i + 1);
 
             ImGui::TableSetColumnIndex(3);
-            if (p.delay.set) ImGui::Text("%g", p.delay.min); else ImGui::TextDisabled("-");
+            // Wie im Original: "%4.2f", bei einer Spanne "min - max".
+            const auto rangeText = [](const Range& r, float fallback) {
+                char text[64];
+                if (!r.set) {
+                    std::snprintf(text, sizeof(text), "%.2f", static_cast<double>(fallback));
+                } else if (r.min != r.max) {
+                    std::snprintf(text, sizeof(text), "%.2f - %.2f", static_cast<double>(r.min),
+                                  static_cast<double>(r.max));
+                } else {
+                    std::snprintf(text, sizeof(text), "%.2f", static_cast<double>(r.min));
+                }
+                return std::string(text);
+            };
+            if (p.delay.set) {
+                ImGui::TextUnformatted(rangeText(p.delay, 0.0f).c_str());
+            } else {
+                ImGui::TextDisabled("%s", rangeText(p.delay, 0.0f).c_str());
+            }
 
             ImGui::TableSetColumnIndex(4);
-            if (p.count.set) ImGui::Text("%g", p.count.min); else ImGui::TextDisabled("-");
+            if (p.count.set) {
+                ImGui::TextUnformatted(rangeText(p.count, 1.0f).c_str());
+            } else {
+                ImGui::TextDisabled("%s", rangeText(p.count, 1.0f).c_str());
+            }
 
             ImGui::PopID();
         }

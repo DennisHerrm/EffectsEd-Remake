@@ -323,7 +323,12 @@ private:
     // Die Vorschau muss neu aufgebaut werden (einmal je Bild, nicht je Feld).
     bool previewDirty_ = false;
     void refreshDiagnostics();
+public:
+    // Der Fensterrahmen setzt ihn bei jeder Aenderung (vorher wurde er
+    // berechnet, aber nie gesetzt - im Titel stand immer nur "EffectsEd").
     std::string windowTitle() const;
+
+private:
 
     // Die geöffneten Dateien. Immer mindestens eine — ein Fenster ohne
     // Dokument gäbe es sonst nur beim Schließen des letzten Reiters, und für
@@ -581,6 +586,8 @@ private:
     bool moveSegment(int from, int to);
     // Nach einer Spalte der Segmentliste umsortieren (Klick auf den Kopf).
     void sortSegments(int column, bool ascending);
+    // Anzeigename eines Segments: sein Name, sonst "Unnamed <Typ> <n>".
+    std::string displayName(int index) const;
     // Umbenennen in der Segmentliste (Doppelklick, F2, Kontextmenue).
     void startRename(int index);
     int renamingSegment_ = -1;

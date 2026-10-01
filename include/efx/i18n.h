@@ -547,6 +547,8 @@ enum class Str {
     PropAdvancedFlags,
     PropDefaultHint,
     ListRename,
+    ListUnnamedPrefix,
+    ListCopyOf,
     BoxX,
     BoxY,
     BoxZ,

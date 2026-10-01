@@ -32,6 +32,14 @@ constexpr const char kEfxFilter[] = "Effect files (*.efx)\0*.efx\0All files\0*.*
 constexpr size_t kMaxSegments = 24;
 }  // namespace
 
+std::string App::displayName(int index) const {
+    if (index < 0 || index >= static_cast<int>(doc().effect.primitives.size())) return {};
+    const Primitive& p = doc().effect.primitives[static_cast<size_t>(index)];
+    if (!p.name.empty()) return p.name;
+    return std::string(tr(Str::ListUnnamedPrefix)) + " " + typeName(p.type) + " " +
+           std::to_string(index + 1);
+}
+
 bool App::hasSelection() const {
     return doc().selectedPrimitive >= 0 &&
            doc().selectedPrimitive < static_cast<int>(doc().effect.primitives.size());
@@ -195,31 +203,17 @@ void App::cmdCloneSegment() {
     if (!canCloneSegment()) return;
     const size_t at = static_cast<size_t>(doc().selectedPrimitive);
     Primitive copy = doc().effect.primitives[at];
-    // Der Name bekommt eine freie Ziffer, sonst haette man zwei gleichnamige
-    // Segmente — und die Pruefung meldet das zu Recht.
-    if (!copy.name.empty()) {
-        for (int n = 2; n < 100; ++n) {
-            const std::string candidate = copy.name + " " + std::to_string(n);
-            bool taken = false;
-            for (const auto& p : doc().effect.primitives) {
-                if (p.name == candidate) taken = true;
-            }
-            if (!taken) {
-                // Der Parser begrenzt Namen auf 31 Zeichen.
-                copy.name = candidate.size() > 31 ? candidate.substr(0, 31) : candidate;
-                break;
-            }
-        }
-    }
+    // Wie im Original: "Copy of <Name>", ans Ende der Liste, ausgewaehlt.
+    // Der Parser nimmt hoechstens 31 Zeichen (CPrimitiveTemplate::mName[32]);
+    // das Original schnitt hier ebenfalls ab.
+    std::string name = std::string(tr(Str::ListCopyOf)) + " " + displayName(static_cast<int>(at));
+    if (name.size() > 31) name.resize(31);
+    copy.name = name;
     doc().segmentEnabled.resize(doc().effect.primitives.size(), true);
     const bool wasOn = doc().segmentEnabled[at];
-    doc().effect.primitives.insert(doc().effect.primitives.begin() +
-                                       static_cast<std::ptrdiff_t>(at) + 1,
-                                   std::move(copy));
-    doc().segmentEnabled.insert(doc().segmentEnabled.begin() +
-                                    static_cast<std::ptrdiff_t>(at) + 1,
-                                wasOn);
-    ++doc().selectedPrimitive;
+    doc().effect.primitives.push_back(std::move(copy));
+    doc().segmentEnabled.push_back(wasOn);
+    doc().selectedPrimitive = static_cast<int>(doc().effect.primitives.size()) - 1;
     recordChange(tr(Str::UndoCloneSegment));
     refreshPreview();
 }
