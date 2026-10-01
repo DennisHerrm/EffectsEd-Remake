@@ -418,7 +418,11 @@ bool addOrientedQuad(scene::Mesh& mesh, const camera::Vec3& centre,
 
 // Ein stehender Zylinder: Mantel aus Segmenten, unten `radius`, oben
 // `radius2`, `length` hoch. Ohne Deckel — die Engine zeichnet auch keine.
-void addCylinder(scene::Mesh& mesh, const camera::Vec3& base,
+//
+// Gibt wie addBillboard zurueck, ob der Mantel Platz hatte: die Indizes sind
+// 16 Bit, und ein Zylinder braucht 4 * segments Eckpunkte auf einmal. Ein
+// leerer Zylinder (Laenge oder beide Radien null) zaehlt als gelungen.
+bool addCylinder(scene::Mesh& mesh, const camera::Vec3& base,
                  const camera::Vec3& axis, float length, float radius,
                  float radius2, uint32_t colour, int segments = 16);
 

@@ -94,39 +94,29 @@ std::vector<Diagnostic> validate(const Effect& effect, Dialect target) {
             add(out, Severity::Warning, where + ": " + message(i18n::Str::VNameDuplicate), i18n::Str::VNameDuplicate);
         }
 
-        // impactfx braucht zweierlei: das Flag UND Physik.
+        // Die Flags, wie die Engine sie sieht (efx::effectiveFlags).
         //
-        // Ohne Kollision gibt es keinen Aufprall — das ist der zweite
-        // Stolperstein, und er faellt noch weniger auf als der erste, weil
-        // die beiden Felder in verschiedenen Reitern stehen.
-        if (!p.impactFx.empty()) {
-            if ((p.flags & kFlagImpactRunsFx) == 0) {
-                add(out, Severity::Warning,
-                    where + ": " + message(i18n::Str::VImpactFxNoFlag),
-                    i18n::Str::VImpactFxNoFlag);
-            } else if ((p.flags & kFlagApplyPhysics) == 0) {
-                add(out, Severity::Warning,
-                    where + ": " + message(i18n::Str::VImpactFxNoPhysics),
-                    i18n::Str::VImpactFxNoPhysics);
-            }
-        }
+        // Hier standen drei Warnungen: "impactfx ohne Flag", "impactfx ohne
+        // Physik" und "deathfx ohne Flag — der Effekt wird nie gestartet".
+        // Alle drei waren falsch. Der Parser setzt die Bits selbst, sobald
+        // die Liste in der Datei steht — CPrimitiveTemplate in FxTemplate.cpp,
+        // SP (ParseFX) wie MP (je Funktion am Ende):
+        //
+        //     ParseImpactFxStrings  mFlags |= FX_IMPACT_RUNS_FX | FX_APPLY_PHYSICS
+        //     ParseDeathFxStrings   mFlags |= FX_DEATH_RUNS_FX
+        //
+        // In drei ausgelieferten Dateien stand impactfx ohne Flag; das Spiel
+        // spielt sie, die Pruefung meldete "wird nie gestartet". Wer das Flag
+        // daraufhin von Hand nachtraegt, aendert nichts.
+        const uint32_t engineFlags = effectiveFlags(p);
 
-        // deathfx ohne das Flag bleibt wirkungslos.
-        //
-        // Der haeufigste Irrtum an diesem Feld: es zu setzen reicht nicht.
-        // CParticle::Die prueft FX_DEATH_RUNS_FX, und ohne das Flag passiert
-        // beim Sterben nichts — die Datei sieht aber vollstaendig aus.
-        if (!p.deathFx.empty()) {
-            if ((p.flags & kFlagDeathRunsFx) == 0) {
-                add(out, Severity::Warning,
-                    where + ": " + message(i18n::Str::VDeathFxNoFlag),
-                    i18n::Str::VDeathFxNoFlag);
-            } else if ((p.flags & kFlagKillOnImpact) != 0) {
-                // Kein Fehler, aber ueberraschend genug fuer einen Hinweis.
-                add(out, Severity::Info,
-                    where + ": " + message(i18n::Str::VDeathFxKillOnImpact),
-                    i18n::Str::VDeathFxKillOnImpact);
-            }
+        // Uebrig bleibt der Hinweis zu killOnImpact: CParticle::Die startet
+        // deathfx nur `if ( mFlags & FX_DEATH_RUNS_FX && !(mFlags &
+        // FX_KILL_ON_IMPACT) )`. Kein Fehler, aber ueberraschend genug.
+        if (!p.deathFx.empty() && (engineFlags & kFlagKillOnImpact) != 0) {
+            add(out, Severity::Info,
+                where + ": " + message(i18n::Str::VDeathFxKillOnImpact),
+                i18n::Str::VDeathFxKillOnImpact);
         }
 
         // Ein abweichendes Ende ohne Uebergangsart bleibt wirkungslos.
@@ -154,14 +144,9 @@ std::vector<Diagnostic> validate(const Effect& effect, Dialect target) {
                     where + ": " + message(i18n::Str::VNoCurve, entry.name),
                     i18n::Str::VNoCurve);
             }
-            if (p.rgb.present && p.rgb.curveFlags == 0 && p.rgb.end.set &&
-                (p.rgb.end.min[0] != p.rgb.start.min[0] ||
-                 p.rgb.end.min[1] != p.rgb.start.min[1] ||
-                 p.rgb.end.min[2] != p.rgb.start.min[2])) {
-                add(out, Severity::Warning,
-                    where + ": " + message(i18n::Str::VNoCurve, "rgb"),
-                    i18n::Str::VNoCurve);
-            }
+            // rgb steht NICHT hier, sondern weiter unten mit eigenem Text
+            // (VRgbEndNoCurve). Es stand an beiden Stellen — jede rgb-Meldung
+            // kam doppelt, in 35 ausgelieferten Dateien je zweimal.
         }
 
         if (usesShaders(p.type) && p.shaders.empty() && p.models.empty()) {
@@ -174,9 +159,11 @@ std::vector<Diagnostic> validate(const Effect& effect, Dialect target) {
             add(out, Severity::Error, where + ": " + message(i18n::Str::VRunnerNoFx), i18n::Str::VRunnerNoFx);
         }
         if (usesLife(p.type) && !p.life.set) {
-            // Die Engine raeumt erst auf, wenn mTime *groesser* als killTime ist
-            // (FxUtil.cpp, strikt groesser). Bei life 0 heisst das: genau ein
-            // Bild lang sichtbar. Fuer einen Schuss, der ohnehin jedes Bild neu
+            // Ohne life lebt die Primitive 50 ms, nicht "genau ein Bild": der
+            // Erzeuger von CPrimitiveTemplate (FxTemplate.cpp) setzt
+            // `mLife.SetRange( 50.0f, 50.0f )`. Die Vorschau rechnet ebenso
+            // (particles.cpp). Der alte Text sprach von einem Bild — das
+            // waere life 0. Fuer einen Schuss, der ohnehin jedes Bild neu
             // ausgeloest wird, ist das gewollt — deshalb nur ein Hinweis.
             add(out, Severity::Info, where + ": " + message(i18n::Str::VNoLife), i18n::Str::VNoLife);
         }
@@ -245,7 +232,12 @@ std::vector<Diagnostic> validate(const Effect& effect, Dialect target) {
                     where + ": " + label + " " + message(i18n::Str::VWaveNoEnd), i18n::Str::VWaveNoEnd);
             }
             // random moduliert nur den vorhandenen Anteil; ohne end wandert der
-            // Wert zwischen start und 0, was oft nicht gemeint ist.
+            // Wert zwischen start und 1 — mAlphaEnd, mSizeEnd usw. stehen im
+            // Erzeuger von CPrimitiveTemplate auf 1.0. Fuer wave gilt dasselbe:
+            // ohne end schwingt es zwischen start und 1. Hier stand "zwischen
+            // start und 0" bzw. "ohne end schwingt nichts" — beides nur
+            // richtig, solange die Vorschau ein fehlendes Ende als Startwert
+            // nahm, und das war selbst der Fehler.
             if ((curve & kCurveRandom) && !hasEnd) {
                 add(out, Severity::Info,
                     where + ": " + label + " " +
@@ -300,29 +292,12 @@ std::vector<Diagnostic> validate(const Effect& effect, Dialect target) {
         //
         // Wer also einen Farbverlauf schreibt und "linear" vergisst, bekommt
         // die Startfarbe und sucht den Fehler beim Shader.
+        //
+        // Fuer size, size2, length und alpha prueft das VNoCurve weiter oben;
+        // hier steht nur noch rgb. Beide Stellen hatten frueher alle Kanaele
+        // — jede Warnung kam doppelt, in zwei Formulierungen, und sah aus wie
+        // zwei verschiedene Probleme.
         {
-            struct ChannelCheck { const char* name; const Channel& channel; };
-            const ChannelCheck channels[] = {
-                {"size", p.size}, {"size2", p.size2}, {"length", p.length},
-                {"alpha", p.alpha},
-            };
-            for (const auto& entry : channels) {
-                if (!entry.channel.present) continue;
-                const bool hasCurve = entry.channel.curveFlags != 0;
-                const bool endDiffers =
-                    entry.channel.end.set &&
-                    (entry.channel.end.min != entry.channel.start.min ||
-                     entry.channel.end.max != entry.channel.start.max);
-                // Diese Bedingung wird weiter oben schon geprueft (VNoCurve).
-                //
-                // Beide Regeln waren richtig und pruefen genau dasselbe: ein
-                // `end`, das von `start` abweicht, ohne Uebergangsart. Beim
-                // Anwender stand deshalb JEDE dieser Warnungen doppelt im
-                // Meldungsfenster, in zwei verschiedenen Formulierungen — was
-                // aussieht, als seien es zwei verschiedene Probleme.
-                (void)endDiffers;
-                (void)hasCurve;
-            }
             const bool rgbEndDiffers =
                 p.rgb.end.set &&
                 (p.rgb.end.min[0] != p.rgb.start.min[0] ||
@@ -396,7 +371,8 @@ std::vector<Diagnostic> validate(const Effect& effect, Dialect target) {
         if ((p.flags & kFlagDeathRunsFx) && p.deathFx.empty()) {
             add(out, Severity::Warning, where + ": " + message(i18n::Str::VDeathFxEmpty), i18n::Str::VDeathFxEmpty);
         }
-        if ((p.flags & kFlagKillOnImpact) && !(p.flags & kFlagApplyPhysics)) {
+        // Physik kann auch aus einer impactfx-Liste kommen (engineFlags).
+        if ((p.flags & kFlagKillOnImpact) && !(engineFlags & kFlagApplyPhysics)) {
             add(out, Severity::Warning, where + ": " + message(i18n::Str::VImpactKills), i18n::Str::VImpactKills);
         }
         if ((p.flags & kFlagAttachedModel) && p.models.empty() &&
