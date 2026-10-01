@@ -816,6 +816,10 @@ public:
         s.push_back(pruefSchritt("Strg+Z holt es zurueck", [] { return anzahlSegmente() == 14; }));
         s.push_back(taste(ImGuiKey_Y, true));
         s.push_back(pruefSchritt("Strg+Y loescht es wieder", [] { return anzahlSegmente() == 13; }));
+        s.push_back(taste(ImGuiKey_Backspace, false, false, true));
+        s.push_back(pruefSchritt("Alt+Ruecktaste holt es zurueck (Accelerator des Originals)",
+                                 [] { return anzahlSegmente() == 14; }));
+        s.push_back(taste(ImGuiKey_Y, true));
         menue(s, Str::MenuEdit, std::string(tr(Str::EditUndo)) + "*");
         s.push_back(pruefSchritt("Edit > Undo holt es zurueck", [] { return anzahlSegmente() == 14; }));
 
