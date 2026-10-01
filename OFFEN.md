@@ -48,8 +48,8 @@ steht und dort nicht als behoben markiert ist, ist offen.
 | Lage | CPU in 5 s vorher | nachher |
 |---|---|---|
 | minimiert | 2,3 s | 0,02 s |
-| sichtbar, untätig, OpenGL | 6,4 s | 0,08 s |
-| sichtbar, untätig, Direct3D 11 | ≈1,1 s | ≈0,05 s |
+| sichtbar, untätig, OpenGL (ohne VSync-Intervall) | 6,4 s | 0,08 s |
+| sichtbar, untätig, Direct3D 11 | 0,3–0,6 s | 0,05 s |
 
 Läuft ein Effekt, weht die Windfahne oder ist die Bibliothek offen, wird
 weiter jedes Bild gezeichnet. Große Explosionen (≈600 Teilchen bildschirmfüllend)
