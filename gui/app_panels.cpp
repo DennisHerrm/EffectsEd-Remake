@@ -11,8 +11,11 @@
 #include "app.h"
 #include "efx/i18n.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include "app_shared.h"
+#include "testmarke.h"
 
 // SplitterBehavior gehoert zur internen Schnittstelle von ImGui. Sie hier
 // zu benutzen ist eine bewusste Ausnahme: einen Teiler selbst zu bauen
@@ -801,6 +804,50 @@ bool App::insertSegmentAt(int at) {
     return true;
 }
 
+void App::sortSegments(int column, bool ascending) {
+    auto& list = doc().effect.primitives;
+    if (list.size() < 2) return;
+    doc().segmentEnabled.resize(list.size(), true);
+    // Die Reihenfolge als Indexliste sortieren, dann alles danach umstellen -
+    // so wandern Haekchen und Auswahl mit ihrem Segment.
+    std::vector<size_t> order(list.size());
+    for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+    const auto lower = [](std::string s) {
+        for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return s;
+    };
+    const auto less = [&](size_t a, size_t b) {
+        const Primitive& pa = list[a];
+        const Primitive& pb = list[b];
+        switch (column) {
+            case 0: return lower(pa.name) < lower(pb.name);
+            case 1: return std::string(typeName(pa.type)) < std::string(typeName(pb.type));
+            case 3: return (pa.delay.set ? pa.delay.min : 0.0f) < (pb.delay.set ? pb.delay.min : 0.0f);
+            case 4: return (pa.count.set ? pa.count.min : 0.0f) < (pb.count.set ? pb.count.min : 0.0f);
+            default: return a < b;  // "Segment": die Nummer selbst
+        }
+    };
+    std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+        return ascending ? less(a, b) : less(b, a);
+    });
+    bool changed = false;
+    for (size_t i = 0; i < order.size(); ++i) changed |= order[i] != i;
+    if (!changed) return;
+    std::vector<Primitive> sorted;
+    std::vector<bool> enabled;
+    int selected = -1;
+    for (size_t i = 0; i < order.size(); ++i) {
+        sorted.push_back(std::move(list[order[i]]));
+        enabled.push_back(doc().segmentEnabled[order[i]]);
+        if (static_cast<int>(order[i]) == doc().selectedPrimitive) selected = static_cast<int>(i);
+    }
+    list = std::move(sorted);
+    doc().segmentEnabled = std::move(enabled);
+    doc().selectedPrimitive = selected;
+    recordChange(tr(Str::UndoSortSegments));
+    refreshPreview();
+}
+
 void App::drawSegmentList(float width, float height) {
     ImGui::BeginChild("segments", ImVec2(width, height), ImGuiChildFlags_Borders);
 
@@ -808,16 +855,46 @@ void App::drawSegmentList(float width, float height) {
                                   ImGuiTableFlags_RowBg |
                                   ImGuiTableFlags_Resizable |
                                   ImGuiTableFlags_Sortable |
+                                  // Drei Zustaende: auf, ab, unsortiert. Ohne
+                                  // das sortiert ImGui beim Start die erste
+                                  // Spalte - und zeigte einen Pfeil, obwohl
+                                  // nichts sortiert war.
+                                  ImGuiTableFlags_SortTristate |
                                   ImGuiTableFlags_ScrollY;
 
     if (ImGui::BeginTable("segmentTable", 5, flags)) {
         ImGui::TableSetupScrollFreeze(0, 1);
+        // Breiten aus der Schriftgroesse: mit festen 70 Punkten stand bei
+        // 150 Prozent "Seg..." statt "Segment" im Kopf.
+        const float em = ImGui::GetFontSize();
         ImGui::TableSetupColumn(tr(Str::ListName), ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn(tr(Str::ListType), ImGuiTableColumnFlags_WidthFixed, 130.0f);
-        ImGui::TableSetupColumn(tr(Str::ListSegment), ImGuiTableColumnFlags_WidthFixed, 70.0f);
-        ImGui::TableSetupColumn(tr(Str::ListDelay), ImGuiTableColumnFlags_WidthFixed, 80.0f);
-        ImGui::TableSetupColumn(tr(Str::ListCount), ImGuiTableColumnFlags_WidthFixed, 80.0f);
-        ImGui::TableHeadersRow();
+        ImGui::TableSetupColumn(tr(Str::ListType), ImGuiTableColumnFlags_WidthFixed, em * 9.0f);
+        ImGui::TableSetupColumn(tr(Str::ListSegment), ImGuiTableColumnFlags_WidthFixed, em * 5.5f);
+        ImGui::TableSetupColumn(tr(Str::ListDelay), ImGuiTableColumnFlags_WidthFixed, em * 5.0f);
+        ImGui::TableSetupColumn(tr(Str::ListCount), ImGuiTableColumnFlags_WidthFixed, em * 5.0f);
+        // Die Kopfzeile von Hand statt TableHeadersRow: so bekommt jeder Kopf
+        // eine Testmarke (der Selbsttest klickt ihn zum Sortieren an).
+        ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
+        for (int column = 0; column < 5; ++column) {
+            if (!ImGui::TableSetColumnIndex(column)) continue;
+            ImGui::TableHeader(ImGui::TableGetColumnName(column));
+            const std::string mark = "liste/kopf" + std::to_string(column);
+            testmarke::marke(mark.c_str());
+        }
+
+        // Klick auf einen Spaltenkopf sortiert die SEGMENTE um, wie im
+        // Original ("The order of the segments can be changed by clicking on
+        // the header of a column"). Vorher zeigte der Kopf einen Pfeil, und
+        // nichts geschah.
+        if (ImGuiTableSortSpecs* specs = ImGui::TableGetSortSpecs()) {
+            if (specs->SpecsDirty) {
+                if (specs->SpecsCount > 0) {
+                    sortSegments(specs->Specs[0].ColumnIndex,
+                                 specs->Specs[0].SortDirection == ImGuiSortDirection_Ascending);
+                }
+                specs->SpecsDirty = false;
+            }
+        }
 
         // Rechte Maustaste auf die Liste: Zeilenhoehe.
         //

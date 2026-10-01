@@ -548,6 +548,7 @@ S = [
  ("VElectricityFlags","on Electricity these flags mean something else —%s. That is intended, not accidental.","bei Electricity bedeuten diese Flags etwas anderes —%s. Das ist beabsichtigt, nicht versehentlich.","在 Electricity 上这些标志含义不同 —%s。这是有意为之，而非误设。","Electricity ではこれらのフラグは別の意味です —%s。意図的なもので、間違いではありません。"),
  # --- Ungespeicherte Aenderungen, Feldbearbeitung (Nacht 1./2.10.2026)
  ("UndoFieldChange","field changed","Feld geändert","字段已更改","フィールド変更"),
+ ("UndoSortSegments","segments sorted","Segmente sortiert","片段已排序","セグメントを並べ替え"),
  ("SaveChangesTitle","Save Changes","Änderungen speichern","保存更改","変更を保存"),
  ("SaveChangesText","Save changes to %s?","Änderungen an %s speichern?","是否保存对 %s 的更改？","%s への変更を保存しますか？"),
  ("SaveChangesYes","Save","Speichern","保存","保存"),

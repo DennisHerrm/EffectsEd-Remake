@@ -502,6 +502,7 @@ enum class Str {
     VModelEmpty,
     VElectricityFlags,
     UndoFieldChange,
+    UndoSortSegments,
     SaveChangesTitle,
     SaveChangesText,
     SaveChangesYes,

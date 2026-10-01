@@ -579,6 +579,8 @@ private:
     // Ein Segment an eine andere Stelle schieben. Gibt false zurueck, wenn
     // sich nichts geaendert hat.
     bool moveSegment(int from, int to);
+    // Nach einer Spalte der Segmentliste umsortieren (Klick auf den Kopf).
+    void sortSegments(int column, bool ascending);
     // Ein neues Segment an dieser Stelle einfuegen.
     bool insertSegmentAt(int at);
     // Baut die Vorschau neu und behaelt Zeit und Zustand der Uhr.
