@@ -1,0 +1,64 @@
+// Die Windows-Ressourcen des Programms: bislang nur das Symbol.
+//
+// Warum eine eigene Datei und nicht irgendwo eingebettet: Windows liest das
+// Symbol aus der .exe, bevor das Programm laeuft — Explorer, Taskleiste und
+// Alt+Tab zeigen es, ohne dass eine Zeile Quelltext ausgefuehrt wurde. Das
+// geht nur ueber die Ressourcentabelle.
+//
+// Die Nummer 101 steht auch in gui/resource.h. Beide muessen dieselbe sein,
+// sonst findet LoadIcon zur Laufzeit nichts — und die Titelzeile bliebe beim
+// Windows-Standardsymbol, waehrend der Explorer das richtige zeigt. Genau
+// diese halbe Wirkung ist das Verwirrende daran.
+//
+// Das Symbol MUSS die erste Ikone in der Datei sein: Windows nimmt fuer die
+// .exe die mit der niedrigsten Nummer, unabhaengig von der Reihenfolge hier.
+#include "resource.h"
+
+IDI_APPICON ICON "efxed.ico"
+
+// Die Versionsangaben.
+//
+// Was das bringt — und was nicht: SmartScreen nimmt es NICHT weg, dafuer
+// braeuchte es eine Signatur. Aber ohne diesen Block steht in den
+// Dateieigenschaften und in Warnhinweisen nur der nackte Dateiname; mit ihm
+// stehen dort Name, Fassung und Zweck. Wer eine .exe aus dem Netz prueft,
+// schaut genau dort nach.
+//
+// Die Zahlen muessen mit include/efx/version.h zusammenpassen. Sie stehen
+// hier ein zweites Mal, weil der Ressourcenuebersetzer kein C++ liest —
+// deshalb prueft tools/lint_version.py, dass sie nicht auseinanderlaufen.
+1 VERSIONINFO
+FILEVERSION     1,18,0,77
+PRODUCTVERSION     1,18,0,77
+FILEFLAGSMASK   0x3fL
+FILEFLAGS       0x0L
+FILEOS          0x40004L    // VOS_NT_WINDOWS32
+FILETYPE        0x1L        // VFT_APP
+FILESUBTYPE     0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040704b0"    // Deutsch, Unicode
+        BEGIN
+            VALUE "FileDescription", "EffectsEd - Editor fuer Jedi-Academy-Effektdateien"
+            VALUE "FileVersion",     "1.18.0-rev77"
+            VALUE "InternalName",    "efxed"
+            VALUE "OriginalFilename","efxed.exe"
+            VALUE "ProductName",     "EffectsEd"
+            VALUE "ProductVersion",  "1.18.0-rev77"
+        END
+        BLOCK "040904b0"    // Englisch, Unicode
+        BEGIN
+            VALUE "FileDescription", "EffectsEd - editor for Jedi Academy effect files"
+            VALUE "FileVersion",     "1.18.0-rev77"
+            VALUE "InternalName",    "efxed"
+            VALUE "OriginalFilename","efxed.exe"
+            VALUE "ProductName",     "EffectsEd"
+            VALUE "ProductVersion",  "1.18.0-rev77"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x407, 1200, 0x409, 1200
+    END
+END

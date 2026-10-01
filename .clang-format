@@ -1,0 +1,23 @@
+# Formatierung. Google-Grundlage mit vier Abweichungen, alle bewusst.
+#
+# Der Zweck ist nicht Schönheit, sondern dass eine Änderung im Vergleich nur
+# das zeigt, was sich tatsächlich geändert hat — und nicht, dass jemand anders
+# formatiert.
+BasedOnStyle: Google
+
+# Vier statt zwei Leerzeichen. Bei tief geschachtelten Fallunterscheidungen —
+# und ein Zerleger besteht daraus — ist zwei zu wenig, um die Ebene zu sehen.
+IndentWidth: 4
+
+# 88 statt 80. Deutsche Bezeichner und Kommentare sind länger als englische;
+# bei 80 bricht zu viel um, was zusammengehört.
+ColumnLimit: 88
+
+# Zeiger und Referenzen am Typ: `const std::string& name`, nicht `string &name`.
+# Der Bezug gehört zum Typ, nicht zum Namen.
+DerivePointerAlignment: false
+PointerAlignment: Left
+
+# Einbindungen nicht umsortieren. Ihre Reihenfolge ist an einigen Stellen
+# bedeutsam (windows.h vor mmsystem.h), und ein Werkzeug kann das nicht wissen.
+SortIncludes: false
