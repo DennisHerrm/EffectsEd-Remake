@@ -6,7 +6,7 @@ Geprüft wird mit drei Läufen, alle grün:
 
 | Lauf | Ergebnis |
 |---|---|
-| `build\Release\efxtests.exe` (Kern) | 4374 Prüfungen, 0 Fehler |
+| `build\Release\efxtests.exe` (Kern) | 4415 Prüfungen, 0 Fehler |
 | Selbsttest `EFXED_SELBSTTEST=alles`, Direct3D 11 | 738 OK, 0 FEHLER |
 | derselbe Selbsttest mit `EFXED_RENDERER=gl3` | 738 OK, 0 FEHLER |
 | Darstellungslauf `EFXED_SELBSTTEST=darstellung` | 376 Effekte aus Movie Duels, je 4 Zeitpunkte, kein Absturz |
