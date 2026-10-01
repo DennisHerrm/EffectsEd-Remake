@@ -136,7 +136,7 @@ das Original nur für Aufbau und Bedienung.
 |---|---|---|
 | Raum verdeckte nichts (Teilchen schienen durch Boden und Wände) | efxed falsch | behoben: Raum schreibt Tiefe, Ausnahmen nur über den Shader (`depthFunc disable`, Bild ohne Shaderblock) |
 | Effekte mit `repeatDelay` standen beim Wiederholen mit 16 überlagerten Generationen da | efxed falsch | behoben: Wiederholen legt wie das Original ab der ersten Auslösung nach; der Vorlauf ist ein Schalter („Eingeschwungen beginnen") |
-| Raumlicht hellte den ganzen Raum auf (`1 − d/r` über den vollen Radius) | efxed falsch | behoben: `ProjectDlightTexture` nachgebaut (Hauptachse, `dUse`, Ebenenabstand, Profil von `gfx/2d/dlight.tga`, additiv) |
+| Raumlicht hellte den ganzen Raum auf (`1 − d/r` über den vollen Radius) | efxed falsch | behoben: `ProjectDlightTexture` nachgebaut (Hauptachse, `dUse`, Ebenenabstand, Profil von `gfx/2d/dlight.tga`, Fläche × (1 + Licht)); nachgeprüft: der Raum wird nicht mehr weiß |
 | Achsen 1 px, blass, hinter dem Effekt | efxed anders | behoben: 3 px, obenauf, wie `glLineWidth(3)` im Original |
 | Emitter mit Modell (md3) zeichnen nichts | efxed falsch | in Arbeit (siehe `OFFEN.md`) |
 | ScreenFlash bei ~150 ms fast weiß | efxed richtig | das Original lädt `$whiteimage` nicht und zeigt ein undurchsichtiges Rechteck |
