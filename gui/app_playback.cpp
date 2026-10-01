@@ -269,7 +269,9 @@ void App::startPlayback() {
                     // keinen Bestand aus der Vergangenheit.
                     doc().clock.endMode() == timeline::EndMode::Repeat &&
                         !settings_.legacyRepeat && !scheduleActive_,
-                    playback_.originAt(0.0f, scheduleBase_));
+                    playback_.originAt(0.0f, scheduleBase_),
+                    // Die Modelle der Emitter mit `useModel`.
+                    modelLoader());
     // Die Bilder des Effekts anfordern, bevor das erste Bild steht. Ohne das
     // sah der erste Durchlauf falsch aus und erst der zweite richtig.
     prefetchTextures(doc().effect);
@@ -568,6 +570,55 @@ const Effect* App::loadChildEffect(const std::string& name) {
 
     const Effect* pointer = loaded.get();
     childEffects_[name] = std::move(loaded);
+    return pointer;
+}
+
+const md3::Model* App::loadModel(const std::string& name) {
+    const auto found = modelCache_.find(name);
+    if (found != modelCache_.end()) return found->second.get();
+
+    // Wie bei den Kindeffekten auch das Scheitern merken (leerer Zeiger).
+    std::unique_ptr<md3::Model> loaded;
+
+    // Ein Modellname steht MIT Endung in der .efx, wie im Bestand
+    // (assets::Index::models); RE_RegisterModel sucht genau diese Datei.
+    const auto where = assets::findModel(assets_, settings_.gamePath, name);
+    if (where.found) {
+        std::string error;
+        const auto bytes = assets::readFile(settings_.gamePath, where, &error);
+        if (!bytes.empty()) {
+            md3::Model model = md3::parse(bytes.data(), bytes.size());
+            if (model.ok) {
+                loaded = std::make_unique<md3::Model>(std::move(model));
+                diag::info("model " + name + " <- " + where.path);
+            } else {
+                diag::warn("model " + name + ": " + model.error);
+            }
+        }
+    }
+    if (!loaded) diag::warn("model not found: " + name);
+
+    const md3::Model* pointer = loaded.get();
+    if (pointer) {
+        // Die Bilder der Flaechen gleich anfordern, wie prefetchTextures es
+        // fuer die Shader eines Effekts tut — sonst fehlt der Brocken im
+        // ersten Durchlauf, bis seine Textur geladen ist.
+        for (const auto& surface : pointer->surfaces) {
+            if (surface.shaders.empty()) continue;
+            const std::string shaderName = md3::shaderName(surface.shaders.front());
+            if (const shader::Shader* def = assets_.shaderOf(shaderName)) {
+                for (const auto& stage : def->stages) {
+                    if (!stage.map.empty()) requestTexture(assets::kImagePrefix + stage.map);
+                    if (!stage.clampMap.empty()) {
+                        requestTexture(assets::kImagePrefix + stage.clampMap);
+                    }
+                }
+            } else {
+                requestTexture(assets::kImagePrefix + shaderName);
+            }
+        }
+    }
+    modelCache_[name] = std::move(loaded);
     return pointer;
 }
 

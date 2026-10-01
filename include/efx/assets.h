@@ -271,6 +271,15 @@ inline constexpr const char* kImagePrefix = "image:";
 ResolvedTexture findEffect(const Index& index, const std::string& basePath,
                            const std::string& name);
 
+// Sucht ein Modell zu einem Namen, wie er in der `models`-Liste einer .efx
+// steht: MIT Endung, etwa "models/players/droids/r5d2_head.md3".
+//
+// RE_RegisterModel sucht genau diese Datei, ohne Endungen durchzuprobieren.
+// Fehlt die Endung ganz, wird ".md3" angehaengt — die einzige Art, die ein
+// Emitter zeichnen kann.
+ResolvedTexture findModel(const Index& index, const std::string& basePath,
+                          const std::string& name);
+
 // Liest eine Datei, gleich ob ausgepackt oder im Archiv.
 std::vector<unsigned char> readFile(const std::string& basePath,
                                     const ResolvedTexture& where,

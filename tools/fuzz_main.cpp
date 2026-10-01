@@ -14,6 +14,7 @@
 #include "efx/sound.h"
 #include "efx/inflate.h"
 #include "efx/layout.h"
+#include "efx/md3.h"
 
 static unsigned state = 20260808u;
 static unsigned rnd() { state = state * 1664525u + 1013904223u; return state >> 8; }
@@ -39,6 +40,13 @@ static void randomRound(int rounds) {
         (void)efx::image::decode(data.data(), data.size());
         (void)efx::sound::decode(data.data(), data.size());
         (void)efx::inflate::raw(data.data(), data.size(), 1 << 18);
+        // md3 mit gueltiger Kennung und Version, damit es tiefer kommt.
+        if (n > 8) {
+            std::vector<unsigned char> model = data;
+            std::memcpy(model.data(), "IDP3", 4);
+            model[4] = 15; model[5] = model[6] = model[7] = 0;
+            (void)efx::md3::parse(model.data(), model.size());
+        }
         const std::string text(data.begin(), data.end());
         auto e = efx::read(text);
         (void)efx::write(e.effect);
@@ -84,6 +92,7 @@ int main(int argc, char** argv) {
         (void)efx::layout::Settings::fromIni(text);
         (void)efx::image::decode(data.data(), data.size());
         (void)efx::sound::decode(data.data(), data.size());
+        (void)efx::md3::parse(data.data(), data.size());
         auto inf = efx::inflate::raw(data.data(), data.size(), 1 << 20);
         worstOut = std::max(worstOut, inf.data.size());
     }

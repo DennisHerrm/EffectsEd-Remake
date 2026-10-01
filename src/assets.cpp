@@ -784,6 +784,40 @@ ResolvedTexture findEffect(const Index& index, const std::string& basePath,
     return out;
 }
 
+ResolvedTexture findModel(const Index& index, const std::string& basePath,
+                          const std::string& name) {
+    ResolvedTexture out;
+    std::string relative = normaliseName(name, Kind::Model);
+    if (relative.empty()) return out;
+    const size_t slash = relative.find_last_of('/');
+    const size_t dot = relative.find_last_of('.');
+    if (dot == std::string::npos || (slash != std::string::npos && dot < slash)) {
+        relative += ".md3";
+    }
+
+    // Suchreihenfolge wie bei findEffect: das spaetere Archiv vor dem
+    // frueheren, gepackt vor ausgepackt.
+    std::error_code ec;
+    const bool inArchives =
+        std::binary_search(index.models.begin(), index.models.end(), relative);
+    for (const auto& place : searchPlaces(index, basePath)) {
+        if (place.archive.empty()) {
+            if (fs::is_regular_file(fs::path(place.root) / relative, ec)) {
+                out.path = relative;
+                out.root = place.root;
+                out.found = true;
+                return out;
+            }
+        } else if (inArchives && !readFromZip(place.archive, relative).empty()) {
+            out.path = relative;
+            out.archive = place.archive;
+            out.found = true;
+            return out;
+        }
+    }
+    return out;
+}
+
 std::vector<unsigned char> readFile(const std::string& basePath,
                                     const ResolvedTexture& where,
                                     std::string* error) {
