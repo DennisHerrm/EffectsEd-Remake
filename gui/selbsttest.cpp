@@ -987,6 +987,139 @@ public:
         return s;
     }
 
+    // --- Nachlegen: Wiedergabe-Einstellungen und eigener Ursprung ----------
+    static void feldIn(std::vector<Schritt>& s, const std::string& label, const std::string& fenster,
+                       const std::string& text, int nte = 0) {
+        s.push_back(klickAuf("Doppelklick " + label, [=] { return finde(label, fenster, nte); }, 0, true));
+        s.push_back(taste(ImGuiKey_A, true));
+        s.push_back(tippe(text));
+        s.push_back(taste(ImGuiKey_Enter));
+    }
+
+    static void wiedergabeDialog(std::vector<Schritt>& s) {
+        menue(s, Str::MenuEffects, Str::EffectsPlaybackSettings);
+        s.push_back(warteBis("Wiedergabe offen", [] { return dialogOffen("###playback"); }, 30));
+    }
+
+    static std::vector<Schritt> teilNachlegen() {
+        std::vector<Schritt> s;
+        s.push_back(teil("nachlegen"));
+        frischesDokument(s);
+        neuesSegment(s, PrimitiveType::Particle);
+        s.push_back(tu("Lebensdauer 400 ms", [] {
+            if (gewaehlt()) gewaehlt()->life = Range::single(400.0f);
+            app->recordChange("test");
+        }));
+
+        // Eigener Ursprung "an der Decke": der Effekt entsteht bei z = 59.
+        menue(s, Str::MenuEffects, Str::EffectsCustomOrigin);
+        s.push_back(warteBis("Ursprung offen", [] { return dialogOffen("###spawnorigin"); }, 30));
+        s.push_back(klick(tr(Str::OriginOnCeiling), "###spawnorigin"));
+        s.push_back(klick(tr(Str::MsgOk), "###spawnorigin"));
+        menue(s, Str::MenuEffects, Str::EffectsPlay);
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("Eigener Ursprung an der Decke: der Effekt entsteht bei z = 59", [] {
+            const auto& live = doc().particles.live();
+            return !live.empty() && std::fabs(live[0].positionAt(live[0].spawnMs).z - 59.0f) < 0.01f;
+        }));
+        s.push_back(tu("Ursprung zurueck", [] {
+            app->spawnOrigin_ = playback::Origin{};
+            app->pressStop();
+        }));
+
+        // "Repeat for 1 seconds" mit 0.25 s: Ausloesungen bei 0, 250, 500,
+        // 750 und 1000 ms (Total repetitions 5 im Original), danach haelt es an.
+        wiedergabeDialog(s);
+        s.push_back(klick(tr(Str::PlaybackForSeconds), "###playback"));
+        feldIn(s, "##repeatFor", "###playback", "1");
+        feldIn(s, "##rateField", "###playback", "0.25");
+        s.push_back(fensterFoto("dialog_wiedergabe_fuer_sekunden"));
+        s.push_back(klick(tr(Str::MsgOk), "###playback"));
+        s.push_back(pruefSchritt("Repeat for: Modus und Rate uebernommen", [] {
+            return app->playback_.mode == playback::RepeatMode::ForSeconds &&
+                   std::fabs(app->repeatRateSeconds() - 0.25f) < 1e-4f &&
+                   doc().clock.endMode() == timeline::EndMode::Stop;
+        }));
+        menue(s, Str::MenuEffects, Str::EffectsPlay);
+        s.push_back(warteBis("Uhr ueber 1.1 s", [] { return doc().clock.timeMs() > 1100.0f; }, 8000));
+        s.push_back(pruefSchritt("Repeat for 1 s bei 0.25 s: viermal nachgelegt (fuenf Ausloesungen)",
+                                 [] { return app->scheduleActive_ && app->spawnCount_ == 4; }));
+        s.push_back(pruefSchritt("Ausloesungen ueberlagern sich wie im Original",
+                                 [] { return app->lastAlive_ >= 1; }));
+        s.push_back(warteBis("Uhr steht", [] { return doc().clock.state() == timeline::State::Stopped; }, 8000));
+        s.push_back(pruefSchritt("Repeat for: haelt nach dem Auslaufen von selbst an",
+                                 [] { return doc().clock.timeMs() >= 1399.0f && app->spawnCount_ == 4; }));
+
+        // "Respawn effect every frame": bis zum Anhalten, 60 je Sekunde.
+        wiedergabeDialog(s);
+        s.push_back(klick(tr(Str::PlaybackUntilStopped), "###playback"));
+        s.push_back(klick(tr(Str::PlaybackEveryFrame), "###playback"));
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("Respawn every frame sperrt die Rate (wie im Original)", [] {
+            const Element* e = finde("##rateField", "###playback");
+            return e != nullptr && e->gesperrt;
+        }));
+        s.push_back(klick(tr(Str::MsgOk), "###playback"));
+        menue(s, Str::MenuEffects, Str::EffectsPlay);
+        s.push_back(warteBis("Uhr ueber 0.5 s", [] { return doc().clock.timeMs() > 500.0f; }, 8000));
+        s.push_back(pruefSchritt("Respawn every frame: rund 30 Ausloesungen in einer halben Sekunde", [] {
+            return app->spawnCount_ >= 28 && app->spawnCount_ <= 40;
+        }));
+        s.push_back(pruefSchritt("und es leben viele gleichzeitig", [] { return app->lastAlive_ >= 20; }));
+        s.push_back(foto("nachlegen_jedes_bild"));
+        // Play waehrend der Wiederholung: auslaufen lassen, nichts mehr nachlegen.
+        menue(s, Str::MenuEffects, Str::EffectsPlay);
+        auto anzahl = std::make_shared<unsigned>(0);
+        s.push_back(tu("Anzahl merken", [=] { *anzahl = app->spawnCount_; }));
+        s.push_back(warte(10));
+        s.push_back(pruefSchritt("Play waehrend der Wiederholung: es wird nicht mehr nachgelegt",
+                                 [=] { return app->spawnCount_ <= *anzahl + 1; }));
+        s.push_back(warteBis("ausgelaufen", [] { return doc().clock.state() == timeline::State::Stopped; }, 8000));
+        s.push_back(pruefSchritt("und die Uhr haelt nach dem Auslaufen an",
+                                 [] { return doc().clock.state() == timeline::State::Stopped; }));
+
+        // Wandernder Startpunkt: 100 Einheiten je Sekunde entlang x,
+        // zuruecksetzen nach 1 s. Rate 0.25 s.
+        wiedergabeDialog(s);
+        s.push_back(klick(tr(Str::PlaybackEveryFrame), "###playback"));
+        feldIn(s, "##rateField", "###playback", "0.25");
+        s.push_back(klick(tr(Str::PlaybackAnimate), "###playback"));
+        feldIn(s, "##velocity", "###playback", "100", 0);
+        feldIn(s, "##resetAfter", "###playback", "1");
+        s.push_back(fensterFoto("dialog_wiedergabe_wandernd"));
+        s.push_back(klick(tr(Str::MsgOk), "###playback"));
+        s.push_back(pruefSchritt("Wandernder Startpunkt uebernommen", [] {
+            return app->playback_.animateSpawnLocation && !app->playback_.respawnEveryFrame &&
+                   std::fabs(app->playback_.spawnVelocity.x - 100.0f) < 1e-3f;
+        }));
+        menue(s, Str::MenuEffects, Str::EffectsPlay);
+        s.push_back(warteBis("Uhr ueber 0.6 s", [] { return doc().clock.timeMs() > 600.0f; }, 8000));
+        s.push_back(pruefSchritt("Die Ausloesung bei 500 ms entsteht bei x = 50", [] {
+            for (const auto& item : doc().particles.live()) {
+                if (std::fabs(item.spawnMs - 500.0f) < 0.5f) {
+                    return std::fabs(item.positionAt(item.spawnMs).x - 50.0f) < 0.01f;
+                }
+            }
+            return false;
+        }));
+        s.push_back(warteBis("Uhr ueber 1.3 s", [] { return doc().clock.timeMs() > 1300.0f; }, 8000));
+        s.push_back(pruefSchritt("Nach 1 s springt der Startpunkt zurueck: bei 1250 ms x = 25", [] {
+            for (const auto& item : doc().particles.live()) {
+                if (std::fabs(item.spawnMs - 1250.0f) < 0.5f) {
+                    return std::fabs(item.positionAt(item.spawnMs).x - 25.0f) < 0.01f;
+                }
+            }
+            return false;
+        }));
+        s.push_back(tu("aufraeumen", [] {
+            app->pressStop();
+            app->playback_ = playback::Settings{};
+            doc().clock.setEndMode(timeline::EndMode::Stop);
+        }));
+        s.push_back(allesZu());
+        return s;
+    }
+
     static std::vector<Schritt> teilWiedergabe() {
         std::vector<Schritt> s;
         s.push_back(teil("wiedergabe"));
@@ -2366,6 +2499,7 @@ public:
             {"auswahl", &teilAuswahl},
             {"dokumente", &teilDokumente},
             {"werkzeug", &teilWerkzeug},
+            {"nachlegen", &teilNachlegen},
             {"felder", &teilFelder},
         };
         // Nicht in "alles": dauert mit allen Effekten mehrere Minuten.

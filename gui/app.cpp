@@ -722,7 +722,8 @@ void App::drawViewport(render::Renderer* renderer, float width, float height) {
         // Die Dauer kommt aus der Simulation. Bei einem Effekt mit
         // `repeatDelay` ist das EINE Wiederholung: danach ist das Bild
         // identisch.
-        doc().clock.setDuration(doc().particles.durationMs());
+        doc().clock.setDuration(scheduleActive_ ? spawnScheduleDurationMs()
+                                                : doc().particles.durationMs());
         doc().clock.advance(ImGui::GetIO().DeltaTime * 1000.0f);
 
         if (doc().clock.consumeWrapped()) {
@@ -738,6 +739,7 @@ void App::drawViewport(render::Renderer* renderer, float width, float height) {
         }
 
         elapsed = doc().clock.timeMs();
+        advanceSpawnSchedule(elapsed);
 
         // Die Spannachsen des Billboards kommen aus der Blickmatrix: die
         // ersten beiden Zeilen sind rechts und oben in Weltkoordinaten.

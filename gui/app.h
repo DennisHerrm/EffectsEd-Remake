@@ -702,6 +702,22 @@ private:
     bool soundsOffReported_ = false;
     Audio audio_;
     playback::Origin spawnOrigin_;
+
+    // Fortlaufendes Nachlegen, wie es die Wiedergabe-Einstellungen des
+    // Originals verlangen ("Repeat for N seconds", "Respawn effect every
+    // frame", "Animate effect spawn location"): der Effekt wird vorwaerts in
+    // der Zeit immer wieder ausgeloest, jedes Mal zusaetzlich.
+    bool usesSpawnSchedule() const;
+    void advanceSpawnSchedule(float nowMs);
+    float spawnScheduleDurationMs() const;
+    bool scheduleActive_ = false;
+    float nextSpawnMs_ = 0.0f;
+    float spawnIntervalMs_ = 0.0f;
+    float spawnLimitMs_ = -1.0f;   // negativ: bis zum Anhalten
+    float lastSpawnMs_ = 0.0f;
+    float singleDurationMs_ = 0.0f;
+    unsigned spawnCount_ = 0;
+    camera::Vec3 scheduleBase_;
     int newSegmentType_ = 0;
 
     // Eigene Farben fuer die Ansicht. Leer heisst: die des Themas.

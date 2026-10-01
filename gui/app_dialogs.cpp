@@ -420,12 +420,15 @@ void App::drawPlaybackDialog() {
     ImGui::BeginGroup();
     if (ImGui::Button(tr(Str::MsgOk), ImVec2(em * 6.0f, 0))) {
         playback_ = playbackDraft_;
-        doc().clock.setEndMode(playback_.mode == playback::RepeatMode::Once
-                                   ? timeline::EndMode::Stop
-                                   : timeline::EndMode::Repeat);
+        // "Repeat for N seconds" endet von selbst: die Uhr haelt am Ende an.
+        doc().clock.setEndMode(playback_.mode == playback::RepeatMode::UntilStopped
+                                   ? timeline::EndMode::Repeat
+                                   : timeline::EndMode::Stop);
         settings_.repeat = repeating;
         // Die Werkzeugleiste folgt (und damit das repeatDelay der Datei).
         setRepeatRateSeconds(playback_.repeatRateSeconds);
+        // Laeuft gerade etwas, gilt das Neue sofort.
+        if (playing()) previewDirty_ = true;
         ImGui::CloseCurrentPopup();
     }
     if (ImGui::Button(tr(Str::MsgCancel), ImVec2(em * 6.0f, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
@@ -539,6 +542,7 @@ void App::drawSpawnOriginDialog() {
     ImGui::Separator();
     if (ImGui::Button(tr(Str::MsgOk), ImVec2(120, 0))) {
         spawnOrigin_ = spawnOriginDraft_;
+        previewDirty_ = true;   // der Effekt springt sofort an den neuen Ort
         ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
