@@ -70,6 +70,7 @@ namespace gl {
     X(void,   GenFramebuffers, (GLsizei, GLuint*)) \
     X(void,   DeleteFramebuffers,(GLsizei, const GLuint*)) \
     X(void,   BindFramebuffer, (GLenum, GLuint)) \
+    X(void,   GenerateMipmap,  (GLenum)) \
     X(void,   FramebufferTexture2D,(GLenum, GLenum, GLenum, GLuint, GLint)) \
     X(void,   GenRenderbuffers,(GLsizei, GLuint*)) \
     X(void,   DeleteRenderbuffers,(GLsizei, const GLuint*)) \
@@ -500,14 +501,16 @@ public:
 
     TextureId createTexture(const unsigned char* rgba, int width, int height,
                             bool clamp, bool mipmaps) override {
-        (void)mipmaps;
         if (!rgba || width <= 0 || height <= 0) return kNoTexture;
         GLuint texture = 0;
         glGenTextures(1, &texture);
         glBindTexture(GL_TEXTURE_2D, texture);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA,
                      GL_UNSIGNED_BYTE, rgba);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        // Mipmaps wie in der Engine (siehe renderer_d3d11.cpp).
+        if (mipmaps) gl::GenerateMipmap(GL_TEXTURE_2D);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                        mipmaps ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         const GLint wrap = clamp ? GL_CLAMP_TO_EDGE : GL_REPEAT;
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrap);

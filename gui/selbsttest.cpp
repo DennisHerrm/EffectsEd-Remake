@@ -1524,7 +1524,16 @@ public:
         s.push_back(allesZu());
 
         // Grafikschnittstelle wechseln: Rueckfrage, Abbrechen -> kein Wechsel.
-        menue(s, Str::MenuView, render::backendName(render::Backend::OpenGL3), tr(Str::ViewRenderer));
+        // Die jeweils ANDERE Schnittstelle waehlen (die aktive fragt nicht).
+        s.push_back(klickTr(Str::MenuView, "##main"));
+        s.push_back(klickTr(Str::ViewRenderer, "##Menu"));
+        s.push_back(klickAuf("Klick andere Grafikschnittstelle", [] {
+            const render::Backend andere = app->activeBackend_ == render::Backend::OpenGL3
+                                               ? render::Backend::Direct3D11
+                                               : render::Backend::OpenGL3;
+            return finde(render::backendName(andere), "##Menu");
+        }));
+        s.push_back(menuesZu());
         s.push_back(warteBis("Rueckfrage Grafikschnittstelle offen",
                              [] { return dialogOffen("###renderer"); }, 30));
         s.push_back(fensterFoto("dialog_grafik"));
