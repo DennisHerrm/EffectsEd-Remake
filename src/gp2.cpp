@@ -39,6 +39,13 @@ public:
         return text_.substr(from, to - from);
     }
     size_t pos() const { return pos_; }
+    // Wo ein Token, das aus diesem Text stammt, beginnt. Bei einem Token in
+    // Anfuehrungszeichen zaehlt das oeffnende Zeichen mit.
+    size_t offsetOf(std::string_view token) const {
+        size_t at = static_cast<size_t>(token.data() - text_.data());
+        if (at > 0 && text_[at - 1] == '"') --at;
+        return at;
+    }
 
 private:
     std::string_view text_;
@@ -119,6 +126,7 @@ bool parseGroup(Cursor& c, Group& group, bool topLevel, std::vector<Error>& erro
         }
 
         std::string key(token);
+        const size_t keyBegin = c.offsetOf(token);
         std::string_view next = getToken(c, true, /*readToEOL=*/true);
 
         if (next == "{") {
@@ -126,7 +134,9 @@ bool parseGroup(Cursor& c, Group& group, bool topLevel, std::vector<Error>& erro
             Group& sub = group.subGroups.back();
             sub.name = key;
             sub.line = lineOfToken;
+            sub.sourceBegin = keyBegin;
             if (!parseGroup(c, sub, false, errors)) return false;
+            sub.sourceEnd = c.pos();  // direkt hinter der `}`
         } else if (next == "[") {
             Property prop;
             prop.name = key;

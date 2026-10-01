@@ -34,6 +34,13 @@ struct Group {
     std::vector<Group> subGroups;
     int line = 0;
 
+    // Wo der Block im Quelltext steht: vom ersten Zeichen des Namens bis
+    // hinter die schliessende `}`. Das Spiel braucht das nicht; der Editor
+    // schon, um einen Block, den er nicht versteht, unveraendert
+    // zurueckzuschreiben (efx::ForeignGroup).
+    size_t sourceBegin = 0;
+    size_t sourceEnd = 0;
+
     // Beide Suchen ignorieren Gross-/Kleinschreibung — so macht es das Spiel.
     const Property* findProperty(std::string_view key) const;
     const Group* findSubGroup(std::string_view key) const;

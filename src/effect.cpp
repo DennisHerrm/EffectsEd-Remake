@@ -153,6 +153,34 @@ const std::vector<FlagName>& spawnFlagNames() {
     return kNames;
 }
 
+int curveFlagsFromWords(const std::vector<std::string>& words) {
+    // Woerter wie in CPrimitiveTemplate::ParseGroupFlags (FxTemplate.cpp):
+    // eine Tabelle ohne Ruecksicht auf Gross-/Kleinschreibung, und nur die
+    // ersten vier Woerter — mehr Plaetze hat das sscanf-Feld dort nicht.
+    int flags = 0;
+    const size_t count = words.size() < kMaxCurveFlagWords ? words.size()
+                                                           : kMaxCurveFlagWords;
+    for (size_t i = 0; i < count; ++i) {
+        const std::string& word = words[i];
+        if (iequals(word, "linear")) flags |= kCurveLinear;
+        else if (iequals(word, "nonlinear")) flags |= kCurveNonLinear;
+        else if (iequals(word, "wave")) flags |= kCurveWave;
+        else if (iequals(word, "random")) flags |= kCurveRandom;
+        else if (iequals(word, "clamp")) flags |= kCurveClamp;
+    }
+    return flags;
+}
+
+uint32_t effectiveFlags(const Primitive& p) {
+    // Siehe effect.h: was der Parser beim Lesen der Listen selbst setzt.
+    uint32_t flags = p.flags;
+    if (!p.impactFx.empty()) flags |= kFlagImpactRunsFx | kFlagApplyPhysics;
+    if (!p.deathFx.empty()) flags |= kFlagDeathRunsFx;
+    if (!p.emitFx.empty()) flags |= kFlagEmitFx;
+    if (!p.models.empty()) flags |= kFlagAttachedModel;
+    return flags;
+}
+
 Primitive freshPrimitive(PrimitiveType type) {
     Primitive out;
     out.type = type;

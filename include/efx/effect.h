@@ -97,8 +97,25 @@ enum : int {
     kCurveRandom = 0x2,
     kCurveNonLinear = 0x4,
     kCurveWave = 0x8,
-    kCurveClamp = 0xC,  // Achtung: NonLinear|Random, kein eigenes Bit
+    // Achtung: NonLinear|Wave, kein eigenes Bit. FX_CLAMP ist in
+    // FxPrimitives.h 0x0C — die beiden Bits der Parametermaske zusammen.
+    // random (0x2) ist davon unabhaengig und laesst sich mit clamp
+    // kombinieren: "random linear clamp" steht so in Ravens Dateien.
+    kCurveClamp = 0xC,
 };
+
+// Die Kurvenbits, die die Engine aus diesen Woertern liest.
+//
+// CPrimitiveTemplate::ParseGroupFlags in FxTemplate.cpp (SP und MP gleich)
+// liest hoechstens VIER Woerter — ein Feld mit vier Plaetzen fuer sscanf.
+// Ein fuenftes Wort ueberliest es stumm. Unbekannte Woerter setzen nichts.
+//
+// Eine Stelle fuer diese Regel: der Leser bildet damit die Bits, der
+// Schreiber prueft damit, ob die gemerkten Woerter noch zu den Bits passen.
+// Rechneten beide verschieden, wuerde eine unveraenderte Datei beim
+// Speichern umgeschrieben.
+constexpr size_t kMaxCurveFlagWords = 4;
+int curveFlagsFromWords(const std::vector<std::string>& words);
 
 // Ein animierbarer Kanal: Startwert, Endwert, ein Parameter und die Kurve.
 // Wird fuer rgb, alpha, size, size2 und length verwendet.
@@ -287,6 +304,43 @@ struct Primitive {
     bool spawnFlagsSingular = false;
 };
 
+// Die Flags, die die Engine fuer diese Primitive tatsaechlich setzt.
+//
+// Nicht nur `flags`: der Parser setzt einige Bits SELBST, sobald die
+// zugehoerige Liste in der Datei steht. CPrimitiveTemplate in FxTemplate.cpp
+// (SP ParseFX, MP je Funktion am Ende):
+//
+//     ParseImpactFxStrings   mFlags |= FX_IMPACT_RUNS_FX | FX_APPLY_PHYSICS
+//     ParseDeathFxStrings    mFlags |= FX_DEATH_RUNS_FX
+//     ParseEmitterFxStrings  mFlags |= FX_EMIT_FX
+//     ParseModels            mFlags |= FX_ATTACHED_MODEL
+//
+// Wer `deathfx [ boom ]` schreibt und das Flag vergisst, bekommt im Spiel
+// trotzdem seine Explosion. Wer impactfx setzt, bekommt sogar Physik dazu.
+//
+// Eine Feinheit bleibt draussen: die Engine setzt das Bit nur, wenn sich der
+// Effekt laden laesst (RegisterEffect liefert einen Griff). Ob er sich laden
+// laesst, weiss erst der Lader — fehlende Effekte zaehlt die Vorschau ohnehin
+// als `missingEffects`.
+uint32_t effectiveFlags(const Primitive& p);
+
+// Was die Engine nimmt, wenn ein Feld nicht in der Datei steht.
+//
+// Fundstelle ist ueberall der Erzeuger von CPrimitiveTemplate in
+// FxTemplate.cpp (SP und MP gleich):
+//
+//     mRadius.SetRange( 10.0f, 10.0f );     mHeight.SetRange( 10.0f, 10.0f );
+//     mDensity.SetRange( 10.0f, 10.0f );    mVariance.SetRange( 1.0f, 1.0f );
+//     mSizeEnd, mAlphaEnd, mRedEnd ... .SetRange( 1.0f, 1.0f );
+//
+// Raven schreibt zu density selbst: "default this high so it doesn't do bad
+// things" — ein Emitter ohne density sendet also sehr wohl aus.
+constexpr float kDefaultRadius = 10.0f;
+constexpr float kDefaultHeight = 10.0f;
+constexpr float kDefaultDensity = 10.0f;
+constexpr float kDefaultVariance = 1.0f;
+constexpr float kDefaultCurveValue = 1.0f;
+
 // ---------------------------------------------------------------------------
 // Ein Effekt = eine .efx-Datei
 
@@ -300,10 +354,33 @@ struct Primitive {
 // Die Werte sind bewusst mittig: sichtbar, aber nicht übertrieben.
 Primitive freshPrimitive(PrimitiveType type);
 
+// Ein Block, den die Engine nicht kennt — meist `ForceFeedback`.
+//
+// CFxScheduler::ParseEffect in FxScheduler.cpp sucht den Gruppennamen in
+// einer Tabelle der dreizehn Primitivtypen und uebergeht alles andere STUMM.
+// Ravens Editor schreibt aber einen solchen Block: `forcefeedback { forces
+// [ fffx/... ] }` steht in 51 ausgelieferten Dateien. Das Spiel laedt sie
+// klaglos.
+//
+// Wir merken uns den Block wortwoertlich und schreiben ihn an derselben
+// Stelle zurueck. Ein Editor, der beim Oeffnen und Speichern still Teile
+// einer Datei wegwirft, ist schlimmer als einer, der sie nicht versteht.
+struct ForeignGroup {
+    std::string name;
+    // Der Quelltext ab dem Gruppennamen bis einschliesslich `}`. Zeilenenden
+    // als `\n` — der Schreiber setzt sie wieder so, wie er es eingestellt hat.
+    std::string text;
+    // Vor der wievielten Primitive der Block stand. Gleich der Anzahl
+    // Primitive: dahinter.
+    size_t beforePrimitive = 0;
+    int line = 0;
+};
+
 struct Effect {
     int repeatDelay = 0;
     bool repeatDelaySet = false;
     std::vector<Primitive> primitives;
+    std::vector<ForeignGroup> foreignGroups;
 };
 
 }  // namespace efx
