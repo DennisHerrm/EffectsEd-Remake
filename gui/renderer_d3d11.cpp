@@ -804,7 +804,12 @@ private:
             "            lit += min(lightColour[i].rgb * modulate, 1.0) * profile;\n"
             "        }\n"
             "    }\n"
-            "    c.rgb += lit;\n"
+            // Wie die Engine: die Flaeche wird um Lichtprofil x Farbe
+            // aufgehellt (dst * (1 + Licht), ProjectDlightTexture) — nicht
+            // reine Lichtfarbe addiert, sonst wird der Raum weiss. Die
+            // fertige Flaechenfarbe statt nur der Textur, weil beim Raum
+            // ohne Textur die Wandfarbe in der Eckpunktfarbe steckt.
+            "    c.rgb += c.rgb * lit;\n"
             "    return c;\n"
             "}\n";
     }

@@ -678,7 +678,8 @@ private:
             "            lit += min(uLightColour[i].rgb * modulate, vec3(1.0)) * profile;\n"
             "        }\n"
             "    }\n"
-            "    c.rgb += lit;\n"
+            // Flaeche x (1 + Licht), wie der D3D-Shader.
+            "    c.rgb += c.rgb * lit;\n"
             "    fragColor = c;\n"
             "}\n";
 
