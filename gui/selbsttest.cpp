@@ -1514,7 +1514,7 @@ public:
         s.push_back(warte(5));
         s.push_back(klick("##tlPause", "##main"));
         s.push_back(pruefSchritt("Zeitleiste Pause haelt an",
-                                 [] { return doc().clock.state() == timeline::State::Paused; }));
+                                 [] { return doc().clock.state() == timeline::State::Paused && doc().paused; }));
         s.push_back(klick("##tlStop", "##main"));
 
         // 3D-Ansicht: links ziehen dreht, rechts ziehen faehrt, Alt+links verschiebt, Rad zoomt.

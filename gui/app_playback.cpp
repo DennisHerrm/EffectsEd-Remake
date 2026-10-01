@@ -359,10 +359,12 @@ bool App::usesSpawnSchedule() const {
 }
 
 float App::spawnScheduleDurationMs() const {
-    // Bis zum Anhalten: eine Stunde, danach faengt es von vorn an. Sonst:
-    // bis die letzte Ausloesung ausgelaufen ist.
-    constexpr float kOpenEndMs = 3600.0f * 1000.0f;
-    if (spawnLimitMs_ < 0.0f) return kOpenEndMs;
+    // Bis zum Anhalten: immer zwei Sekunden vor der Uhr her, damit sie nie
+    // ans Ende kommt und neu beginnt — die Zeitleiste zeigt so ein Ende, das
+    // mitwaechst, statt einer Stunde.
+    if (spawnLimitMs_ < 0.0f) {
+        return std::max(doc().particles.durationMs(), doc().clock.timeMs() + 2000.0f);
+    }
     return std::max(doc().particles.durationMs(), spawnLimitMs_ + singleDurationMs_);
 }
 
