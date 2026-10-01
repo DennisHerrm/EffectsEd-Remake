@@ -1185,6 +1185,10 @@ public:
                 app->settings_.drawWindVector = false;
             }));
             s.push_back(warte(3));
+            s.push_back(warteBis("Texturen geladen", [] {
+                return app->texturesInFlight_.empty() && app->readyTextures_.empty();
+            }, 600));
+            s.push_back(warte(2));
             s.push_back(foto("e_" + datei + "_" + std::to_string(static_cast<int>(ms))));
             s.push_back(tu("messen", [name, ms] {
                 char z[512];

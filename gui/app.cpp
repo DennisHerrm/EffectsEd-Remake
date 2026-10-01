@@ -795,6 +795,13 @@ void App::drawViewport(render::Renderer* renderer, float width, float height) {
             // Zurueckspulen zurueckspulen.
             const render::TextureId texture =
                 textureFor(renderer, groupName, elapsed * 0.001f);
+            // Noch unterwegs? Dann diese Gruppe ein, zwei Bilder lang nicht
+            // zeichnen. Mit Ersatzbild und deckender Mischung (die erst das
+            // Bild verraet) blitzte sonst ein weisses Rechteck auf.
+            if (settings_.effectRenderMode != 2 &&
+                textureStillLoading(groupName, elapsed * 0.001f)) {
+                continue;
+            }
 
             // Die Mischung aus dem Shader. Bis eben stand hier fest "additiv",
             // und ein alphagemischter Rauch sah damit voellig falsch aus.
