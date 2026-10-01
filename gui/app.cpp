@@ -102,9 +102,10 @@ void App::activateDocument(int index) {
     if (index == activeDocument_) return;
     // Die Wiedergabe des bisherigen Reiters anhalten. Sonst laufen Klaenge
     // eines Effekts weiter, den man gar nicht mehr sieht.
-    doc().clock.stop();
-    doc().particles.stop();   // Geometrie behalten: der Reiter kommt wieder
-    audio_.stopAll();
+    // pressStop und nicht drei Einzelzeilen: sonst blieb ein laufendes
+    // Auslaufen (Play waehrend der Wiederholung) fuer den naechsten Reiter
+    // haengen. Die Geometrie bleibt, der Reiter kommt wieder.
+    pressStop();
     activeDocument_ = index;
     // Auch die Reiterleiste umschalten (Strg+Tab, Speichern-Frage).
     wantDocumentTab_ = true;
@@ -113,7 +114,10 @@ void App::activateDocument(int index) {
 void App::closeDocument(int index) {
     if (index < 0 || index >= static_cast<int>(documents_.size())) return;
     documents_.erase(documents_.begin() + index);
-    if (documents_.empty()) documents_.emplace_back();
+    if (documents_.empty()) {
+        documents_.emplace_back();
+        documents_.back().clock.setEndMode(playbackEndMode());
+    }
     if (activeDocument_ >= static_cast<int>(documents_.size())) {
         activeDocument_ = static_cast<int>(documents_.size()) - 1;
     }
