@@ -101,6 +101,10 @@ public:
 
     // Der Nutzer hat Beenden gewaehlt oder das Fenster geschlossen.
     bool wantsQuit() const { return wantsQuit_; }
+    // Muss gerade jedes Bild gezeichnet werden? Nein, wenn nichts laeuft,
+    // nichts weht, nichts laedt — dann darf die Hauptschleife auf die
+    // naechste Eingabe warten.
+    bool needsContinuousFrames() const;
     // Beenden erbitten: fragt bei ungespeicherten Aenderungen erst nach.
     void requestQuit();
 

@@ -75,6 +75,17 @@ bool App::playing() const {
     return doc().clock.state() != timeline::State::Stopped;
 }
 
+bool App::needsContinuousFrames() const {
+    if (doc().clock.state() == timeline::State::Playing) return true;
+    if (startTabActive_) return true;               // die Kacheln laufen
+    if (settings_.drawWindVector) return true;      // die Fahne weht
+    if (shake_.active()) return true;
+    if (!texturesInFlight_.empty() || !readyTextures_.empty()) return true;
+    if (jobs::pool().pendingMainTasks() > 0) return true;
+    if (pendingScreenshot_ != 0 || doc().pendingRestart || previewDirty_) return true;
+    return false;
+}
+
 std::string Document::title() const {
     // Uebersetzt, nicht fest verdrahtet — der Reiter ist Oberflaeche wie
     // jede andere.
@@ -265,6 +276,11 @@ void App::startup() {
     // Bibliothek geoeffnet, weil sie das Auffaelligste war; wer den Editor
     // kennt, sucht aber zuerst seinen Arbeitsbereich.
     startTabActive_ = settings_.openLibraryOnStart;
+    // Den Reiter auch WAEHLEN. Sonst nimmt ImGui im ersten Bild den ersten
+    // Reiter — die Bibliothek —, und efxed oeffnete trotz Voreinstellung
+    // dort (und ihre laufenden Kacheln hielten die Leerlaufbremse aus).
+    wantStartTab_ = startTabActive_;
+    wantDocumentTab_ = !startTabActive_;
     // "Reset Default FX Repeat Rate On Restart" (Voreinstellung an): jeder
     // Start beginnt bei 0.300 s. Die Einstellung wurde bisher gespeichert,
     // aber nie angewendet.
