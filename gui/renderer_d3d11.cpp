@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <algorithm>
 #include <cstring>
+#include <unordered_set>
 #include <cstdio>
 
 #include "efx/diag.h"
@@ -491,7 +492,8 @@ public:
             texture == kNoTexture ? whiteSrv_.Get()
                                   : reinterpret_cast<ID3D11ShaderResourceView*>(texture);
         context_->PSSetShaderResources(0, 1, &srv);
-        ID3D11SamplerState* sampler = sampler_.Get();
+        ID3D11SamplerState* sampler =
+            clampTextures_.count(srv) != 0 ? clampSampler_.Get() : sampler_.Get();
         context_->PSSetSamplers(0, 1, &sampler);
 
         const UINT stride = sizeof(Vertex);
@@ -604,37 +606,55 @@ public:
 
     TextureId createTexture(const unsigned char* rgba, int width, int height,
                             bool clamp, bool mipmaps) override {
-        (void)clamp;
-        (void)mipmaps;
         if (!rgba || width <= 0 || height <= 0) return kNoTexture;
 
+        // Mipmaps: die Engine laedt jede Textur mit Mipmaps (R_CreateImage,
+        // ausser "nomipmaps"). Ohne sie flimmert ein kleines oder fernes
+        // Teilchen, weil jeder Bildpunkt einen anderen Texel trifft. Vorher
+        // wurden beide Angaben hier verschluckt ((void)clamp; (void)mipmaps).
+        //
+        // Die Kette erzeugt die Grafikkarte selbst (GenerateMips) - dafuer
+        // braucht die Textur RENDER_TARGET und darf nicht IMMUTABLE sein.
         D3D11_TEXTURE2D_DESC desc{};
         desc.Width = static_cast<UINT>(width);
         desc.Height = static_cast<UINT>(height);
-        desc.MipLevels = 1;
+        desc.MipLevels = mipmaps ? 0 : 1;  // 0 = volle Kette
         desc.ArraySize = 1;
         desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
         desc.SampleDesc.Count = 1;
-        desc.Usage = D3D11_USAGE_IMMUTABLE;
-        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-
-        D3D11_SUBRESOURCE_DATA data{};
-        data.pSysMem = rgba;
-        data.SysMemPitch = static_cast<UINT>(width * 4);
-
         ComPtr<ID3D11Texture2D> texture;
-        if (FAILED(device_->CreateTexture2D(&desc, &data, &texture))) return kNoTexture;
+        if (mipmaps) {
+            desc.Usage = D3D11_USAGE_DEFAULT;
+            desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+            desc.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
+            if (FAILED(device_->CreateTexture2D(&desc, nullptr, &texture))) return kNoTexture;
+            context_->UpdateSubresource(texture.Get(), 0, nullptr, rgba,
+                                        static_cast<UINT>(width * 4), 0);
+        } else {
+            desc.Usage = D3D11_USAGE_IMMUTABLE;
+            desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+            D3D11_SUBRESOURCE_DATA data{};
+            data.pSysMem = rgba;
+            data.SysMemPitch = static_cast<UINT>(width * 4);
+            if (FAILED(device_->CreateTexture2D(&desc, &data, &texture))) return kNoTexture;
+        }
 
         ID3D11ShaderResourceView* srv = nullptr;
         if (FAILED(device_->CreateShaderResourceView(texture.Get(), nullptr, &srv))) {
             return kNoTexture;
         }
+        if (mipmaps) context_->GenerateMips(srv);
+        // clampMap: der Rand wird nicht wiederholt. Welcher Sampler gilt,
+        // entscheidet drawTriangles nach dieser Liste.
+        if (clamp) clampTextures_.insert(srv);
         return reinterpret_cast<TextureId>(srv);
     }
 
     void destroyTexture(TextureId texture) override {
         if (texture == kNoTexture) return;
-        reinterpret_cast<ID3D11ShaderResourceView*>(texture)->Release();
+        auto* srv = reinterpret_cast<ID3D11ShaderResourceView*>(texture);
+        clampTextures_.erase(srv);
+        srv->Release();
     }
 
 private:
@@ -730,6 +750,8 @@ private:
         sd.AddressU = sd.AddressV = sd.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
         sd.MaxLOD = D3D11_FLOAT32_MAX;
         if (FAILED(device_->CreateSamplerState(&sd, &sampler_))) return false;
+        sd.AddressU = sd.AddressV = sd.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+        if (FAILED(device_->CreateSamplerState(&sd, &clampSampler_))) return false;
 
         // Die fuenf Ueberblendungen, die JKA-Shader benutzen.
         struct BlendSetup { D3D11_BLEND src, dst; };
@@ -893,6 +915,8 @@ private:
     long long indexBase_ = 0;
     ComPtr<ID3D11ShaderResourceView> whiteSrv_;
     ComPtr<ID3D11SamplerState> sampler_;
+    ComPtr<ID3D11SamplerState> clampSampler_;
+    std::unordered_set<ID3D11ShaderResourceView*> clampTextures_;
     ComPtr<ID3D11BlendState> blendStates_[5];
     ComPtr<ID3D11DepthStencilState> depthWriteState_;
     ComPtr<ID3D11DepthStencilState> depthReadState_;

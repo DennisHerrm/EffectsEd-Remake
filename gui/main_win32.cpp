@@ -1121,6 +1121,13 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR commandLine, int) {
 
     efx::render::Backend preferred = efx::render::Backend::Direct3D11;
     efx::render::backendFromCode(app.settings().rendererCode, preferred);
+    // Der Selbsttest laeuft wahlweise unter OpenGL (EFXED_RENDERER=gl3): viele
+    // fruehere Fehler gab es nur unter einer der beiden Schnittstellen.
+    if (const char* forced = std::getenv("EFXED_RENDERER");
+        efx::gui::selbsttestAktiv() && forced && forced[0]) {
+        efx::render::backendFromCode(forced, preferred);
+        app.settings().rendererCode = forced;
+    }
 
     // Schleife wegen des Wechsels der Grafikschnittstelle: der ist ein
     // Neustart des Fensters, kein Neustart des Programms.
