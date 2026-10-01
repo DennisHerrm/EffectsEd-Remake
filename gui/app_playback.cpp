@@ -7,6 +7,7 @@
 // mehrere Dateien verteilt. app.cpp war mit 3524 Zeilen und einem Dutzend
 // Zustaendigkeiten die Stelle, an der ein Leser aufgibt.
 #include "app.h"
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include "efx/diag.h"
@@ -17,26 +18,65 @@ namespace efx::gui {
 using i18n::Str;
 using i18n::tr;
 
+float App::repeatRateSeconds() const {
+    if (doc().effect.repeatDelaySet && doc().effect.repeatDelay > 0) {
+        return static_cast<float>(doc().effect.repeatDelay) * 0.001f;
+    }
+    return settings_.repeatRate;
+}
+
+void App::setRepeatRateSeconds(float seconds) {
+    seconds = std::clamp(seconds, 0.001f, 60.0f);
+    // In ganzen Millisekunden, abgeschnitten wie im Original (1.991 s ->
+    // repeatDelay 1990 gemessen... das Original schneidet; wir runden, damit
+    // 0.300 auch wirklich 300 ergibt und nicht 299).
+    const int millis = static_cast<int>(seconds * 1000.0f + 0.5f);
+    settings_.repeatRate = seconds;
+    if (millis != doc().effect.repeatDelay || !doc().effect.repeatDelaySet) {
+        doc().effect.repeatDelay = millis;
+        doc().effect.repeatDelaySet = millis > 0;
+        doc().dirty = true;
+        fieldEditOpen_ = true;
+        previewDirty_ = true;
+    }
+}
+
 void App::pressPlay() {
-    // Ein Druck genuegt, auch vom Ende aus.
-    //
-    // Vorher brauchte es zwei: einen, um zurueckzuspringen, und einen zum
-    // Abspielen. Beide Play-Knoepfe — Werkzeugleiste und Zeitleiste — gehen
-    // jetzt durch dieselbe Stelle, damit sie sich nicht wieder auseinander
-    // entwickeln.
-    if (doc().clock.state() == timeline::State::Playing) {
-        doc().clock.pause();
-        doc().paused = true;
+    // Wie im Original (gemessen, ORIGINAL-INVENTAR 5.1):
+    //   - laeuft eine Wiederholung, beendet Play sie — der laufende Durchlauf
+    //     lebt aus, nichts wird abgeschnitten;
+    //   - sonst startet Play.
+    // Vorher hielt Play stattdessen an (das ist Pause).
+    if (doc().clock.state() == timeline::State::Playing &&
+        doc().clock.endMode() != timeline::EndMode::Stop && !playOut_) {
+        playOut_ = true;
+        endModeBeforePlayOut_ = doc().clock.endMode();
+        doc().clock.setEndMode(timeline::EndMode::Stop);
         return;
     }
-    const bool atEnd = doc().clock.timeMs() >= doc().clock.durationMs() - 0.5f;
-    if (atEnd || !doc().particles.playing()) {
-        startPlayback();   // neu ausloesen und von vorn
-    } else {
-        doc().clock.play();     // fortsetzen, wo es stand
+    if (doc().clock.state() == timeline::State::Paused) {
+        doc().clock.play();
+        doc().paused = false;
+        return;
     }
+    if (playOut_) {
+        // Zweimal Play waehrend des Auslaufens: wieder wiederholen.
+        playOut_ = false;
+        doc().clock.setEndMode(endModeBeforePlayOut_);
+        return;
+    }
+    startPlayback();
     doc().paused = false;
 }
+
+void App::finishPlayOut() {
+    // Nach dem Auslaufen gilt wieder die eingestellte Endart.
+    if (playOut_ && doc().clock.state() == timeline::State::Stopped) {
+        playOut_ = false;
+        doc().clock.setEndMode(endModeBeforePlayOut_);
+    }
+}
+
 
 void App::pressStop() {
     // Stop an EINER Stelle.
@@ -51,6 +91,10 @@ void App::pressStop() {
     doc().clock.stop();
     doc().particles.stop();
     audio_.stopAll();
+    if (playOut_) {
+        playOut_ = false;
+        doc().clock.setEndMode(endModeBeforePlayOut_);
+    }
 }
 
 void App::togglePause() {

@@ -873,12 +873,31 @@ public:
             s.push_back(warte(2));
             s.push_back(foto(std::string("raum_textur_") + std::to_string(i)));
         }
-        const Str arten[] = {Str::RenderTextured, Str::RenderWireframe, Str::RenderOverdraw};
-        for (int i = 2; i >= 0; --i) {
-            menue(s, Str::MenuView, Str::ViewRenderOptions, arten[i]);
-            s.push_back(pruefSchritt(std::string("Render Options ") + tr(arten[i]),
-                                     [i] { return app->settings_.effectRenderMode == i; }));
+        // Render Options: drei unabhaengige Schalter wie im Original.
+        struct Art { Str text; bool layout::Settings::*wert; };
+        const Art arten[] = {{Str::RenderTextured, &layout::Settings::effectTextured},
+                             {Str::RenderWireframe, &layout::Settings::effectWireframe},
+                             {Str::RenderOverdraw, &layout::Settings::effectOverdraw}};
+        for (const Art& a : arten) {
+            auto vorher = std::make_shared<bool>(false);
+            auto wert = a.wert;
+            s.push_back(tu("merken", [=] { *vorher = app->settings_.*wert; }));
+            menue(s, Str::MenuView, Str::ViewRenderOptions, a.text);
+            s.push_back(pruefSchritt(std::string("Render Options ") + tr(a.text) + " schaltet um",
+                                     [=] { return app->settings_.*wert != *vorher; }));
+            s.push_back(warte(2));
+            s.push_back(fensterFoto(std::string("render_") + tr(a.text)));
+            menue(s, Str::MenuView, Str::ViewRenderOptions, a.text);
         }
+        s.push_back(tu("Overdraw an", [] { app->settings_.effectOverdraw = true; }));
+        s.push_back(klick(tr(Str::MenuView), "##main"));
+        s.push_back(klick(tr(Str::ViewRenderOptions), "##Menu"));
+        s.push_back(pruefSchritt("Overdraw sperrt Textured und Wireframe", [] {
+            const Element* e = finde(tr(Str::RenderTextured), "##Menu");
+            return e != nullptr && e->gesperrt;
+        }));
+        s.push_back(menuesZu());
+        s.push_back(tu("Overdraw aus", [] { app->settings_.effectOverdraw = false; }));
         // Ausrichtung.
         const Str ausrichtung[] = {Str::EffectsOrientUp, Str::EffectsOrientSide,
                                    Str::EffectsOrientDown};
@@ -932,6 +951,36 @@ public:
         menue(s, Str::MenuEffects, Str::EffectsStop);
         s.push_back(pruefSchritt("Effects > Stop haelt an",
                                  [] { return doc().clock.state() == timeline::State::Stopped; }));
+        // Wie im Original: laeuft eine Wiederholung, beendet ein zweites Play
+        // sie - der Durchlauf lebt aus, dann steht alles.
+        s.push_back(tu("Wiederholen einstellen", [] {
+            doc().clock.setEndMode(timeline::EndMode::Repeat);
+        }));
+        s.push_back(klick("##play", "##main"));
+        s.push_back(pruefSchritt("Play startet die Wiederholung",
+                                 [] { return doc().clock.state() == timeline::State::Playing; }));
+        s.push_back(klick("##play", "##main"));
+        s.push_back(pruefSchritt("Play zum zweiten: Wiederholung endet, Durchlauf laeuft aus", [] {
+            return doc().clock.state() == timeline::State::Playing && app->playOut_;
+        }));
+        s.push_back(warteBis("Durchlauf zu Ende", [] {
+            return doc().clock.state() == timeline::State::Stopped;
+        }, 5000));
+        s.push_back(pruefSchritt("Danach gilt wieder Wiederholen", [] {
+            return !app->playOut_ && doc().clock.endMode() == timeline::EndMode::Repeat;
+        }));
+        // Strg+C klont, Strg+Entf loescht (Tasten des Originals).
+        s.push_back(tu("Segment waehlen", [] { doc().selectedPrimitive = 0; }));
+        auto n = std::make_shared<int>(0);
+        s.push_back(tu("Anzahl merken", [=] { *n = anzahlSegmente(); }));
+        s.push_back(taste(ImGuiKey_C, true));
+        s.push_back(pruefSchritt("Strg+C klont das Segment", [=] { return anzahlSegmente() == *n + 1; }));
+        s.push_back(taste(ImGuiKey_Insert, true));
+        s.push_back(pruefSchritt("Strg+Einfg klont das Segment", [=] { return anzahlSegmente() == *n + 2; }));
+        s.push_back(taste(ImGuiKey_Delete, true));
+        s.push_back(pruefSchritt("Strg+Entf loescht", [=] { return anzahlSegmente() == *n + 1; }));
+        s.push_back(taste(ImGuiKey_Delete, false, true));
+        s.push_back(pruefSchritt("Umschalt+Entf loescht", [=] { return anzahlSegmente() == *n; }));
         // Leertaste.
         s.push_back(taste(ImGuiKey_Space));
         s.push_back(pruefSchritt("Leertaste spielt ab",

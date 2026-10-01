@@ -63,6 +63,7 @@ const Entry kTable[] = {
     {"World Scale", "Weltmaßstab", "世界比例", "ワールドスケール"},  // ToolWorldScale
     {"Time Scale", "Zeitmaßstab", "时间比例", "タイムスケール"},  // ToolTimeScale
     {"Repeat Rate", "Wiederholrate", "循环间隔", "繰り返し間隔"},  // ToolRepeatRate
+    {"Clone the selected segment", "Gewähltes Segment klonen", "克隆所选片段", "選択セグメントを複製"},  // ToolClone
     {"units/foot", "Einheiten/Fuß", "单位/英尺", "単位/フィート"},  // ToolUnitsPerFoot
     {"Name", "Name", "名称", "名前"},  // ListName
     {"Type", "Typ", "类型", "タイプ"},  // ListType

@@ -243,6 +243,10 @@ void App::startup() {
     // Bibliothek geoeffnet, weil sie das Auffaelligste war; wer den Editor
     // kennt, sucht aber zuerst seinen Arbeitsbereich.
     startTabActive_ = settings_.openLibraryOnStart;
+    // "Reset Default FX Repeat Rate On Restart" (Voreinstellung an): jeder
+    // Start beginnt bei 0.300 s. Die Einstellung wurde bisher gespeichert,
+    // aber nie angewendet.
+    if (settings_.resetRepeatRateOnStart) settings_.repeatRate = 0.300f;
 
     // Sprache: gespeicherte Wahl schlaegt Systemeinstellung.
     if (const auto* language = i18n::findLanguage(settings_.languageCode)) {
@@ -962,6 +966,8 @@ void App::buildFrame(render::Renderer* renderer, int windowWidth, int windowHeig
         previewDirty_ = false;
         refreshPreview();
     }
+    finishPlayOut();
+    settings_.updateRenderMode();
     // Vorgemerkte Wiederholung erledigen, bevor gezeichnet wird.
     //
     // Der Neustart plant den ganzen Effekt neu und laedt gegebenenfalls
@@ -1171,10 +1177,17 @@ void App::handleShortcuts() {
 
     if (ctrl && pressed(ImGuiKey_Z)) applyUndo();
     if (ctrl && pressed(ImGuiKey_Y)) applyRedo();
-    if (ctrl && pressed(ImGuiKey_D)) cmdCloneSegment();
+    // Klonen: Strg+C und Strg+Einfg wie im Original (Accelerator-Tabelle
+    // 128), Strg+D zusaetzlich.
+    if (ctrl && !shift && (pressed(ImGuiKey_C) || pressed(ImGuiKey_Insert) || pressed(ImGuiKey_D))) {
+        cmdCloneSegment();
+    }
+    // Loeschen: Strg+Entf und Umschalt+Entf wie im Original; Entf allein
+    // zusaetzlich (im Original tat es nichts).
+    if ((ctrl || shift) && pressed(ImGuiKey_Delete)) cmdDeleteSegment();
     if (!ctrl && !shift && pressed(ImGuiKey_Space)) pressPlay();
-    if (pressed(ImGuiKey_Insert)) showNewSegmentDialog_ = true;
-    if (pressed(ImGuiKey_Delete)) cmdDeleteSegment();
+    if (!ctrl && pressed(ImGuiKey_Insert)) showNewSegmentDialog_ = true;
+    if (!ctrl && !shift && pressed(ImGuiKey_Delete)) cmdDeleteSegment();
     if (pressed(ImGuiKey_F2)) startRename(doc().selectedPrimitive);
     // Shift+C wie im Original; Strg+Umschalt+C in die Zwischenablage.
     if (shift && !ctrl && pressed(ImGuiKey_C)) pendingScreenshot_ = 1;

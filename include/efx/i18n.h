@@ -73,6 +73,7 @@ enum class Str {
     ToolWorldScale,
     ToolTimeScale,
     ToolRepeatRate,
+    ToolClone,
     ToolUnitsPerFoot,
     ListName,
     ListType,
