@@ -290,110 +290,148 @@ void App::drawGamePathDialog() {
 }
 
 void App::drawPlaybackDialog() {
+    // Aufbau wie "Playback Settings" im Original (Dialog 188): links die drei
+    // Gruppen, rechts OK und Abbrechen. Bearbeitet wird ein Entwurf; erst Ok
+    // uebernimmt ihn — auch in die Wiederholrate der Werkzeugleiste, wie dort.
     if (showPlaybackDialog_) {
-        // Im Dialog wird ein ENTWURF bearbeitet; erst Ok uebernimmt ihn.
-        // Vorher wirkte jede Aenderung sofort, und Abbrechen tat nichts.
         playbackDraft_ = playback_;
+        playbackDraft_.repeatRateSeconds = repeatRateSeconds();
         ImGui::OpenPopup("###playback");
         showPlaybackDialog_ = false;
     }
-    // AlwaysAutoResize UND Regler mit Breite -1 schaukeln sich auf: das
-    // Fenster waechst nach dem breitesten Element, und die Regler nehmen sich
-    // die neue Breite. Bei einem breiten Bildschirm wird der Dialog dann
-    // meterbreit — genau das war zu sehen.
-    //
-    // Also feste Breite statt automatischer, und die Regler bekommen sie
-    // vorgegeben. Die Hoehe darf sich weiter nach dem Inhalt richten; nur die
-    // Breite ist das Problem.
-    const float dialogWidth = 460.0f;
-    ImGui::SetNextWindowSize(ImVec2(dialogWidth, 0.0f), ImGuiCond_Always);
-    ImGui::SetNextWindowSizeConstraints(ImVec2(dialogWidth, 0.0f),
-                                        ImVec2(dialogWidth, FLT_MAX));
-    if (!ImGui::BeginPopupModal(
-            (std::string(tr(Str::DialogPlayback)) + "###playback").c_str(), nullptr,
-            ImGuiWindowFlags_NoResize)) {
+    const float em = ImGui::GetFontSize();
+    if (!ImGui::BeginPopupModal((std::string(tr(Str::DialogPlayback)) + "###playback").c_str(),
+                                nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         return;
     }
+    const float column = em * 24.0f;
+    const float field = em * 5.0f;
+    const float slider = column - field - ImGui::GetStyle().ItemSpacing.x - em;
 
-    ImGui::SeparatorText(tr(Str::PlaybackRepeatMode));
+    // Gruppentitel mit Linie nur ueber die linke Spalte (SeparatorText
+    // liefe unter OK/Abbrechen durch).
+    const auto groupTitle = [column](const char* text) {
+        ImGui::Spacing();
+        const ImVec2 start = ImGui::GetCursorScreenPos();
+        ImGui::TextDisabled("%s", text);
+        const float y = start.y + ImGui::GetTextLineHeight() * 0.5f;
+        const float x = start.x + ImGui::CalcTextSize(text).x + ImGui::GetStyle().ItemSpacing.x;
+        ImGui::GetWindowDrawList()->AddLine(ImVec2(x, y), ImVec2(start.x + column, y),
+                                            ImGui::GetColorU32(ImGuiCol_Separator));
+    };
+    ImGui::BeginGroup();
+    ImGui::PushItemWidth(field);
+
+    // --- Repeat Mode
+    groupTitle(tr(Str::PlaybackRepeatMode));
     int mode = static_cast<int>(playbackDraft_.mode);
     ImGui::RadioButton(tr(Str::PlaybackOnce), &mode, 0);
     ImGui::RadioButton(tr(Str::PlaybackUntilStopped), &mode, 1);
     ImGui::RadioButton(tr(Str::PlaybackForSeconds), &mode, 2);
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(80.0f);
     ImGui::BeginDisabled(mode != 2);
-    ImGui::DragFloat("##repeatFor", &playbackDraft_.repeatForSeconds, 0.1f, 0.0f, 600.0f,
-                     "%.1f");
+    ImGui::DragFloat("##repeatFor", &playbackDraft_.repeatForSeconds, 0.1f, 0.0f, 600.0f, "%.1f",
+                     ImGuiSliderFlags_AlwaysClamp);
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::TextUnformatted(tr(Str::PlaybackSeconds));
     playbackDraft_.mode = static_cast<playback::RepeatMode>(mode);
-    // In die Uhr durchreichen: sie ist die einzige Wahrheit ueber das, was am
-    // Ende geschieht.
-    doc().clock.setEndMode(playbackDraft_.mode == playback::RepeatMode::Once
-                          ? timeline::EndMode::Stop
-                          : timeline::EndMode::Repeat);
 
-    // Der ganze Block gilt nur beim Wiederholen — im Original ist er dann
-    // ausgegraut, und das ist die richtige Anzeige: die Felder existieren
-    // weiter, sie wirken nur nicht.
+    // "Play once" sperrt beide anderen Gruppen (gemessen am Original).
     const bool repeating = playbackDraft_.mode != playback::RepeatMode::Once;
     ImGui::BeginDisabled(!repeating);
 
-    ImGui::SeparatorText(tr(Str::PlaybackRateGroup));
+    // --- Repeat Rate
+    groupTitle(tr(Str::PlaybackRateGroup));
     ImGui::Checkbox(tr(Str::PlaybackEveryFrame), &playbackDraft_.respawnEveryFrame);
-
     ImGui::BeginDisabled(playbackDraft_.respawnEveryFrame);
-    // Zwei Felder, ein Wert. Wer eines aendert, fuehrt das andere nach —
-    // gespeichert wird nur die Rate, die Frequenz ist ihr Kehrwert.
     ImGui::TextUnformatted(tr(Str::PlaybackRate));
     float rate = playbackDraft_.repeatRateSeconds;
-    ImGui::SetNextItemWidth(-1.0f);
-    if (ImGui::SliderFloat("##rate", &rate, playback::Settings::kMinRate, 2.0f,
-                           "%.3f", ImGuiSliderFlags_Logarithmic)) {
+    if (ImGui::DragFloat("##rateField", &rate, 0.005f, playback::Settings::kMinRate,
+                         playback::Settings::kMaxRate, "%.3f", ImGuiSliderFlags_AlwaysClamp)) {
         playbackDraft_.setRate(rate);
     }
-
-    ImGui::TextUnformatted(tr(Str::PlaybackFrequency));
-    float frequency = playbackDraft_.frequency();
-    ImGui::SetNextItemWidth(-1.0f);
-    if (ImGui::SliderFloat("##frequency", &frequency, 0.5f, 200.0f, "%.3f",
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(slider);
+    // Logarithmisch 0.05 bis 5 s wie die Werkzeugleiste des Originals.
+    float rateSlider = std::clamp(playbackDraft_.repeatRateSeconds, 0.05f, 5.0f);
+    if (ImGui::SliderFloat("##rateSlider", &rateSlider, 0.05f, 5.0f, "",
                            ImGuiSliderFlags_Logarithmic)) {
+        playbackDraft_.setRate(rateSlider);
+    }
+    ImGui::TextUnformatted(tr(Str::PlaybackFrequency));
+    // Frequenz = 1 / Rate, gekoppelt (Regler 0.2 bis 20 je Sekunde).
+    float frequency = playbackDraft_.frequency();
+    if (ImGui::DragFloat("##freqField", &frequency, 0.05f, 1.0f / playback::Settings::kMaxRate,
+                         1.0f / playback::Settings::kMinRate, "%.3f", ImGuiSliderFlags_AlwaysClamp)) {
         playbackDraft_.setFrequency(frequency);
     }
-
-    const int total = playbackDraft_.totalRepetitions();
-    ImGui::Text("%s: %s", tr(Str::PlaybackTotal),
-                total < 0 ? tr(Str::PlaybackNotApplicable)
-                          : std::to_string(total).c_str());
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(slider);
+    float frequencySlider = std::clamp(playbackDraft_.frequency(), 0.2f, 20.0f);
+    if (ImGui::SliderFloat("##freqSlider", &frequencySlider, 0.2f, 20.0f, "",
+                           ImGuiSliderFlags_Logarithmic)) {
+        playbackDraft_.setFrequency(frequencySlider);
+    }
     ImGui::EndDisabled();
+    // Gesamtzahl nur bei "Repeat for": Dauer / Rate (2 s / 0.05 = 40, gemessen).
+    if (playbackDraft_.mode == playback::RepeatMode::ForSeconds && !playbackDraft_.respawnEveryFrame &&
+        playbackDraft_.repeatRateSeconds > 0.0f) {
+        ImGui::Text("%s: %d", tr(Str::PlaybackTotal),
+                    static_cast<int>(playbackDraft_.repeatForSeconds / playbackDraft_.repeatRateSeconds));
+    } else {
+        ImGui::TextDisabled("%s: %s", tr(Str::PlaybackTotal), tr(Str::PlaybackNotApplicable));
+    }
 
-    ImGui::SeparatorText(tr(Str::PlaybackMoveGroup));
+    // --- Spawn Point Movement
+    groupTitle(tr(Str::PlaybackMoveGroup));
     ImGui::Checkbox(tr(Str::PlaybackAnimate), &playbackDraft_.animateSpawnLocation);
     ImGui::BeginDisabled(!playbackDraft_.animateSpawnLocation);
-    ImGui::SetNextItemWidth(-1.0f);
-    ImGui::DragFloat3(tr(Str::PlaybackVelocity), &playbackDraft_.spawnVelocity.x, 1.0f,
-                      -4000.0f, 4000.0f, "%.1f");
-    ImGui::SetNextItemWidth(120.0f);
-    ImGui::DragFloat(tr(Str::PlaybackResetAfter), &playbackDraft_.resetLocationAfter,
-                     0.1f, 0.0f, 600.0f, "%.2f");
+    ImGui::TextUnformatted(tr(Str::PlaybackVelocity));
+    const char* axes[3] = {"X", "Y", "Z"};
+    float* velocity[3] = {&playbackDraft_.spawnVelocity.x, &playbackDraft_.spawnVelocity.y,
+                          &playbackDraft_.spawnVelocity.z};
+    for (int k = 0; k < 3; ++k) {
+        ImGui::Indent();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(axes[k]);
+        ImGui::SameLine(em * 3.5f);
+        ImGui::PushID(k);
+        ImGui::DragFloat("##velocity", velocity[k], 1.0f, -4000.0f, 4000.0f, "%.1f");
+        ImGui::PopID();
+        ImGui::Unindent();
+    }
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(tr(Str::PlaybackResetAfter));
+    ImGui::SameLine();
+    ImGui::DragFloat("##resetAfter", &playbackDraft_.resetLocationAfter, 0.1f, 0.0f, 600.0f, "%.2f",
+                     ImGuiSliderFlags_AlwaysClamp);
+    ImGui::SameLine();
+    ImGui::TextUnformatted(tr(Str::PlaybackSeconds));
     ImGui::EndDisabled();
 
     ImGui::EndDisabled();
+    ImGui::PopItemWidth();
+    ImGui::Dummy(ImVec2(column, 0.0f));
+    ImGui::EndGroup();
 
-    ImGui::Separator();
-    if (ImGui::Button(tr(Str::MsgOk), ImVec2(120, 0))) {
+    // --- rechts: OK / Abbrechen
+    ImGui::SameLine();
+    ImGui::BeginGroup();
+    if (ImGui::Button(tr(Str::MsgOk), ImVec2(em * 6.0f, 0))) {
         playback_ = playbackDraft_;
         doc().clock.setEndMode(playback_.mode == playback::RepeatMode::Once
                                    ? timeline::EndMode::Stop
                                    : timeline::EndMode::Repeat);
-        settings_.repeatRate = playback_.repeatRateSeconds;
         settings_.repeat = repeating;
+        // Die Werkzeugleiste folgt (und damit das repeatDelay der Datei).
+        setRepeatRateSeconds(playback_.repeatRateSeconds);
         ImGui::CloseCurrentPopup();
     }
-    ImGui::SameLine();
-    if (ImGui::Button(tr(Str::MsgCancel), ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+    if (ImGui::Button(tr(Str::MsgCancel), ImVec2(em * 6.0f, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndGroup();
     ImGui::EndPopup();
 }
 
