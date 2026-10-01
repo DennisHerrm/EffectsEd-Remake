@@ -1,69 +1,40 @@
-# Was noch fehlt
+# Was noch offen ist
 
-Stand: 1.0.0-rc24
+Stand: 2. Oktober 2026, nach der Nachtrunde (1.18.0-rev77 + Nachtarbeit).
 
-Der Editor ist vollständig benutzbar, die Vorschau zeigt alle Primitivtypen mit
-Texturen, Mischung, Emittern und Klang. Was bleibt, ist überschaubar — und eine
-Sache davon ist wichtiger, als sie klingt.
+Geprüft wird mit drei Läufen, alle grün:
 
-## Die eine, die zählt
-
-### deathFx wird nicht ausgelöst
-
-Wenn eine Primitive stirbt, kann sie einen weiteren Effekt starten. Das steht
-in fast jeder Geschossdatei: das Projektil fliegt, und beim Aufschlag kommt die
-Explosion.
-
-Bei uns fliegt das Projektil und verschwindet.
-
-Die Maschinerie liegt bereit — `playInto` startet schon untergeordnete Effekte
-für Emitter und FxRunner. Es fehlt der Aufruf beim Sterben. Das ist die
-letzte echte Lücke in der Simulation.
-
-## Sieht aus wie eine Funktion, ist keine (3)
-
-| Befehl | was fehlt |
+| Lauf | Ergebnis |
 |---|---|
-| **View > Draw Textured Room** | vier Untereinträge schalten `roomTexture`; `brick.jpg`, `dirt.jpg`, `stucco.jpg` werden nie geladen |
-| **View > Screenshot to file** | Menüpunkt ohne Wirkung |
-| **View > Screenshot to clipboard** | dito |
+| `build\Release\efxtests.exe` (Kern) | 4374 Prüfungen, 0 Fehler |
+| Selbsttest `EFXED_SELBSTTEST=alles`, Direct3D 11 | 732 OK, 0 FEHLER |
+| derselbe Selbsttest mit `EFXED_RENDERER=gl3` | 732 OK, 0 FEHLER |
+| Darstellungslauf `EFXED_SELBSTTEST=darstellung` | 376 Effekte aus Movie Duels, je 4 Zeitpunkte, kein Absturz |
+| `tools/lint_*.py` (12 Prüfer) | alle 0 |
+| `tools/check_menu.py <EffectsEd.exe>` | 49 Menübefehle: 44 umgesetzt, 5 bewusst ausgelassen, keiner fehlt |
 
-## Fehlt ganz
+## Bewusst anders als das Original
 
-| | |
-|---|---|
-| **Physik** | `usePhysics`, `bounce`, `impactfx` — die Vorschau kennt keine Kollision, Partikel fallen durch den Boden |
-| **OpenGL-Treiberinfo** | die Daten liegen in `Probe` bereit, es fehlt das Fenster |
-| **Zuletzt geöffnete Dateien** | |
-| **Vier einzeln schaltbare Werkzeugleisten** | wir haben eine feste |
-| **PNG** | nutzt den vorhandenen Auspacker, etwa 200 Zeilen. JKA-Effekte benutzen praktisch nur TGA und JPG, beide sind da |
+| Original | efxed | Warum |
+|---|---|---|
+| Effektzeit hält an, sobald das Fenster nicht vorn ist | läuft weiter | Beim Vergleichen mit Spiel oder Referenz steht das Fenster meist im Hintergrund |
+| Speichern ergänzt immer `repeatDelay 300` | schreibt nur, was gesetzt ist | Sonst ändert reines Öffnen und Speichern die Datei |
+| Zahlen mit 4 Stellen (`%1.4g`, `1e+004`) | verlustfrei | Genauigkeitsverlust bei jedem Speichern |
+| Spielpfad-Dialog mit SourceSafe-Gruppe und Raven-Vorgaben (JK2/SOF2/JA, `w:/game/base/`) | mehrere Spielpfade, kein SourceSafe | SourceSafe gibt es nicht mehr; die Vorgaben zeigen auf Raven-interne Laufwerke |
+| F6 / Umschalt+F6 (MFC: nächster Bereich) | nicht belegt | Tab-Reihenfolge von ImGui übernimmt das |
+| Drucken, Druckvorschau | fehlt | Ein Partikeleffekt lässt sich nicht sinnvoll drucken |
+| „Entf" allein tut nichts, Strg+N/O/S stehen nur im Menütext | alle belegt | Bekannte Fehler des Originals |
 
-**Bewusst weggelassen:** Drucken, Druckvorschau, Druckeinrichtung.
+## Noch nicht nachgebaut
 
-## Ungeprüft ausgeliefert
+- **Glow, md3-Modelle, Taumeln der Emitter, reine MP-Unterschiede** in der
+  Darstellung. Emitter mit Modell zeichnen nichts (z. B. `chunks/r5d2head`).
+- **Cull Distance** hat noch keine Spinner-Pfeile (alle anderen Zahlenfelder
+  haben sie seit dieser Runde).
+- **Klangausgabe** ist im Selbsttest nur bis zum Auslösen geprüft, nicht das
+  Hören.
 
-Genau ein Teil: die **Klangausgabe** über `waveOut` in `gui/audio_win32.cpp`.
-Auf dem Rechner, auf dem der Quelltext entsteht, gibt es kein Tongerät.
+## Ergebnisse des Bildvergleichs mit dem Original
 
-Der Klangleser ist vollständig geprüft — Formaterkennung, alle Bittiefen,
-Stereo, MP3, 200 verbogene WAVs, 100 verbogene MP3s. Nur das Abspielen nicht.
-
-## Meine Empfehlung
-
-1. **deathFx** — die letzte echte Lücke, und sie fällt an echten Dateien sofort auf
-2. **Physik** — Kollision und Abpraller; danach stimmt die Vorschau auch bei
-   Funken, die über den Boden springen
-3. Der Rest sind Kleinigkeiten, die man machen kann, wenn sie stören
-
-## Was fertig ist
-
-Dateiformat (lesen, schreiben, verlustfrei), Eigenschaftsseiten aller dreizehn
-Typen gegen das Original gemessen, Prüfung mit 31 Regeln, 3D-Ansicht mit
-Raumarten, Himmel und Sonne, vollständige Simulation (Kurven, Zeitplanung,
-Bahn, Ausrichtung, alle Darstellungsarten, Emitter, FxRunner), Materialbestand
-mit eigenem Deflate, TGA und JPEG selbst geschrieben, WAV selbst und MP3 über
-minimp3, Mischung aus dem Shader, Rückgängig und Wiederherstellen, Klonen,
-Dateidialoge, vier Sprachen vollständig, sechs Themen, zwei
-Grafikschnittstellen.
-
-**3696 Prüfungen**, vier Prüfer, Übersetzerlauf für `gui/app.cpp`.
+Siehe `ABGLEICH.md`, Abschnitt „Bildvergleich". Was dort als „efxed falsch"
+steht und hier nicht als behoben, ist offen.
