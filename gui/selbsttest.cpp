@@ -55,6 +55,7 @@
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "testmarke.h"
+#include "theme_imgui.h"
 
 namespace fs = std::filesystem;
 
@@ -681,6 +682,24 @@ public:
         s.push_back(teil("start"));
         s.push_back(pruefSchritt("Programm laeuft, Hauptfenster gezeichnet",
                                  [] { return finde(tr(Str::MenuFile), "##main") != nullptr; }));
+        // Grundansicht wie nach dem Start, einmal im voreingestellten und
+        // einmal im klassischen Thema (zum Vergleich mit dem Original).
+        s.push_back(tu("Editor zeigen", [] { app->showEditor(); }));
+        s.push_back(warte(5));
+        s.push_back(fensterFoto("grundansicht"));
+        s.push_back(foto("grundansicht_3d"));
+        s.push_back(tu("Thema classic", [] {
+            for (const auto& th : theme::builtinThemes()) {
+                if (th.id == "classic") {
+                    app->settings_.themeId = th.id;
+                    applyTheme(th);
+                    app->geometryDirty_ = true;
+                }
+            }
+        }));
+        s.push_back(warte(5));
+        s.push_back(fensterFoto("grundansicht_classic"));
+        s.push_back(foto("grundansicht_classic_3d"));
         // Alle fuenf Hauptmenues sind da und sichtbar.
         for (Str m : {Str::MenuFile, Str::MenuEdit, Str::MenuView, Str::MenuEffects,
                       Str::MenuHelp}) {

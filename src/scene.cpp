@@ -66,138 +66,66 @@ void addLine(LineSet& lines, const camera::Vec3& from, const camera::Vec3& to,
 }  // namespace
 
 Mesh buildRoom(const RoomSize& size, float worldScale, uint32_t wallColour) {
-    Mesh mesh;
-    if (worldScale <= 0.0f) worldScale = 16.0f;
-
-    const float halfX = size.widthFeet * worldScale * 0.5f;
-    const float halfY = size.depthFeet * worldScale * 0.5f;
-    const float height = size.heightFeet * worldScale;
-
-    // Eine Texturkachel je zwei Fuss. Ohne Bezug zum Massstab waere die
-    // Kachelung bei 64 Einheiten je Fuss viermal so fein wie bei 16.
-    const float uvX = size.widthFeet * 0.5f;
-    const float uvY = size.depthFeet * 0.5f;
-    const float uvZ = size.heightFeet * 0.5f;
-
-    // Boden am hellsten, Decke am dunkelsten. Ohne diesen Unterschied
-    // verschwimmen die Kanten und man verliert jedes Gefuehl fuer den Raum —
-    // im Original macht das die Beleuchtung, hier stecken die Werte in den
-    // Eckpunkten.
-    const uint32_t floorColour = shade(wallColour, 1.00f);
-    const uint32_t wallSide = shade(wallColour, 0.86f);
-    const uint32_t wallBack = shade(wallColour, 0.78f);
-    const uint32_t ceiling = shade(wallColour, 0.55f);
-
-    const camera::Vec3 f00{-halfX, -halfY, 0.0f};
-    const camera::Vec3 f10{ halfX, -halfY, 0.0f};
-    const camera::Vec3 f11{ halfX,  halfY, 0.0f};
-    const camera::Vec3 f01{-halfX,  halfY, 0.0f};
-    const camera::Vec3 c00{-halfX, -halfY, height};
-    const camera::Vec3 c10{ halfX, -halfY, height};
-    const camera::Vec3 c11{ halfX,  halfY, height};
-    const camera::Vec3 c01{-halfX,  halfY, height};
-
-    // Alle Vorderseiten zeigen nach INNEN.
-    //
-    // Das ist die Bedingung dafuer, dass Rueckseitenaussortierung das Richtige
-    // tut: von innen sieht man alle sechs Flaechen, von aussen faellt die
-    // naechstgelegene weg und man schaut in den Kasten hinein. Genau so
-    // verhaelt sich der alte Editor.
-    //
-    // Der erste Anlauf hatte die Reihenfolge genau umgekehrt — mein Kommentar
-    // behauptete "nach innen", die Nachrechnung ergab bei allen sechs "nach
-    // aussen". Deshalb prueft der Test das jetzt, statt dass ein Kommentar es
-    // versichert.
-    addQuad(mesh, f00, f10, f11, f01, floorColour, uvX);          // Boden
-    addQuad(mesh, c00, c01, c11, c10, ceiling, uvX);              // Decke
-    addQuad(mesh, f00, c00, c10, f10, wallBack, uvX * 0.5f);      // -Y
-    addQuad(mesh, f11, c11, c01, f01, wallBack, uvX * 0.5f);      // +Y
-    addQuad(mesh, f01, c01, c00, f00, wallSide, uvY * 0.5f);      // -X
-    addQuad(mesh, f10, c10, c11, f11, wallSide, uvY * 0.5f);      // +X
-    (void)uvZ;
-
-    return mesh;
+    (void)worldScale;  // der Raum haengt nicht vom Massstab ab
+    return buildRoomLit(size, worldScale, wallColour, RoomStyle::Enclosed, camera::Vec3{},
+                        1.0f, false, true);
 }
 
 LineSet buildGrid(const RoomSize& size, float worldScale, uint32_t colour,
                   uint32_t majorColour, bool walls) {
+    // Drahtgitter wie im Original: 20 Einheiten je Feld, auf jeder Flaeche
+    // des Raums (oder auf der grossen Bodenflaeche, wenn `walls` aus ist).
+    // Jede fuenfte Linie kraeftiger — 100 Einheiten, gut zum Abschaetzen.
     LineSet lines;
-    if (worldScale <= 0.0f) worldScale = 16.0f;
+    (void)worldScale;
+    const float cell = size.gridCell > 0.0f ? size.gridCell : 20.0f;
+    const float hx = walls ? size.halfX : size.groundHalfX;
+    const float hy = walls ? size.halfY : size.groundHalfY;
+    // Ein Hauch ueber den Flaechen, sonst streiten Linie und Flaeche um
+    // dieselben Tiefenwerte und es flackert.
+    const float lift = 0.05f;
+    const float z0 = size.floorZ + lift;
+    const float z1 = size.ceilingZ - lift;
 
-    const int stepsX = static_cast<int>(size.widthFeet);
-    const int stepsY = static_cast<int>(size.depthFeet);
-    const float halfX = size.widthFeet * worldScale * 0.5f;
-    const float halfY = size.depthFeet * worldScale * 0.5f;
+    const auto lineColour = [&](float coordinate) {
+        const float steps = coordinate / cell;
+        const int index = static_cast<int>(std::lround(steps));
+        return (index % 5) == 0 ? majorColour : colour;
+    };
+    // Rasterpositionen von -h bis +h, durch den Ursprung.
+    const auto positions = [&](float half) {
+        std::vector<float> out;
+        const int n = static_cast<int>(std::floor(half / cell + 1e-3f));
+        for (int i = -n; i <= n; ++i) out.push_back(static_cast<float>(i) * cell);
+        if (out.empty() || out.front() > -half + 1e-3f) out.insert(out.begin(), -half);
+        if (out.back() < half - 1e-3f) out.push_back(half);
+        return out;
+    };
+    const std::vector<float> xs = positions(hx);
+    const std::vector<float> ys = positions(hy);
 
-    // Ein Quadrat je Fuss — so steht es in Ravens Anleitung.
-    // Knapp ueber dem Boden, sonst streiten Gitter und Bodenflaeche um
-    // dieselben Tiefenwerte und das Gitter flackert.
-    const float z = worldScale * 0.01f;
-
-    for (int i = 0; i <= stepsX; ++i) {
-        const float x = -halfX + static_cast<float>(i) * worldScale;
-        const bool major = (i % 10) == 0;
-        addLine(lines, {x, -halfY, z}, {x, halfY, z},
-                major ? majorColour : colour);
-    }
-    for (int i = 0; i <= stepsY; ++i) {
-        const float y = -halfY + static_cast<float>(i) * worldScale;
-        const bool major = (i % 10) == 0;
-        addLine(lines, {-halfX, y, z}, {halfX, y, z},
-                major ? majorColour : colour);
-    }
-
+    // Boden
+    for (float x : xs) addLine(lines, {x, -hy, z0}, {x, hy, z0}, lineColour(x));
+    for (float y : ys) addLine(lines, {-hx, y, z0}, {hx, y, z0}, lineColour(y));
     if (!walls) return lines;
 
-    // Vier Waende und die Decke.
-    //
-    // Derselbe Abstand von einem Fuss und dieselbe Betonung jeder zehnten
-    // Linie. Der kleine Versatz `z` wird hier zum Versatz NACH INNEN: sonst
-    // liegt das Gitter genau in der Wandflaeche und flackert.
-    const float top = size.heightFeet * worldScale;
-    const int stepsZ = static_cast<int>(size.heightFeet);
-    const float inset = z;
+    // Hoehenlinien von Boden bis Decke
+    std::vector<float> zs;
+    for (float z = size.floorZ; z <= size.ceilingZ + 1e-3f; z += cell) zs.push_back(z);
+    if (zs.back() < size.ceilingZ - 1e-3f) zs.push_back(size.ceilingZ);
 
-    // Die beiden Waende bei -Y und +Y: senkrechte Linien ueber x, waagerechte
-    // ueber die Hoehe.
-    for (const float wallY : {-halfY + inset, halfY - inset}) {
-        for (int i = 0; i <= stepsX; ++i) {
-            const float x = -halfX + static_cast<float>(i) * worldScale;
-            addLine(lines, {x, wallY, 0.0f}, {x, wallY, top},
-                    (i % 10) == 0 ? majorColour : colour);
-        }
-        for (int i = 0; i <= stepsZ; ++i) {
-            const float h = static_cast<float>(i) * worldScale;
-            addLine(lines, {-halfX, wallY, h}, {halfX, wallY, h},
-                    (i % 10) == 0 ? majorColour : colour);
-        }
+    // Decke
+    for (float x : xs) addLine(lines, {x, -hy, z1}, {x, hy, z1}, lineColour(x));
+    for (float y : ys) addLine(lines, {-hx, y, z1}, {hx, y, z1}, lineColour(y));
+    // Wand vorn und hinten (y = -hy, +hy)
+    for (const float wy : {-hy + lift, hy - lift}) {
+        for (float x : xs) addLine(lines, {x, wy, size.floorZ}, {x, wy, size.ceilingZ}, lineColour(x));
+        for (float z : zs) addLine(lines, {-hx, wy, z}, {hx, wy, z}, lineColour(z - size.floorZ));
     }
-
-    // Die beiden Waende bei -X und +X.
-    for (const float wallX : {-halfX + inset, halfX - inset}) {
-        for (int i = 0; i <= stepsY; ++i) {
-            const float y = -halfY + static_cast<float>(i) * worldScale;
-            addLine(lines, {wallX, y, 0.0f}, {wallX, y, top},
-                    (i % 10) == 0 ? majorColour : colour);
-        }
-        for (int i = 0; i <= stepsZ; ++i) {
-            const float h = static_cast<float>(i) * worldScale;
-            addLine(lines, {wallX, -halfY, h}, {wallX, halfY, h},
-                    (i % 10) == 0 ? majorColour : colour);
-        }
-    }
-
-    // Die Decke.
-    const float ceiling = top - inset;
-    for (int i = 0; i <= stepsX; ++i) {
-        const float x = -halfX + static_cast<float>(i) * worldScale;
-        addLine(lines, {x, -halfY, ceiling}, {x, halfY, ceiling},
-                (i % 10) == 0 ? majorColour : colour);
-    }
-    for (int i = 0; i <= stepsY; ++i) {
-        const float y = -halfY + static_cast<float>(i) * worldScale;
-        addLine(lines, {-halfX, y, ceiling}, {halfX, y, ceiling},
-                (i % 10) == 0 ? majorColour : colour);
+    // Waende links und rechts (x = -hx, +hx)
+    for (const float wx : {-hx + lift, hx - lift}) {
+        for (float y : ys) addLine(lines, {wx, y, size.floorZ}, {wx, y, size.ceilingZ}, lineColour(y));
+        for (float z : zs) addLine(lines, {wx, -hy, z}, {wx, hy, z}, lineColour(z - size.floorZ));
     }
     return lines;
 }
@@ -317,47 +245,42 @@ Mesh buildRoomLit(const RoomSize& size, float worldScale, uint32_t wallColour,
                   bool sunEnabled, bool includeWalls) {
     Mesh mesh;
     if (style == RoomStyle::None) return mesh;
-    if (worldScale <= 0.0f) worldScale = 16.0f;
+    (void)worldScale;  // der Raum haengt nicht vom Massstab ab (gemessen)
 
-    const float halfX = size.widthFeet * worldScale * 0.5f;
-    const float halfY = size.depthFeet * worldScale * 0.5f;
-    const float height = size.heightFeet * worldScale;
-    const float uvX = size.widthFeet * 0.5f;
-    const float uvY = size.depthFeet * 0.5f;
-
-    // Draussen bleibt ein niedriger Sockel statt der Waende: er faengt den
-    // Blick am Rand ab, ohne den Effekt einzusperren. Ohne ihn schwebt der
-    // Boden im Nichts, und man verliert das Gefuehl fuer die Hoehe.
-    const float wallHeight = style == RoomStyle::OpenSky ? worldScale * 0.5f : height;
-
+    // Helligkeit je Flaeche wie im Original (Lichtmodell mit Umgebung 0.4,
+    // gemessen in der Grundansicht): Rueckwand 0.87, Seitenwaende 0.78,
+    // Boden 0.75, Decke 0.44.
     auto shadeFor = [&](const camera::Vec3& normal, float baseFactor) {
-        const float lit =
-            sunEnabled ? sunLambert(normal, sunDirection, ambient) : 1.0f;
+        const float lit = sunEnabled ? sunLambert(normal, sunDirection, ambient) : 1.0f;
         return shade(wallColour, baseFactor * lit);
     };
+    // Jede Flaeche traegt die Textur 8 x 8 Mal (Texturkoordinaten -4..+4),
+    // egal wie gross sie ist — so macht es das Original.
+    constexpr float kRepeats = 8.0f;
 
-    const camera::Vec3 f00{-halfX, -halfY, 0.0f};
-    const camera::Vec3 f10{ halfX, -halfY, 0.0f};
-    const camera::Vec3 f11{ halfX,  halfY, 0.0f};
-    const camera::Vec3 f01{-halfX,  halfY, 0.0f};
-    const camera::Vec3 c00{-halfX, -halfY, wallHeight};
-    const camera::Vec3 c10{ halfX, -halfY, wallHeight};
-    const camera::Vec3 c11{ halfX,  halfY, wallHeight};
-    const camera::Vec3 c01{-halfX,  halfY, wallHeight};
+    // Ohne Waende (Draw Room aus, oder draussen): eine grosse Bodenflaeche.
+    const bool open = !includeWalls || style == RoomStyle::OpenSky;
+    const float hx = open ? size.groundHalfX : size.halfX;
+    const float hy = open ? size.groundHalfY : size.halfY;
+    const float z0 = size.floorZ;
+    const float z1 = size.ceilingZ;
 
-    // Alle Vorderseiten zeigen nach innen — siehe buildRoom.
-    // Der Boden immer. Er ist der Bezug, an dem man Hoehe und Entfernung
-    // ablesen kann — ohne ihn schwebt alles.
-    addQuad(mesh, f00, f10, f11, f01, shadeFor({0, 0, 1}, 1.00f), uvX);
-    if (!includeWalls) return mesh;
+    const camera::Vec3 f00{-hx, -hy, z0};
+    const camera::Vec3 f10{ hx, -hy, z0};
+    const camera::Vec3 f11{ hx,  hy, z0};
+    const camera::Vec3 f01{-hx,  hy, z0};
+    addQuad(mesh, f00, f10, f11, f01, shadeFor({0, 0, 1}, 0.75f), kRepeats);
+    if (open) return mesh;
 
-    if (style == RoomStyle::Enclosed) {
-        addQuad(mesh, c00, c01, c11, c10, shadeFor({0, 0, -1}, 0.55f), uvX);
-    }
-    addQuad(mesh, f00, c00, c10, f10, shadeFor({0, 1, 0}, 0.86f), uvX * 0.5f);
-    addQuad(mesh, f11, c11, c01, f01, shadeFor({0, -1, 0}, 0.86f), uvX * 0.5f);
-    addQuad(mesh, f01, c01, c00, f00, shadeFor({1, 0, 0}, 0.86f), uvY * 0.5f);
-    addQuad(mesh, f10, c10, c11, f11, shadeFor({-1, 0, 0}, 0.86f), uvY * 0.5f);
+    const camera::Vec3 c00{-hx, -hy, z1};
+    const camera::Vec3 c10{ hx, -hy, z1};
+    const camera::Vec3 c11{ hx,  hy, z1};
+    const camera::Vec3 c01{-hx,  hy, z1};
+    addQuad(mesh, c00, c01, c11, c10, shadeFor({0, 0, -1}, 0.44f), kRepeats);  // Decke
+    addQuad(mesh, f00, c00, c10, f10, shadeFor({0, 1, 0}, 0.87f), kRepeats);   // -Y (vorn)
+    addQuad(mesh, f11, c11, c01, f01, shadeFor({0, -1, 0}, 0.87f), kRepeats);  // +Y (hinten)
+    addQuad(mesh, f01, c01, c00, f00, shadeFor({1, 0, 0}, 0.78f), kRepeats);   // -X
+    addQuad(mesh, f10, c10, c11, f11, shadeFor({-1, 0, 0}, 0.78f), kRepeats);  // +X
     return mesh;
 }
 

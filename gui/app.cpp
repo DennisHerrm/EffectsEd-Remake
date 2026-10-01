@@ -62,8 +62,8 @@ void App::clampWindFlagToRoom() {
     // Eine Fahne hinter der Wand ist unsichtbar, und man findet sie nicht
     // wieder. 0.45 statt 0.5: ein Stueck Abstand zur Wand, sonst steckt sie
     // halb darin.
-    const float halfWidth = roomSize_.widthFeet * settings_.worldScale * 0.45f;
-    const float halfDepth = roomSize_.depthFeet * settings_.worldScale * 0.45f;
+    const float halfWidth = roomSize_.halfX * 0.9f;
+    const float halfDepth = roomSize_.halfY * 0.9f;
     settings_.windFlagPos[0] =
         std::clamp(settings_.windFlagPos[0], -halfWidth, halfWidth);
     settings_.windFlagPos[1] =
@@ -166,9 +166,18 @@ void App::rebuildGeometry() {
         skyMesh_ = scene::Mesh{};
         sunMesh_ = scene::Mesh{};
     }
-    gridLines_ = scene::buildGrid(roomSize_, worldScale, packColour(p.grid),
-                                  packColour(p.grid, 1.6f),
-                                  settings_.gridOnWalls);
+    // Im Drahtgittermodus ersetzt das Gitter die Flaechen, in der Wandfarbe
+    // (Original: "In wireframe mode, the grid lines will be drawn using this
+    // color"). Mit Raum auf allen sechs Flaechen, ohne Raum auf der Ebene.
+    {
+        const theme::Color gridColour =
+            wallColourOverridden_ ? theme::Color{wallColour_[0], wallColour_[1], wallColour_[2], 1.0f}
+                                  : p.roomWall;
+        gridLines_ = scene::buildGrid(roomSize_, worldScale, packColour(gridColour),
+                                      packColour(gridColour, 1.4f),
+                                      settings_.drawRoom &&
+                                          settings_.roomStyle == static_cast<int>(scene::RoomStyle::Enclosed));
+    }
     // Sechzehn Einheiten, wie im Original.
     axisLines_ = scene::buildAxes(16.0f, packColour(p.axisX), packColour(p.axisY),
                                   packColour(p.axisZ));
@@ -451,7 +460,7 @@ void App::updateFlagDrag(float width, float height) {
     }
     {
         const camera::Vec3 foot{settings_.windFlagPos[0], settings_.windFlagPos[1],
-                                0.0f};
+                                roomSize_.floorZ};
         const ImVec2 mouse = ImGui::GetMousePos();
         const ImVec2 viewMin = ImGui::GetItemRectMin();
 
@@ -482,7 +491,7 @@ void App::updateFlagDrag(float width, float height) {
 
         if (draggingFlag_) {
             camera::Vec3 onGround;
-            if (camera::intersectGroundPlane(ray, 0.0f, onGround)) {
+            if (camera::intersectGroundPlane(ray, roomSize_.floorZ, onGround)) {
                 settings_.windFlagPos[0] = onGround.x;
                 settings_.windFlagPos[1] = onGround.y;
                 clampWindFlagToRoom();
@@ -513,6 +522,16 @@ void App::drawViewport(render::Renderer* renderer, float width, float height) {
         textureCacheDirty_ = false;
     }
 
+    // Weltmassstab gewechselt (oder erstes Bild): wie im Original waechst der
+    // Kameraabstand mit dem Massstab (10 -> 16 Einheiten je Fuss: 80 -> 128);
+    // der Raum selbst bleibt gleich gross.
+    if (settings_.worldScale != lastWorldScale_ && settings_.worldScale > 0.0f) {
+        if (lastWorldScale_ <= 0.0f) {
+            camera_.reset(settings_.worldScale);
+        } else {
+            camera_.setDistance(camera_.distance() * settings_.worldScale / lastWorldScale_);
+        }
+    }
     if (geometryDirty_ || settings_.worldScale != lastWorldScale_) {
         rebuildGeometry();
         if (camera_.distance() <= 0.0f) camera_.reset(settings_.worldScale);
@@ -590,7 +609,7 @@ void App::drawViewport(render::Renderer* renderer, float width, float height) {
         wallTextureKind_ = settings_.roomTexture;
     }
 
-    if (!roomMesh_.vertices.empty()) {
+    if (!roomMesh_.vertices.empty() && !settings_.drawGrid) {
         renderer->setBlend(render::Blend::Opaque);
 
         // Der Raum schreibt KEINE Tiefe — er verdeckt den Effekt nicht.
@@ -671,7 +690,7 @@ void App::drawViewport(render::Renderer* renderer, float width, float height) {
                                                      : windPalette.textDim),
             packColour(windPalette.accent),
             camera::Vec3{settings_.windFlagPos[0], settings_.windFlagPos[1],
-                         0.0f});
+                         roomSize_.floorZ});
     }
     if (settings_.drawWindVector && !windLines_.vertices.empty()) {
         renderer->drawLines(

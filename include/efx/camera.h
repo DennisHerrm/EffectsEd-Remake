@@ -132,13 +132,17 @@ public:
     void setShakeOffset(const Vec3& origin, float pitch, float yaw);
 
 private:
+    // Vorgaben = Grundstellung des Originals bei 10 Einheiten je Fuss (siehe
+    // reset). Vorher standen hier andere Werte als in reset(), und weil das
+    // Programm beim Start nicht zuruecksetzt, sah die erste Ansicht anders
+    // aus als nach "Reset View".
     Vec3 target_;
-    float distance_ = 160.0f;
-    float yaw_ = 0.0f;      // Grad, um die Hochachse
-    float pitch_ = 15.0f;   // Grad, über der Waagerechten
+    float distance_ = 80.0f;
+    float yaw_ = 270.0f;    // Grad, um die Hochachse (wo die Kamera STEHT)
+    float pitch_ = 0.0f;    // Grad, über der Waagerechten
     float roll_ = 0.0f;     // Grad, um die Blickachse
-    float fov_ = 60.0f;
-    float worldScale_ = 16.0f;
+    float fov_ = 90.0f;     // senkrecht
+    float worldScale_ = 10.0f;
 
     Vec3 shakeOrigin_;
     float shakePitch_ = 0.0f;

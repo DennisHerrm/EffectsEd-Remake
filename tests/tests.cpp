@@ -1636,10 +1636,19 @@ void testCamera() {
 
     Orbit cam;
     cam.reset(16.0f);
-    check(cam.distance() == 160.0f, "Abstand ist zehn Fuss bei 16 Einheiten/Fuss");
+    // Grundstellung wie im Original: Auge bei (0, -80, 0) bei 10 Einheiten
+    // je Fuss, Abstand waechst mit dem Massstab (16: 128), Blick entlang +Y,
+    // 90 Grad senkrechtes Sichtfeld (gemessen, agentA ROOM-GEOMETRY.md).
+    check(cam.distance() == 128.0f, "Abstand 8 Fuss bei 16 Einheiten/Fuss wie im Original");
+    Orbit original;
+    original.reset(10.0f);
+    const Vec3 eye = original.position();
+    check(std::fabs(eye.x) < 1e-3f && std::fabs(eye.y + 80.0f) < 1e-3f && std::fabs(eye.z) < 1e-3f,
+          "Auge bei (0, -80, 0) wie im Original");
+    check(original.fovDegrees() == 90.0f, "90 Grad Sichtfeld wie im Original");
     Orbit big;
     big.reset(64.0f);
-    check(big.distance() == 640.0f, "und skaliert mit dem Weltmassstab mit");
+    check(big.distance() == 512.0f, "und skaliert mit dem Weltmassstab mit");
 
     // Der Abstand zum Zielpunkt darf sich beim Drehen nicht aendern — das ist
     // die eine Eigenschaft, die eine Umlaufkamera ausmacht.
@@ -1884,7 +1893,9 @@ void testPicking() {
     // Eine Kamera, die vom Punkt (0,-300,200) auf den Ursprung schaut.
     Orbit orbit;
     orbit.reset(16.0f);
-    orbit.orbit(40.0f, 20.0f);   // etwas schraeg, damit es kein Sonderfall ist
+    // Etwas schraeg von oben, damit es kein Sonderfall ist (die Grundstellung
+    // blickt seit dem Abgleich mit dem Original waagerecht).
+    orbit.orbit(40.0f, -40.0f);
     const Matrix view = orbit.viewMatrix();
     const Matrix projection = orbit.projectionMatrix(16.0f / 9.0f, false);
 
@@ -2190,16 +2201,32 @@ void testScene() {
         minX = std::min(minX, v.pos[0]); maxX = std::max(maxX, v.pos[0]);
         minZ = std::min(minZ, v.pos[2]); maxZ = std::max(maxZ, v.pos[2]);
     }
-    check(std::fabs((maxX - minX) - size.widthFeet * worldScale) < 0.01f,
-          "Breite stimmt");
-    check(std::fabs(minZ) < 0.01f, "Boden liegt bei z = 0");
-    check(std::fabs(maxZ - size.heightFeet * worldScale) < 0.01f, "Hoehe stimmt");
-    std::printf("  Raum %.0f x %.0f x %.0f Fuss = %.0f x %.0f x %.0f Einheiten\n",
-                static_cast<double>(size.widthFeet), static_cast<double>(size.depthFeet),
-                static_cast<double>(size.heightFeet),
-                static_cast<double>(maxX - minX),
-                static_cast<double>(size.depthFeet * worldScale),
-                static_cast<double>(maxZ - minZ));
+    // Gemessen am Original (Disassembly + Fotos, agentA ROOM-GEOMETRY.md):
+    // x -100..100, y -140..140, Boden -20, Decke 60.
+    float minY = 1e9f, maxY = -1e9f;
+    for (const auto& v : room.vertices) {
+        minY = std::min(minY, v.pos[1]);
+        maxY = std::max(maxY, v.pos[1]);
+    }
+    check(std::fabs(minX + 100.0f) < 0.01f && std::fabs(maxX - 100.0f) < 0.01f,
+          "Breite wie im Original: x -100..100");
+    check(std::fabs(minY + 140.0f) < 0.01f && std::fabs(maxY - 140.0f) < 0.01f,
+          "Tiefe wie im Original: y -140..140");
+    check(std::fabs(minZ + 20.0f) < 0.01f, "Boden wie im Original bei z = -20");
+    check(std::fabs(maxZ - 60.0f) < 0.01f, "Decke wie im Original bei z = 60");
+    // Der Raum haengt nicht vom Weltmassstab ab (das Original verschiebt nur
+    // die Kamera).
+    {
+        const Mesh other = buildRoom(size, 10.0f, rgba(102, 187, 106));
+        bool same = other.vertices.size() == room.vertices.size();
+        for (size_t i = 0; same && i < room.vertices.size(); ++i) {
+            for (int k = 0; k < 3; ++k) same &= other.vertices[i].pos[k] == room.vertices[i].pos[k];
+        }
+        check(same, "Raum bei 10 und 16 Einheiten je Fuss gleich gross");
+    }
+    std::printf("  Raum %.0f x %.0f x %.0f Einheiten, Boden bei %.0f\n",
+                static_cast<double>(maxX - minX), static_cast<double>(maxY - minY),
+                static_cast<double>(maxZ - minZ), static_cast<double>(minZ));
 
     // Wickelrichtung. Jede Flaeche muss nach INNEN zeigen.
     //
@@ -2212,7 +2239,7 @@ void testScene() {
     // Nachrechnung ergab bei allen sechs Flaechen "nach aussen". Seitdem wird
     // es gemessen.
     {
-        const efx::camera::Vec3 inside{0.0f, 0.0f, size.heightFeet * worldScale * 0.5f};
+        const efx::camera::Vec3 inside{0.0f, 0.0f, size.centreZ()};
         const char* faceNames[6] = {"Boden", "Decke", "Wand -Y", "Wand +Y",
                                     "Wand -X", "Wand +X"};
         int inward = 0;
@@ -2261,26 +2288,27 @@ void testScene() {
         check(p.skyZenith.b >= p.skyZenith.r, t.id + ": der Zenit zieht ins Blaue");
     }
 
-    // Das Gitter: ein Quadrat je Fuss. Das steht so in Ravens Anleitung, und
-    // wenn es nicht stimmt, schaetzt man jede Entfernung falsch ein.
+    // Das Gitter: 20 Einheiten je Feld (gemessen; Ravens Anleitung sagt
+    // "one foot", das Original zeichnet 20 Einheiten). Ohne Waende auf der
+    // grossen Bodenflaeche x -400..400, y -560..560.
     LineSet grid = buildGrid(size, worldScale, rgba(80, 80, 90), rgba(120, 120, 130));
-    const size_t expectedLines = static_cast<size_t>(size.widthFeet + 1) +
-                                 static_cast<size_t>(size.depthFeet + 1);
+    const size_t expectedLines = static_cast<size_t>(800 / 20 + 1) +
+                                 static_cast<size_t>(1120 / 20 + 1);
     check(grid.vertices.size() == expectedLines * 2,
-          "eine Linie je Fuss in beiden Richtungen");
+          "eine Linie je 20 Einheiten in beiden Richtungen");
 
     // Abstand zweier benachbarter Linien nachmessen.
     const float lineX0 = grid.vertices[0].pos[0];
     const float lineX1 = grid.vertices[2].pos[0];
-    check(std::fabs((lineX1 - lineX0) - worldScale) < 0.01f,
-          "Gitterabstand ist genau ein Fuss");
+    check(std::fabs((lineX1 - lineX0) - 20.0f) < 0.01f,
+          "Gitterabstand ist 20 Einheiten wie im Original");
     std::printf("  Gitterabstand %.1f Einheiten bei %.0f Einheiten/Fuss\n",
                 static_cast<double>(lineX1 - lineX0), static_cast<double>(worldScale));
 
-    // Bei anderem Massstab muss es mitwandern.
+    // Unabhaengig vom Weltmassstab, wie der Raum.
     LineSet grid64 = buildGrid(size, 64.0f, rgba(80, 80, 90), rgba(120, 120, 130));
-    check(std::fabs((grid64.vertices[2].pos[0] - grid64.vertices[0].pos[0]) - 64.0f) < 0.01f,
-          "und passt sich dem Weltmassstab an");
+    check(std::fabs((grid64.vertices[2].pos[0] - grid64.vertices[0].pos[0]) - 20.0f) < 0.01f,
+          "und haengt nicht vom Weltmassstab ab");
 
     // Jede zehnte Linie kraeftiger.
     std::set<uint32_t> gridShades;
@@ -2288,7 +2316,7 @@ void testScene() {
     check(gridShades.size() == 2, "Haupt- und Nebenlinien unterscheidbar");
 
     // Das Gitter darf nicht in der Bodenflaeche liegen, sonst flackert es.
-    check(grid.vertices[0].pos[2] > 0.0f, "Gitter liegt ueber dem Boden");
+    check(grid.vertices[0].pos[2] > size.floorZ, "Gitter liegt ueber dem Boden");
 
     // --- Raumarten, Himmel und Sonne --------------------------------------
     {
@@ -2308,25 +2336,22 @@ void testScene() {
                                             false);
         check(floorOnly.vertices.size() == 4, "ohne Waende bleibt nur der Boden");
         for (const auto& v : floorOnly.vertices) {
-            check(std::fabs(v.pos[2]) < 0.01f, "und der liegt bei z = 0");
+            check(std::fabs(v.pos[2] - size.floorZ) < 0.01f, "und der liegt auf Bodenhoehe (-20)");
         }
         std::printf("  ohne Waende: %zu Ecken (nur der Boden)\n",
                     floorOnly.vertices.size());
-        check(open.vertices.size() == 20, "draussen: fuenf, ohne Decke");
+        check(open.vertices.size() == 4, "draussen: nur die grosse Bodenflaeche");
         check(buildRoomLit(size, worldScale, 0, RoomStyle::None, sun, 0.35f, true)
                   .vertices.empty(), "keine Raumart: nichts");
 
-        // Draussen bleibt ein niedriger Sockel statt voller Waende. Ohne ihn
-        // schwebt der Boden im Nichts, und man verliert das Gefuehl fuer Hoehe.
-        float enclosedTop = 0.0f, openTop = 0.0f;
-        for (const auto& v : enclosed.vertices) {
-            enclosedTop = std::max(enclosedTop, v.pos[2]);
+        // Ohne Raum zeichnet das Original eine grosse Ebene: x -400..400,
+        // y -560..560 auf Bodenhoehe (gemessen).
+        float openMaxX = 0.0f, openMaxY = 0.0f;
+        for (const auto& v : open.vertices) {
+            openMaxX = std::max(openMaxX, v.pos[0]);
+            openMaxY = std::max(openMaxY, v.pos[1]);
         }
-        for (const auto& v : open.vertices) openTop = std::max(openTop, v.pos[2]);
-        check(openTop > 0.0f, "der Sockel hat Hoehe");
-        check(openTop < enclosedTop * 0.2f, "aber viel weniger als die Waende");
-        std::printf("  Raum: geschlossen %.0f hoch, draussen %.0f (Sockel)\n",
-                    static_cast<double>(enclosedTop), static_cast<double>(openTop));
+        check(openMaxX == 400.0f && openMaxY == 560.0f, "die Ebene reicht bis 400 / 560");
 
         // Sonnenlicht.
         check(sunLambert({0, 0, 1}, {0, 0, 1}, 0.0f) > 0.99f,
@@ -2460,11 +2485,8 @@ void testScene() {
     check(efx::camera::length(foot) > worldScale, "sie steht nicht im Ursprung");
     check(efx::camera::length(foot) < worldScale * 5.0f,
           "aber in der Mitte, nicht am Rand");
-    check(foot.z == 0.0f, "und auf dem Boden");
-    check(std::fabs(foot.x) < size.widthFeet * worldScale * 0.5f,
-          "innerhalb der Breite");
-    check(std::fabs(foot.y) < size.depthFeet * worldScale * 0.5f,
-          "innerhalb der Tiefe");
+    check(std::fabs(foot.x) < size.halfX, "innerhalb der Breite");
+    check(std::fabs(foot.y) < size.halfY, "innerhalb der Tiefe");
     std::printf("  Fahne steht bei %.0f / %.0f (Mitte, %.0f Einheiten versetzt)\n",
                 static_cast<double>(foot.x), static_cast<double>(foot.y),
                 static_cast<double>(efx::camera::length(foot)));
@@ -2649,28 +2671,28 @@ void testSpawnOrigin() {
     using namespace efx::playback;
 
     efx::scene::RoomSize room;
-    const float worldScale = 16.0f;
-    const float height = room.heightFeet * worldScale;
-    const float halfX = room.widthFeet * worldScale * 0.5f;
+    const float worldScale = 10.0f;
 
+    // Gemessen am Original (Custom Fx Spawn Origin, 10 Einheiten je Fuss):
+    // Default 0/0/0, Raummitte 0/0/20, Boden 0/0/-19, Decke 0/0/59,
+    // Wand -99/0/20.
     Origin origin;
     check(efx::camera::length(origin.resolve(room, worldScale)) == 0.0f,
           "Default liegt im Weltursprung");
 
     origin.mode = OriginMode::OnFloor;
-    check(origin.resolve(room, worldScale).z == 0.0f, "auf dem Boden: z = 0");
+    check(origin.resolve(room, worldScale).z == -19.0f, "auf dem Boden: z = -19 wie im Original");
 
     origin.mode = OriginMode::OnCeiling;
-    check(std::fabs(origin.resolve(room, worldScale).z - height) < 0.01f,
-          "an der Decke: volle Raumhoehe");
+    check(origin.resolve(room, worldScale).z == 59.0f, "an der Decke: z = 59 wie im Original");
 
     origin.mode = OriginMode::RoomCentre;
-    check(std::fabs(origin.resolve(room, worldScale).z - height * 0.5f) < 0.01f,
-          "Raummitte: halbe Hoehe");
+    check(origin.resolve(room, worldScale).z == 20.0f, "Raummitte: z = 20 wie im Original");
 
     origin.mode = OriginMode::OnWall;
-    check(std::fabs(origin.resolve(room, worldScale).x + halfX) < 0.01f,
-          "an der Wand: am Rand des Raums");
+    const auto wall = origin.resolve(room, worldScale);
+    check(wall.x == -99.0f && wall.y == 0.0f && wall.z == 20.0f,
+          "an der Wand: -99/0/20 wie im Original");
 
     origin.mode = OriginMode::Custom;
     origin.custom = {12.0f, -34.0f, 56.0f};
@@ -2678,15 +2700,10 @@ void testSpawnOrigin() {
     check(custom.x == 12.0f && custom.y == -34.0f && custom.z == 56.0f,
           "eigene Werte werden unveraendert uebernommen");
 
-    // Alles ausser Custom muss mit dem Weltmassstab mitwandern — sonst sitzt
-    // der Ursprung bei 64 Einheiten je Fuss im Boden statt an der Decke.
+    // Der Raum haengt nicht vom Massstab ab, die Lagen also auch nicht.
     origin.mode = OriginMode::OnCeiling;
-    const float bigScale = 64.0f;
-    check(std::fabs(origin.resolve(room, bigScale).z -
-                    room.heightFeet * bigScale) < 0.01f,
-          "an der Decke skaliert mit dem Weltmassstab");
-    check(origin.resolve(room, 0.0f).z > 0.0f,
-          "Weltmassstab null faellt auf 16 zurueck statt auf null");
+    check(origin.resolve(room, 64.0f).z == 59.0f, "an der Decke auch bei 64 Einheiten je Fuss");
+    check(origin.resolve(room, 0.0f).z == 59.0f, "und bei Massstab null");
 }
 
 void testFields() {
@@ -10087,17 +10104,17 @@ void testGridOnWalls() {
     const efx::scene::LineSet everywhere =
         efx::scene::buildGrid(room, 10.0f, 0xFF808080u, 0xFFC0C0C0u, true);
 
-    check(everywhere.vertices.size() > floorOnly.vertices.size() * 3,
-          "mit Waenden und Decke sind es deutlich mehr Linien");
+    // floorOnly ist die grosse Ebene (ohne Raum), everywhere der Raum mit
+    // allen sechs Flaechen — die Linienzahlen sind darum nicht vergleichbar.
+    check(!everywhere.vertices.empty(), "mit Waenden und Decke gibt es Linien");
 
     // Der Boden allein liegt fast in einer Ebene — mit Waenden reicht es bis
     // zur Decke hinauf.
     float highestFloor = -1e9f, highestAll = -1e9f;
     for (const auto& v : floorOnly.vertices) highestFloor = std::max(highestFloor, v.pos[2]);
     for (const auto& v : everywhere.vertices) highestAll = std::max(highestAll, v.pos[2]);
-    check(highestFloor < 1.0f, "das Bodengitter liegt am Boden");
-    check(highestAll > room.heightFeet * 10.0f * 0.9f,
-          "das volle Gitter reicht bis zur Decke");
+    check(highestFloor < room.floorZ + 1.0f, "das Bodengitter liegt am Boden");
+    check(highestAll > room.ceilingZ - 1.0f, "das volle Gitter reicht bis zur Decke");
     std::printf("  nur Boden: %zu Linien bis z=%.1f | alles: %zu bis z=%.1f\n",
                 floorOnly.vertices.size() / 2, highestFloor,
                 everywhere.vertices.size() / 2, highestAll);

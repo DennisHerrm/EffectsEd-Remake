@@ -121,7 +121,7 @@ void App::drawMenuBar() {
             // Neuaufbau anstossen. Der Raum wird gebaut, wenn sich der
             // Masstab geaendert hat — diesen Merker zuruecksetzen ist der
             // vorhandene Weg dorthin, ohne einen zweiten einzufuehren.
-            lastWorldScale_ = 0.0f;
+            geometryDirty_ = true;
         }
 
         // Wie ein Effekt mit `repeatDelay` wiederholt wird.

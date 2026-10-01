@@ -56,22 +56,19 @@ camera::Vec3 Settings::originAt(float seconds, const camera::Vec3& base) const {
 }
 
 camera::Vec3 Origin::resolve(const scene::RoomSize& room, float worldScale) const {
-    if (worldScale <= 0.0f) worldScale = 16.0f;
-
-    const float halfX = room.widthFeet * worldScale * 0.5f;
-    const float height = room.heightFeet * worldScale;
-
+    (void)worldScale;  // der Raum haengt nicht vom Massstab ab
+    // Gemessen am Original bei 10 Einheiten je Fuss (Custom Fx Spawn Origin):
+    // Raummitte 0/0/20, Boden 0/0/-19, Decke 0/0/59, Wand -99/0/20 — jeweils
+    // eine Einheit vor der Flaeche, damit nichts in ihr steckt.
     switch (mode) {
         case OriginMode::RoomCentre:
-            return {0.0f, 0.0f, height * 0.5f};
+            return {0.0f, 0.0f, room.centreZ()};
         case OriginMode::OnFloor:
-            return {0.0f, 0.0f, 0.0f};
+            return {0.0f, 0.0f, room.floorZ + 1.0f};
         case OriginMode::OnCeiling:
-            return {0.0f, 0.0f, height};
+            return {0.0f, 0.0f, room.ceilingZ - 1.0f};
         case OriginMode::OnWall:
-            // An der -X-Wand, auf halber Hoehe. Das Original nimmt eine feste
-            // Wand; welche, ist gleichgueltig, solange sie im Bild liegt.
-            return {-halfX, 0.0f, height * 0.5f};
+            return {-room.halfX + 1.0f, 0.0f, room.centreZ()};
         case OriginMode::Custom:
             return custom;
         default:
