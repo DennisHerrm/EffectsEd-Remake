@@ -126,14 +126,11 @@ void App::drawMenuBar() {
 
         // Wie ein Effekt mit `repeatDelay` wiederholt wird.
         //
-        // Aus: wie die Engine — durchgehend, es wird nachgelegt.
-        // An:  wie der alte Editor — auslaufen lassen, Pause, von vorn.
-        //
-        // Gemessen: das Original faellt zwischendurch ueber rund zehn Bilder
-        // auf nahezu null zurueck. Wer die beiden Programme nebeneinander
-        // vergleicht, braucht diese Fassung.
-        if (ImGui::MenuItem(tr(Str::MenuLegacyRepeat), nullptr,
-                            &settings_.legacyRepeat)) {
+        // Aus: wie das Original — ab der ersten Ausloesung wird alle
+        //      Repeat-Rate-Sekunden nachgelegt.
+        // An:  wie eine Schleife im Spiel, die schon laeuft — die Vorschau
+        //      beginnt eingeschwungen (nur bei repeatDelay in der Datei).
+        if (ImGui::MenuItem(tr(Str::MenuPreRoll), nullptr, &settings_.preRoll)) {
             // Sofort wirksam: die Art der Wiederholung entscheidet ueber den
             // Vorlauf, und der wird beim Ausloesen aufgebaut.
             if (playing()) startPlayback(); else buildPreviewStopped();
@@ -599,6 +596,7 @@ void App::drawDocumentTabs() {
     }
 
     int closeAt = -1;
+    const bool switchPending = wantDocumentTab_;
     for (size_t i = 0; i < documents_.size(); ++i) {
         Document& document = documents_[i];
 
@@ -627,7 +625,11 @@ void App::drawDocumentTabs() {
                 : ImGuiTabItemFlags_None;
         if (ImGui::BeginTabItem(label.c_str(), &open, documentFlags)) {
             startTabActive_ = false;
-            if (static_cast<int>(i) != activeDocument_) {
+            // Steht ein Wechsel per Code an (Strg+Tab, Oeffnen), zeigt ImGui in
+            // diesem Bild noch den ALTEN Reiter. Der darf sich dann nicht
+            // wieder aktiv melden — sonst sprang Strg+Tab nach rechts sofort
+            // zurueck (nach links ging es nur dank der Schleifenreihenfolge).
+            if (static_cast<int>(i) != activeDocument_ && !switchPending) {
                 activateDocument(static_cast<int>(i));
             }
             ImGui::EndTabItem();
@@ -790,13 +792,12 @@ void App::drawTimeline(float dpiScale) {
         // erwarten.
         if (doc().clock.endMode() != timeline::EndMode::Stop) {
             ImGui::Separator();
-            if (ImGui::MenuItem(tr(Str::MenuLegacyRepeat), nullptr,
-                                settings_.legacyRepeat)) {
-                settings_.legacyRepeat = !settings_.legacyRepeat;
+            if (ImGui::MenuItem(tr(Str::MenuPreRoll), nullptr, settings_.preRoll)) {
+                settings_.preRoll = !settings_.preRoll;
                 if (playing()) startPlayback(); else buildPreviewStopped();
             }
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("%s", tr(Str::LegacyRepeatTip));
+                ImGui::SetTooltip("%s", tr(Str::PreRollTip));
             }
         }
         ImGui::EndCombo();

@@ -268,7 +268,7 @@ void App::startPlayback() {
                     // Effekt aus und faengt von vorn an, also gibt es auch
                     // keinen Bestand aus der Vergangenheit.
                     doc().clock.endMode() == timeline::EndMode::Repeat &&
-                        !settings_.legacyRepeat && !scheduleActive_,
+                        settings_.preRoll && !scheduleActive_,
                     playback_.originAt(0.0f, scheduleBase_));
     // Die Bilder des Effekts anfordern, bevor das erste Bild steht. Ohne das
     // sah der erste Durchlauf falsch aus und erst der zweite richtig.
@@ -289,20 +289,9 @@ void App::startPlayback() {
     //
     // Beim einmaligen Abspielen bleibt die volle Dauer: dort will man den
     // ganzen Verlauf sehen und anfahren koennen.
-    const bool repeats = doc().clock.endMode() == timeline::EndMode::Repeat;
-    const float repeatDelay = static_cast<float>(doc().effect.repeatDelay);
-    // Die Dauer kommt aus der Simulation: bei `repeatDelay` ist das eine
+    // Die Dauer kommt aus der Simulation: mit Vorlauf ist das eine
     // Wiederholung, sonst das ganze Leben des Effekts.
-    if (settings_.legacyRepeat && repeats && repeatDelay >= 1.0f) {
-        // Wie der alte Editor: das ganze Leben PLUS die Wiederholpause.
-        //
-        // Die Pause gehoert dazu — sie ist der sichtbare Unterschied. Ohne
-        // sie faengt der Effekt sofort wieder an und man sieht dieselbe
-        // Durchgaengigkeit wie in der Engine-Fassung.
-        doc().clock.setDuration(doc().particles.durationMs() + repeatDelay);
-    } else {
-        doc().clock.setDuration(doc().particles.durationMs());
-    }
+    doc().clock.setDuration(doc().particles.durationMs());
     if (scheduleActive_) {
         // Wie oft nachgelegt wird: die Rate aus Werkzeugleiste und Dialog,
         // oder jedes Bild (bei 60 Bildern je Sekunde — die Simulation rechnet
@@ -350,13 +339,12 @@ bool App::usesSpawnSchedule() const {
     if (playback_.mode == playback::RepeatMode::ForSeconds) return true;
     if (doc().clock.endMode() != timeline::EndMode::Repeat) return false;
     if (playback_.respawnEveryFrame || playback_.animateSpawnLocation) return true;
-    // Bis zum Anhalten bei einer Datei OHNE repeatDelay: das Original legt
-    // alle "Repeat Rate" Sekunden nach (gemessen an explosion.efx: Active
-    // 16 -> 34 -> 44 -> ... -> 90 bei 0.3 s). Vorher lief der Effekt hier
-    // aus und begann von vorn. Mit repeatDelay bleibt es bei der nahtlosen
-    // Schleife mit Vorlauf; die Fassung des alten Editors hat ihren Schalter.
+    // Bis zum Anhalten: das Original legt alle "Repeat Rate" Sekunden nach
+    // (gemessen an explosion.efx: Active 16 -> 34 -> 44 -> ... -> 90 bei
+    // 0.3 s). Nur mit "Eingeschwungen beginnen" und repeatDelay in der Datei
+    // gibt es stattdessen die nahtlose Schleife mit Vorlauf.
     const bool fileRepeats = doc().effect.repeatDelaySet && doc().effect.repeatDelay > 0;
-    return !fileRepeats && !settings_.legacyRepeat;
+    return !(fileRepeats && settings_.preRoll);
 }
 
 float App::spawnScheduleDurationMs() const {

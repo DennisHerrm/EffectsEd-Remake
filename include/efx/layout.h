@@ -137,24 +137,17 @@ struct Settings {
     // beiden Fällen möglich — die Höhe ändert nur, wie viel hineinpasst.
     float segmentRowHeight = 0.0f;
 
-    // Wie ein Effekt mit `repeatDelay` in der Vorschau wiederholt wird.
+    // Beim Wiederholen mit dem Bestand beginnen, den eine Schleife im Spiel
+    // schon aufgebaut haette (Vorlauf, CFxScheduler::AddLoopedEffects) —
+    // statt, wie das Original, bei der ersten Ausloesung. Nur fuer Effekte
+    // mit repeatDelay. Voreinstellung aus: das Original baut auf (gemessen,
+    // Active 16 -> 34 -> 44 -> ... -> 90), und ein repeatDelay heisst nicht,
+    // dass der Effekt im Spiel schleift — der alte Editor schrieb ihn in
+    // jede Datei (Bildvergleich 2.10.2026).
     //
-    // false — wie die Engine: `AddLoopedEffects` legt alle `repeatDelay`
-    //         Millisekunden nach, ohne den laufenden Durchlauf abzubrechen.
-    //         Ein Feuer brennt durchgehend.
-    //
-    // true  — wie der alte Editor: der Effekt läuft aus, es bleibt eine
-    //         sichtbare Lücke, dann beginnt er von vorn.
-    //
-    // Dass das Original das zweite tut, ist gemessen: in einer Aufnahme von
-    // 75 Bildern fällt seine Helligkeit über rund zehn Bilder auf nahezu null
-    // und kommt dann zurück. Unsere durchgehende Fassung fällt nie unter zwei
-    // Drittel.
-    //
-    // Voreingestellt ist die Engine-Fassung: wer beurteilen will, wie ein
-    // Effekt im Spiel aussieht, soll das sehen. Zum Vergleich mit dem alten
-    // Programm lässt sich umschalten.
-    bool legacyRepeat = false;
+    // Ersetzt "legacyRepeat" (auslaufen, Pause, von vorn): das widersprach
+    // der Messung am Original und ist entfallen.
+    bool preRoll = false;
 
     // Gitter auch auf Wänden und Decke, nicht nur auf dem Boden.
     //

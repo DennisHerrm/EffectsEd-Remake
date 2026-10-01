@@ -109,7 +109,7 @@ std::string Settings::toIni() const {
     out << "resetRepeatRate=" << (resetRepeatRateOnStart ? 1 : 0) << "\n";
     out << "openLibraryOnStart=" << (openLibraryOnStart ? 1 : 0) << "\n";
     out << "segmentRowHeight=" << segmentRowHeight << "\n";
-    out << "legacyRepeat=" << (legacyRepeat ? 1 : 0) << "\n";
+    out << "preRoll=" << (preRoll ? 1 : 0) << "\n";
     out << "gridOnWalls=" << (gridOnWalls ? 1 : 0) << "\n";
     out << "roomTexture=" << roomTexture << "\n";
     out << "effectTextured=" << (effectTextured ? 1 : 0) << "\n";
@@ -195,7 +195,7 @@ Settings Settings::fromIni(const std::string& text) {
         else if (key == "resetRepeatRate") s.resetRepeatRateOnStart = toBool();
         else if (key == "openLibraryOnStart") s.openLibraryOnStart = toBool();
         else if (key == "segmentRowHeight") s.segmentRowHeight = toFloat();
-        else if (key == "legacyRepeat") s.legacyRepeat = toBool();
+        else if (key == "preRoll") s.preRoll = toBool();
         else if (key == "gridOnWalls") s.gridOnWalls = toBool();
         else if (key == "roomTexture") s.roomTexture = toInt();
         else if (key == "effectRenderMode") {

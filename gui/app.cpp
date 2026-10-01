@@ -655,6 +655,50 @@ int App::drawParticleGroups(render::Renderer* renderer, const particles::DrawLis
     return calls;
 }
 
+void App::drawAxesOnTop(render::Renderer* renderer, const camera::Matrix& view, float viewHeight) {
+    // Die Achsen wie im Original: 3 Bildpunkte breit (glLineWidth(3)) und
+    // NACH dem Effekt, also obenauf. Direct3D 11 zeichnet keine Linien
+    // breiter als ein Bildpunkt — darum schmale Baender, die zur Kamera
+    // zeigen, mit einer Breite, die an jeder Stelle 3 Bildpunkten entspricht.
+    if (!settings_.drawAxes || axisLines_.vertices.size() < 2) return;
+    (void)view;
+    const camera::Vec3 eye = camera_.position();
+    const float perPixel =
+        2.0f * std::tan(camera_.fovDegrees() * 0.5f * 3.14159265f / 180.0f) / std::max(1.0f, viewHeight);
+    axisQuads_.vertices.clear();
+    axisQuads_.indices.clear();
+    for (size_t i = 0; i + 1 < axisLines_.vertices.size(); i += 2) {
+        const scene::Vertex& a = axisLines_.vertices[i];
+        const scene::Vertex& b = axisLines_.vertices[i + 1];
+        const camera::Vec3 pa{a.pos[0], a.pos[1], a.pos[2]};
+        const camera::Vec3 pb{b.pos[0], b.pos[1], b.pos[2]};
+        const camera::Vec3 mid = (pa + pb) * 0.5f;
+        const float halfWidth = 1.5f * perPixel * camera::length(eye - mid);
+        camera::Vec3 side = camera::cross(pb - pa, eye - mid);
+        if (camera::length(side) < 1e-6f) continue;   // Achse zeigt genau auf die Kamera
+        side = camera::normalise(side) * halfWidth;
+        const auto base = static_cast<uint16_t>(axisQuads_.vertices.size());
+        for (const camera::Vec3& p : {pa - side, pa + side, pb + side, pb - side}) {
+            scene::Vertex v = a;
+            v.pos[0] = p.x;
+            v.pos[1] = p.y;
+            v.pos[2] = p.z;
+            axisQuads_.vertices.push_back(v);
+        }
+        for (const int k : {0, 1, 2, 0, 2, 3}) axisQuads_.indices.push_back(static_cast<uint16_t>(base + k));
+    }
+    if (axisQuads_.vertices.empty()) return;
+    renderer->setBlend(render::Blend::Opaque);
+    renderer->setCulling(render::Cull::None);
+    renderer->setFill(render::Fill::Solid);
+    renderer->setDepthTest(false);
+    renderer->setDepthWrite(false);
+    renderer->drawTriangles(reinterpret_cast<const render::Vertex*>(axisQuads_.vertices.data()),
+                            static_cast<int>(axisQuads_.vertices.size()), axisQuads_.indices.data(),
+                            static_cast<int>(axisQuads_.indices.size()), render::kNoTexture);
+    renderer->setDepthTest(true);
+}
+
 void App::drawViewport(render::Renderer* renderer, float width, float height) {
     ImGui::BeginChild("viewport", ImVec2(width, height), ImGuiChildFlags_Borders,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
@@ -794,7 +838,7 @@ void App::drawViewport(render::Renderer* renderer, float width, float height) {
             // dort ist das Bild nach einer Wiederholung identisch, ein
             // Neuplanen erzeugte genau den Sprung, den die Nahtlosigkeit
             // vermeidet. In der Fassung des alten Editors dagegen schon.
-            if (doc().effect.repeatDelay < 1 || settings_.legacyRepeat) {
+            if (doc().effect.repeatDelay < 1) {
                 doc().pendingRestart = true;
             }
         }
@@ -842,26 +886,21 @@ void App::drawViewport(render::Renderer* renderer, float width, float height) {
     if (!overdraw && !roomMesh_.vertices.empty() && !settings_.drawGrid) {
         renderer->setBlend(render::Blend::Opaque);
 
-        // Der Raum schreibt KEINE Tiefe — er verdeckt den Effekt nicht.
+        // Der Raum schreibt Tiefe — er verdeckt, was hinter Boden, Decke und
+        // Waenden liegt, wie im Original und im Spiel (Bildvergleich vom
+        // 2.10.2026: das Original schneidet Teilchen genau an der Boden- und
+        // Deckenlinie ab, z. B. concussion/explosion, blaster/shot).
         //
-        // Gemessen am Original (Bildschirmfoto mit Raum und laufendem
-        // Effekt): dort reichen die Teilchen bis 70 Punkte UNTER das
-        // Achsenkreuz und werden trotzdem vollstaendig gezeichnet. Der
-        // Testraum ist dort also nur Kulisse, kein Hindernis.
+        // Frueher schrieb er keine Tiefe, weil das Feuer "halb im Boden"
+        // steckte. Das lag am Boden bei z = 0: ein Teilchen entsteht im
+        // Ursprung und ist auf seiner Lage zentriert. Seit dem Abgleich liegt
+        // der Boden wie im Original bei z = -20, und die alte Messung ("70
+        // Punkte unter dem Achsenkreuz") sind nur rund 14 Einheiten — sie
+        // erreicht den Boden gar nicht.
         //
-        // Bei uns schrieb der Boden Tiefe, und alles darunter verschwand. Ein
-        // Teilchen entsteht bei z=0 und ist auf seiner Lage ZENTRIERT — die
-        // untere Haelfte liegt damit zwangslaeufig unter dem Boden
-        // (RB_SurfaceSprite spannt das Viereck mit dem vollen Radius nach
-        // jeder Seite auf). Beim Anwender sah das aus, als saenke das Feuer
-        // ein: „das Feuer ist halb im Boden, und das ist beim Original nicht
-        // so".
-        //
-        // Ohne Tiefenschreiben geht nichts kaputt: der Raum ist ein KONVEXER
-        // Kasten, von innen betrachtet und mit Rueckseiten-Aussortierung. Die
-        // sichtbaren Flaechen ueberlappen einander nicht, sie brauchen den
-        // Tiefenpuffer also gar nicht untereinander.
-        renderer->setDepthWrite(false);
+        // Ausnahmen stehen im Shader: Stufen mit "depthFunc disable" und
+        // Bilder ohne Shaderblock zeichnen ohne Tiefentest (DrawGroup).
+        renderer->setDepthWrite(true);
         // Der Raum mit Aussortierung: seine Flaechen zeigen nach innen, also
         // faellt beim Herauszoomen die naechstgelegene Wand weg und man
         // schaut in den Kasten hinein. Genau so verhaelt sich das Original.
@@ -908,13 +947,6 @@ void App::drawViewport(render::Renderer* renderer, float width, float height) {
             static_cast<int>(gridLines_.vertices.size()), 1.0f);
     }
 
-    if (settings_.drawAxes && !axisLines_.vertices.empty()) {
-        renderer->setBlend(render::Blend::Opaque);
-        renderer->setDepthWrite(false);
-        renderer->drawLines(
-            reinterpret_cast<const render::Vertex*>(axisLines_.vertices.data()),
-            static_cast<int>(axisLines_.vertices.size()), 2.0f);
-    }
 
     if (settings_.drawWindVector) {
         // Jedes Bild neu: die Fahne weht. Zwoelf Segmente sind nichts, was
@@ -959,6 +991,9 @@ void App::drawViewport(render::Renderer* renderer, float width, float height) {
             drawParticleGroups(renderer, list, elapsed * 0.001f, 1);
         }
     }
+
+    // Die Achsen zuletzt, obenauf (wie im Original).
+    drawAxesOnTop(renderer, view, innerH);
 
     renderer->setDepthWrite(true);
     renderer->endViewport();
