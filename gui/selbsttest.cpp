@@ -1111,6 +1111,23 @@ public:
             }
             return false;
         }));
+        // Bis zum Anhalten, Datei ohne repeatDelay: alle "Repeat Rate"
+        // Sekunden kommt eine Ausloesung dazu, wie im Original.
+        s.push_back(tu("bis zum Anhalten, ohne repeatDelay, 0.2 s", [] {
+            app->pressStop();
+            app->playback_ = playback::Settings{};
+            app->playback_.mode = playback::RepeatMode::UntilStopped;
+            effekt().repeatDelay = 0;
+            effekt().repeatDelaySet = false;
+            app->settings_.repeatRate = 0.2f;
+            doc().clock.setEndMode(timeline::EndMode::Repeat);
+            app->startPlayback();
+        }));
+        s.push_back(warteBis("Uhr ueber 1.05 s", [] { return doc().clock.timeMs() > 1050.0f; }, 8000));
+        s.push_back(pruefSchritt("Bis zum Anhalten ohne repeatDelay: alle 0.2 s nachgelegt (5 in 1 s)",
+                                 [] { return app->scheduleActive_ && app->spawnCount_ == 5; }));
+        s.push_back(pruefSchritt("und die Uhr laeuft weiter statt neu zu beginnen",
+                                 [] { return doc().clock.state() == timeline::State::Playing; }));
         s.push_back(tu("aufraeumen", [] {
             app->pressStop();
             app->playback_ = playback::Settings{};
