@@ -405,7 +405,7 @@ public:
                                           double(lage->Max.y));
                             meldeFehler(was + ": Klick kam nicht an (" + wasImGuiSieht() + ")" + z);
                             for (const Element& x : g_elemente) {
-                                if (x.innen == GImGui->HoveredWindow->Name && !x.label.empty()) {
+                                if (GImGui->HoveredWindow && x.innen == GImGui->HoveredWindow->Name && !x.label.empty()) {
                                     std::snprintf(z, sizeof(z), "  Element \"%s\" %.0f..%.0f/%.0f..%.0f",
                                                   x.label.c_str(), double(x.rect.Min.x),
                                                   double(x.rect.Max.x), double(x.rect.Min.y),
@@ -514,6 +514,23 @@ public:
     // alles ersetzen, Enter.
     static void feld(std::vector<Schritt>& s, const std::string& marke, const std::string& text,
                      int teil = -1) {
+        if (marke.find("intensity") != std::string::npos) {
+            // Senkrechte Regler (VSliderFloat) haben in ImGui keine
+            // Texteingabe - ein Klick setzt den Wert an der Mausstelle.
+            s.push_back(klickAuf("Klick oben in Regler " + marke, [=]() -> const Element* {
+                static Element oben;
+                const Element* e = findeMarke(marke);
+                if (!e) return nullptr;
+                // Nur das obere Fuenftel: die Mitte (8) ist der Vorgabewert.
+                oben = *e;
+                // Max nach Min: Min hat Max schon auf seinen Wert gezogen
+                // (Min <= Max), also fuer Max noch weiter oben.
+                const float anteil = marke.find("max") != std::string::npos ? 0.12f : 0.4f;
+                oben.rect.Max.y = e->rect.Min.y + e->rect.GetHeight() * anteil;
+                return &oben;
+            }));
+            return;
+        }
         s.push_back(teil < 0 ? klickMarke(marke, 0, true) : doppelklickTeil(marke, teil));
         s.push_back(taste(ImGuiKey_A, true));
         s.push_back(tippe(text));
@@ -954,11 +971,9 @@ public:
                 }
             }
         }));
-        s.push_back(klickMarke("life/ranged"));
-        s.push_back(pruefSchritt("Haekchen ~ macht Life zu einer Spanne",
-                                 [] { return gewaehlt() && gewaehlt()->life.ranged; }));
-        s.push_back(warte(2));
         feld(s, "life/max", "2500");
+        s.push_back(pruefSchritt("Max eintippen macht Life zu einer Spanne",
+                                 [] { return gewaehlt() && gewaehlt()->life.ranged; }));
         s.push_back(pruefSchritt("Life max = 2500", [] {
             return gewaehlt() && gewaehlt()->life.max == 2500.0f && gewaehlt()->life.min == 1500.0f;
         }));
@@ -1059,7 +1074,7 @@ public:
         s.push_back(pruefSchritt("Klick auf eine Zeile waehlt das Segment",
                                  [] { return doc().selectedPrimitive == 0; }));
         s.push_back(pruefSchritt("... und die Eigenschaftsseite zeigt es (Reiter Generation)",
-                                 [] { return finde(tr(Str::FieldName), "properties") != nullptr; }));
+                                 [] { return finde(tr(Str::GenUseCulling), "properties") != nullptr; }));
         // Haekchen in der Zeile schaltet das Segment ab und wieder an.
         s.push_back(klickAuf("Haekchen Zeile 2", [] {
             int gesehen = 0;
@@ -1771,7 +1786,7 @@ public:
                         const std::string m = e.marke;
                         std::vector<Schritt> a;
                         a.push_back(klickMarke(m));
-                        a.push_back(klick("wave", "##Combo"));
+                        a.push_back(klick(tr(Str::TransWave), "##Combo"));
                         mitAenderung(neu, reiter + ": " + m + " = wave", std::move(a));
                     }
                     // 3. Listen: einen Eintrag anlegen und beschriften.

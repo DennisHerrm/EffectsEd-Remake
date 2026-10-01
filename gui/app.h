@@ -581,6 +581,11 @@ private:
     bool moveSegment(int from, int to);
     // Nach einer Spalte der Segmentliste umsortieren (Klick auf den Kopf).
     void sortSegments(int column, bool ascending);
+    // Umbenennen in der Segmentliste (Doppelklick, F2, Kontextmenue).
+    void startRename(int index);
+    int renamingSegment_ = -1;
+    bool renameFocus_ = false;
+    char renameBuffer_[64] = {};
     // Ein neues Segment an dieser Stelle einfuegen.
     bool insertSegmentAt(int at);
     // Baut die Vorschau neu und behaelt Zeit und Zustand der Uhr.

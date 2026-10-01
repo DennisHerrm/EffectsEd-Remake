@@ -809,6 +809,14 @@ bool App::insertSegmentAt(int at) {
     return true;
 }
 
+void App::startRename(int index) {
+    if (index < 0 || index >= static_cast<int>(doc().effect.primitives.size())) return;
+    renamingSegment_ = index;
+    renameFocus_ = true;
+    std::snprintf(renameBuffer_, sizeof(renameBuffer_), "%s",
+                  doc().effect.primitives[static_cast<size_t>(index)].name.c_str());
+}
+
 void App::sortSegments(int column, bool ascending) {
     auto& list = doc().effect.primitives;
     if (list.size() < 2) return;
@@ -970,9 +978,40 @@ void App::drawSegmentList(float width, float height) {
             ImGui::SameLine();
 
             const std::string label = p.name.empty() ? tr(Str::ListUnnamed) : p.name;
-            if (ImGui::Selectable(label.c_str(), doc().selectedPrimitive == i,
-                                  ImGuiSelectableFlags_SpanAllColumns)) {
-                doc().selectedPrimitive = i;
+            // Umbenennen in der Zeile, wie im Original (dort: ein zweiter
+            // Klick auf die gewaehlte Zeile). Hier: Doppelklick, F2 oder
+            // Kontextmenue. Enter uebernimmt, Esc verwirft.
+            if (renamingSegment_ == i) {
+                if (renameFocus_) {
+                    ImGui::SetKeyboardFocusHere();
+                    renameFocus_ = false;
+                }
+                ImGui::SetNextItemWidth(-1.0f);
+                const bool done = ImGui::InputText("##rename", renameBuffer_, sizeof(renameBuffer_),
+                                                   ImGuiInputTextFlags_EnterReturnsTrue |
+                                                       ImGuiInputTextFlags_AutoSelectAll);
+                testmarke::marke("liste/umbenennen");
+                if (done || ImGui::IsItemDeactivatedAfterEdit()) {
+                    // Der Parser nimmt hoechstens 31 Zeichen (CPrimitiveTemplate::mName[32]).
+                    std::string name = renameBuffer_;
+                    if (name.size() > 31) name.resize(31);
+                    if (name != doc().effect.primitives[static_cast<size_t>(i)].name) {
+                        doc().effect.primitives[static_cast<size_t>(i)].name = name;
+                        recordChange(tr(Str::ListRename));
+                    }
+                    renamingSegment_ = -1;
+                } else if (ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+                           (!ImGui::IsItemActive() && !ImGui::IsItemFocused() &&
+                            ImGui::IsMouseClicked(ImGuiMouseButton_Left))) {
+                    renamingSegment_ = -1;
+                }
+            } else {
+                if (ImGui::Selectable(label.c_str(), doc().selectedPrimitive == i,
+                                      ImGuiSelectableFlags_SpanAllColumns |
+                                          ImGuiSelectableFlags_AllowDoubleClick)) {
+                    doc().selectedPrimitive = i;
+                    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) startRename(i);
+                }
             }
 
             // Zeile ziehen, um die Reihenfolge zu aendern.
@@ -1004,6 +1043,8 @@ void App::drawSegmentList(float width, float height) {
             // und das ging ja gerade nicht.
             if (ImGui::BeginPopupContextItem("##segmentMenu")) {
                 doc().selectedPrimitive = i;
+                if (ImGui::MenuItem(tr(Str::ListRename), "F2")) startRename(i);
+                ImGui::Separator();
                 if (ImGui::MenuItem(tr(Str::SegmentInsertAbove))) {
                     insertSegmentAt(i);
                 }

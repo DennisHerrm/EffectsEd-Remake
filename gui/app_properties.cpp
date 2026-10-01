@@ -1,21 +1,42 @@
 // Die Eigenschaftsseite des gewaehlten Segments.
 //
-// Der eine grosse Fall: `drawTab` mit ueber fuenfhundert Zeilen. Sie zu
-// zerschneiden waere moeglich, aber falsch — es ist eine Fallunterscheidung
-// ueber die Reiter, und jeder Zweig steht fuer sich. Eine Aufteilung wuerde
-// den Zusammenhang zerreissen, den die Reiter gerade ausmachen.
+// Aufbau wie im Original, Reiter fuer Reiter und Zeile fuer Zeile. Der Bauplan
+// stammt aus den Dialogressourcen von EffectsEd.exe und aus Messungen am
+// laufenden Original (scratchpad agentA, 1.10.2026):
 //
-// Was sie stattdessen bekommen hat: eine eigene Datei, in der nichts
-// anderes steht.
+//   - Oben die Spaltenkoepfe "Min" und "Max".
+//   - Jede Zahl als Paar Min/Max nebeneinander — auch wenn beide gleich sind.
+//     Vorher gab es je Zeile ein Feld und ein "~"-Haekchen fuer die Spanne,
+//     und Vektoren standen als drei Zahlen nebeneinander in einer Zeile.
+//   - Vektoren als drei Zeilen Forward/Right/Up (bzw. Pitch/Yaw/Roll, X/Y/Z).
+//   - Kurven als Gruppe mit Start, End, "Transition" (acht Eintraege wie im
+//     Original), "Parameter" und "Apply random factor".
+//   - Gruppenrahmen mit Titel, manche mit Haekchen im Titel.
 //
-// Teil der Klasse App aus app.h.
+// Was wir anders machen als das Original, und warum:
+//   - Keine Apply-Taste: jede Aenderung gilt sofort, die Vorschau laeuft mit,
+//     und Rueckgaengig nimmt sie zurueck. Das Original verlangte Apply oder
+//     Enter und fragte nach, wenn man es vergass.
+//   - Min bleibt immer <= Max. Das Original liess "life 900 100" und
+//     "radius 95 60" zu und schrieb es so in die Datei (Bildschirmfotos des
+//     Anwenders, "CameraShake ... Bugged").
+//   - Nicht gesetzte Werte zeigen den Vorgabewert der Engine (grau) statt 0.
+//     Er steht nicht in der Datei, genau wie im Original.
+//   - Versteckte Haekchen bleiben nicht haengen: das Original schrieb
+//     "depthHack" in ein Sound-Segment, weil das (dort unsichtbare) Haekchen
+//     vom vorigen Segment stehen geblieben war.
+//   - Der Name steht nicht hier, sondern wird in der Segmentliste umbenannt
+//     (Doppelklick oder F2) — wie im Original.
 #include "app.h"
-
 #include "efx/diag.h"
 #include "efx/i18n.h"
+#include "testmarke.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
+#include <string>
+
 #include "app_shared.h"
 
 namespace efx::gui {
@@ -23,25 +44,442 @@ namespace efx::gui {
 using i18n::Str;
 using i18n::tr;
 
+namespace {
+
+// --- Spalten ----------------------------------------------------------------
+//
+// Alle Zeilen einer Seite benutzen dieselben drei Spalten — auch innerhalb
+// von Gruppenrahmen. Im Original stehen die Min-Felder bei x=102, die
+// Max-Felder bei x=174, durch die ganze Seite.
+struct Page {
+    float x0 = 0.0f;      // linker Rand der Seite (Bildschirm)
+    float label = 0.0f;   // Breite der Beschriftungsspalte
+    float field = 0.0f;   // Breite eines Zahlenfelds
+    float gap = 0.0f;
+    float right() const { return x0 + label + field * 2.0f + gap; }
+};
+Page g_page;
+
+void beginPage() {
+    const float avail = ImGui::GetContentRegionAvail().x;
+    const float em = ImGui::GetFontSize();
+    g_page.x0 = ImGui::GetCursorScreenPos().x;
+    g_page.gap = ImGui::GetStyle().ItemSpacing.x;
+    g_page.label = std::clamp(avail * 0.40f, em * 6.0f, em * 10.0f);
+    g_page.field = std::max(em * 3.5f, (avail - g_page.label - g_page.gap * 2.0f) * 0.5f);
+}
+
+float minX() { return g_page.x0 + g_page.label + g_page.gap; }
+float maxX() { return minX() + g_page.field + g_page.gap; }
+
+// Beschriftung rechtsbuendig vor der Min-Spalte, wie im Original.
+void labelCell(const char* text) {
+    const float y = ImGui::GetCursorScreenPos().y;
+    const float width = ImGui::CalcTextSize(text).x;
+    ImGui::SetCursorScreenPos(ImVec2(std::max(ImGui::GetCursorScreenPos().x,
+                                              minX() - g_page.gap - width),
+                                     y));
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(text);
+    ImGui::SameLine();
+}
+
+// Die Spaltenkoepfe "Min" und "Max".
+void minMaxHeader() {
+    const float y = ImGui::GetCursorScreenPos().y;
+    const auto centred = [](const char* text, float x, float width, float top) {
+        ImGui::SetCursorScreenPos(ImVec2(x + (width - ImGui::CalcTextSize(text).x) * 0.5f, top));
+        ImGui::TextDisabled("%s", text);
+    };
+    centred(tr(Str::FieldMin), minX(), g_page.field, y);
+    ImGui::SameLine();
+    centred(tr(Str::FieldMax), maxX(), g_page.field, y);
+}
+
+// --- Gruppenrahmen ------------------------------------------------------------
+struct Frame {
+    ImVec2 start;
+    float titleWidth = 0.0f;
+};
+std::vector<Frame> g_frames;
+
+// Titel oben links im Rahmen; mit `check` als Haekchen (dann gesperrt, wenn aus).
+bool frameBegin(const char* id, const char* title, bool* check = nullptr,
+                bool* clicked = nullptr) {
+    ImGui::PushID(id);
+    ImGui::Dummy(ImVec2(0.0f, ImGui::GetTextLineHeight() * 0.25f));
+    Frame frame;
+    frame.start = ImGui::GetCursorScreenPos();
+    ImGui::SetCursorScreenPos(ImVec2(frame.start.x + ImGui::GetFontSize() * 0.6f, frame.start.y));
+    bool open = true;
+    if (check != nullptr) {
+        const bool changed = ImGui::Checkbox(title, check);
+        testmarke::marke("an");
+        if (clicked) *clicked = changed;
+        open = *check;
+    } else {
+        ImGui::TextUnformatted(title);
+    }
+    frame.titleWidth = ImGui::GetItemRectSize().x;
+    g_frames.push_back(frame);
+    ImGui::Indent(ImGui::GetFontSize() * 0.6f);
+    if (!open) ImGui::BeginDisabled();
+    ImGui::PushID("body");
+    return open;
+}
+
+void frameEnd(bool wasOpen) {
+    ImGui::PopID();
+    if (!wasOpen) ImGui::EndDisabled();
+    ImGui::Unindent(ImGui::GetFontSize() * 0.6f);
+    const Frame frame = g_frames.back();
+    g_frames.pop_back();
+    ImGui::Dummy(ImVec2(0.0f, ImGui::GetStyle().ItemSpacing.y));
+    const float top = frame.start.y + ImGui::GetTextLineHeight() * 0.5f;
+    const float bottom = ImGui::GetCursorScreenPos().y - ImGui::GetStyle().ItemSpacing.y * 0.5f;
+    const float left = frame.start.x;
+    const float right = std::max(g_page.right(), left + frame.titleWidth + ImGui::GetFontSize());
+    const ImU32 colour = ImGui::GetColorU32(ImGuiCol_Border);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const float titleLeft = left + ImGui::GetFontSize() * 0.45f;
+    const float titleRight = titleLeft + frame.titleWidth + ImGui::GetFontSize() * 0.3f;
+    draw->AddLine(ImVec2(left, top), ImVec2(titleLeft, top), colour);
+    draw->AddLine(ImVec2(titleRight, top), ImVec2(right, top), colour);
+    draw->AddLine(ImVec2(left, top), ImVec2(left, bottom), colour);
+    draw->AddLine(ImVec2(right, top), ImVec2(right, bottom), colour);
+    draw->AddLine(ImVec2(left, bottom), ImVec2(right, bottom), colour);
+    ImGui::PopID();
+    ImGui::Dummy(ImVec2(0.0f, ImGui::GetStyle().ItemSpacing.y * 0.5f));
+}
+
+// --- Zahlenzeilen -----------------------------------------------------------
+//
+// Ein Wertepaar. `fallback`: was die Engine nimmt, wenn nichts in der Datei
+// steht (FxTemplate.cpp, CPrimitiveTemplate::CPrimitiveTemplate).
+bool pairFields(float& low, float& high, bool set, float speed, float lo, float hi,
+                const char* format) {
+    bool changed = false;
+    if (!set) ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::SetCursorScreenPos(ImVec2(minX(), ImGui::GetCursorScreenPos().y));
+    ImGui::SetNextItemWidth(g_page.field);
+    float a = low;
+    const bool minChanged = ImGui::DragFloat("##min", &a, speed, lo, hi, format);
+    testmarke::marke("min");
+    ImGui::SameLine(0.0f, 0.0f);
+    ImGui::SetCursorScreenPos(ImVec2(maxX(), ImGui::GetCursorScreenPos().y));
+    ImGui::SetNextItemWidth(g_page.field);
+    float b = high;
+    const bool maxChanged = ImGui::DragFloat("##max", &b, speed, lo, hi, format);
+    testmarke::marke("max");
+    if (!set) ImGui::PopStyleColor();
+    // Min bleibt <= Max: wer Min ueber Max zieht, nimmt Max mit, und
+    // umgekehrt. Das Original schrieb "life 900 100" in die Datei.
+    if (minChanged) {
+        low = a;
+        if (high < low) high = low;
+        changed = true;
+    }
+    if (maxChanged) {
+        high = b;
+        if (low > high) low = high;
+        changed = true;
+    }
+    return changed;
+}
+
+bool rowRange(const char* id, const char* label, Range& r, float fallback, float speed = 1.0f,
+              float lo = 0.0f, float hi = 0.0f, const char* format = "%.4g") {
+    ImGui::PushID(id);
+    testmarke::Bereich bereich(id);
+    labelCell(label);
+    float low = r.set ? r.min : fallback;
+    float high = r.set ? r.max : fallback;
+    const bool changed = pairFields(low, high, r.set, speed, lo, hi, format);
+    if (changed) {
+        r.min = low;
+        r.max = high;
+        r.set = true;
+        r.ranged = low != high;
+    }
+    ImGui::PopID();
+    return changed;
+}
+
+// Ein Vektor als drei Zeilen. Die Datei kennt "x y z" (eine Zahl je Achse)
+// oder "x y z X Y Z" (Spanne) — welches, folgt aus den Werten.
+bool rowsVector(const char* id, Vec3Range& v, Str a, Str b, Str c, float fallback = 0.0f) {
+    ImGui::PushID(id);
+    testmarke::Bereich bereich(id);
+    bool changed = false;
+    const Str labels[3] = {a, b, c};
+    const char* axes[3] = {"x", "y", "z"};
+    for (int k = 0; k < 3; ++k) {
+        ImGui::PushID(k);
+        testmarke::Bereich achse(axes[k]);
+        labelCell(tr(labels[k]));
+        float low = v.set ? v.min[k] : fallback;
+        float high = v.set ? (v.ranged ? v.max[k] : v.min[k]) : fallback;
+        if (pairFields(low, high, v.set, 1.0f, 0.0f, 0.0f, "%.4g")) {
+            if (!v.set) {
+                for (int j = 0; j < 3; ++j) v.min[j] = v.max[j] = fallback;
+            }
+            if (!v.ranged) v.max = v.min;
+            v.min[k] = low;
+            v.max[k] = high;
+            v.set = true;
+            v.ranged = v.min[0] != v.max[0] || v.min[1] != v.max[1] || v.min[2] != v.max[2];
+            changed = true;
+        }
+        ImGui::PopID();
+    }
+    ImGui::PopID();
+    return changed;
+}
+
+// Eine Bitmaske als Haekchen. `invert`: das Haekchen zeigt das Gegenteil des
+// Bits ("Relative to effect axis" = nicht cheapOrgCalc).
+bool flagBox(const char* label, uint32_t& bits, uint32_t mask, bool invert = false,
+             const char* mark = nullptr) {
+    bool on = ((bits & mask) != 0) != invert;
+    const bool clicked = ImGui::Checkbox(label, &on);
+    if (mark) testmarke::marke(mark);
+    if (clicked) {
+        const bool setBit = on != invert;
+        bits = setBit ? (bits | mask) : (bits & ~mask);
+    }
+    return clicked;
+}
+
+// --- Kurven -------------------------------------------------------------------
+//
+// Die acht Uebergaenge des Originals (DLGINIT der Combos 1067/1068/1069/1101/
+// 1171). Clamp ist in der Datei nonlinear|wave (0xC), random ein eigenes Bit
+// — "Apply random factor".
+struct Transition {
+    Str label;
+    int bits;
+};
+const Transition kTransitions[] = {
+    {Str::TransConstant, 0},
+    {Str::TransLinear, kCurveLinear},
+    {Str::TransNonlinear, kCurveNonLinear},
+    {Str::TransNonlinearLinear, kCurveNonLinear | kCurveLinear},
+    {Str::TransWave, kCurveWave},
+    {Str::TransWaveLinear, kCurveWave | kCurveLinear},
+    {Str::TransClamp, kCurveClamp},
+    {Str::TransClampLinear, kCurveClamp | kCurveLinear},
+};
+
+int transitionIndex(int flags) {
+    const int shape = flags & (kCurveClamp | kCurveLinear);
+    for (int i = 0; i < 8; ++i) {
+        if (kTransitions[i].bits == shape) return i;
+    }
+    return 0;
+}
+
+bool transitionRow(int& flags, std::vector<std::string>& words) {
+    bool changed = false;
+    labelCell(tr(Str::FieldTransition));
+    ImGui::SetCursorScreenPos(ImVec2(minX(), ImGui::GetCursorScreenPos().y));
+    ImGui::SetNextItemWidth(g_page.field * 2.0f + g_page.gap);
+    const int current = transitionIndex(flags);
+    const bool open = ImGui::BeginCombo("##transition", tr(kTransitions[current].label));
+    testmarke::marke("kurve");
+    if (open) {
+        for (int i = 0; i < 8; ++i) {
+            if (ImGui::Selectable(tr(kTransitions[i].label), i == current) && i != current) {
+                flags = (flags & ~(kCurveClamp | kCurveLinear)) | kTransitions[i].bits;
+                // Die Woerter stimmen nicht mehr; der Schreiber leitet sie aus
+                // den Bits neu ab.
+                words.clear();
+                changed = true;
+            }
+        }
+        ImGui::EndCombo();
+    }
+    return changed;
+}
+
+bool randomBox(int& flags, std::vector<std::string>& words) {
+    ImGui::SetCursorScreenPos(ImVec2(minX(), ImGui::GetCursorScreenPos().y));
+    bool on = (flags & kCurveRandom) != 0;
+    const bool clicked = ImGui::Checkbox(tr(Str::CurveApplyRandom), &on);
+    testmarke::marke("random");
+    if (clicked) {
+        flags = on ? (flags | kCurveRandom) : (flags & ~kCurveRandom);
+        words.clear();
+    }
+    return clicked;
+}
+
+// Eine Kurvengruppe: Haekchen im Titel, Start, End, Transition, Parameter,
+// Zufall. End ist nur bei einem Uebergang belegbar, Parameter nur bei
+// nonlinear/wave/clamp — wie im Original.
+bool channelGroup(const char* id, Str title, Channel& c, Str startLabel, Str endLabel,
+                  float fallback, float speed, bool enabled = true) {
+    ImGui::PushID(id);
+    testmarke::Bereich bereich(id);
+    bool changed = false;
+    if (!enabled) ImGui::BeginDisabled();
+    bool present = c.present;
+    bool toggled = false;
+    const bool open = frameBegin("frame", tr(title), &present, &toggled);
+    if (toggled) {
+        c.present = present;
+        changed = true;
+    }
+    changed |= rowRange("start", tr(startLabel), c.start, fallback, speed);
+    const bool hasTransition = (c.curveFlags & (kCurveClamp | kCurveLinear)) != 0;
+    ImGui::BeginDisabled(!hasTransition && (c.curveFlags & kCurveRandom) == 0);
+    changed |= rowRange("end", tr(endLabel), c.end, fallback, speed);
+    ImGui::EndDisabled();
+    changed |= transitionRow(c.curveFlags, c.curveWords);
+    ImGui::BeginDisabled((c.curveFlags & kCurveClamp) == 0);
+    changed |= rowRange("parm", tr(Str::FieldParm), c.parm, 0.0f, 1.0f);
+    ImGui::EndDisabled();
+    changed |= randomBox(c.curveFlags, c.curveWords);
+    frameEnd(open);
+    if (!enabled) ImGui::EndDisabled();
+    // Wer ein Feld anfasst, will die Gruppe auch in der Datei haben.
+    if (changed && !toggled) c.present = true;
+    ImGui::PopID();
+    return changed;
+}
+
+// Engine-Vorgaben (FxTemplate.cpp, CPrimitiveTemplate-Konstruktor).
+constexpr float kDefaultLife = 50.0f;
+constexpr float kDefaultCount = 1.0f;
+constexpr float kDefaultRadius = 10.0f;
+constexpr float kDefaultCurve = 1.0f;
+constexpr float kDefaultWind = 1.0f;
+constexpr float kDefaultDensity = 10.0f;
+constexpr float kDefaultVariance = 1.0f;
+
+// Wo das Original "Always draw on top" zeigt (Ressourcen-Dump, sichtbar nur
+// bei diesen Typen).
+bool showsDepthHack(PrimitiveType t) {
+    switch (t) {
+        case PrimitiveType::Particle:
+        case PrimitiveType::OrientedParticle:
+        case PrimitiveType::Line:
+        case PrimitiveType::Tail:
+        case PrimitiveType::Cylinder:
+        case PrimitiveType::Electricity:
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool hasDeathFx(PrimitiveType t) {
+    return fields::applies(t, fields::Field::DeathFx);
+}
+
+// Eine Farbe als Feld in Spaltenbreite; Klick oeffnet die Farbwahl. Im
+// Original zwei Knoepfe "Choose..." je Zeile.
+bool colourButton(const char* id, Vec3& colour, bool set) {
+    bool changed = false;
+    ImGui::PushID(id);
+    ImVec4 shown(colour[0], colour[1], colour[2], 1.0f);
+    if (!set) shown = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);  // Engine-Vorgabe: weiss
+    if (ImGui::ColorButton("##swatch", shown, ImGuiColorEditFlags_NoAlpha,
+                           ImVec2(g_page.field, ImGui::GetFrameHeight()))) {
+        ImGui::OpenPopup("pick");
+    }
+    testmarke::marke(id);
+    if (ImGui::BeginPopup("pick")) {
+        float value[3] = {shown.x, shown.y, shown.z};
+        if (ImGui::ColorPicker3("##picker", value,
+                                ImGuiColorEditFlags_NoSidePreview | ImGuiColorEditFlags_InputRGB)) {
+            colour[0] = value[0];
+            colour[1] = value[1];
+            colour[2] = value[2];
+            changed = true;
+        }
+        ImGui::EndPopup();
+    }
+    ImGui::PopID();
+    return changed;
+}
+
+bool colourRow(const char* id, Str label, Vec3Range& v) {
+    ImGui::PushID(id);
+    testmarke::Bereich bereich(id);
+    labelCell(tr(label));
+    Vec3 low = v.set ? v.min : Vec3{{1.0f, 1.0f, 1.0f}};
+    Vec3 high = v.set ? (v.ranged ? v.max : v.min) : Vec3{{1.0f, 1.0f, 1.0f}};
+    ImGui::SetCursorScreenPos(ImVec2(minX(), ImGui::GetCursorScreenPos().y));
+    const bool a = colourButton("farbe_min", low, v.set);
+    ImGui::SameLine(0.0f, 0.0f);
+    ImGui::SetCursorScreenPos(ImVec2(maxX(), ImGui::GetCursorScreenPos().y));
+    const bool b = colourButton("farbe_max", high, v.set);
+    if (a || b) {
+        // Ohne Spanne folgt Max dem Min — so wie bei einer einzelnen Farbe
+        // in der Datei ("start 1 0.5 0").
+        if (a && !v.ranged) high = low;
+        v.min = low;
+        v.max = high;
+        v.set = true;
+        v.ranged = low[0] != high[0] || low[1] != high[1] || low[2] != high[2];
+    }
+    ImGui::PopID();
+    return a || b;
+}
+
+}  // namespace
+
+bool App::editColorChannel(ColorChannel& c) {
+    ImGui::PushID("rgb");
+    testmarke::Bereich bereich("rgb");
+    bool changed = false;
+    bool present = c.present;
+    bool toggled = false;
+    const bool open = frameBegin("frame", tr(Str::GroupRgbColor), &present, &toggled);
+    if (toggled) {
+        c.present = present;
+        changed = true;
+    }
+    minMaxHeader();
+    changed |= colourRow("start", Str::FieldStartColor, c.start);
+    const bool hasTransition = (c.curveFlags & (kCurveClamp | kCurveLinear)) != 0;
+    ImGui::BeginDisabled(!hasTransition && (c.curveFlags & kCurveRandom) == 0);
+    changed |= colourRow("end", Str::FieldEndColor, c.end);
+    ImGui::EndDisabled();
+    changed |= transitionRow(c.curveFlags, c.curveWords);
+    ImGui::BeginDisabled((c.curveFlags & kCurveClamp) == 0);
+    changed |= rowRange("parm", tr(Str::FieldParm), c.parm, 0.0f, 1.0f);
+    ImGui::EndDisabled();
+    changed |= randomBox(c.curveFlags, c.curveWords);
+    frameEnd(open);
+    if (changed && !toggled) c.present = true;
+    ImGui::PopID();
+    return changed;
+}
+
 void App::drawProperties(float width, float height) {
     ImGui::BeginChild("properties", ImVec2(width, height), ImGuiChildFlags_Borders);
 
     if (doc().selectedPrimitive < 0 ||
         doc().selectedPrimitive >= static_cast<int>(doc().effect.primitives.size())) {
-        ImGui::TextDisabled("%s", tr(Str::PropNoSelection));
+        // Wie im Original: mittig "No effect segment selected."
+        const ImVec2 avail = ImGui::GetContentRegionAvail();
+        const char* text = tr(Str::PropNoSelection);
+        const ImVec2 size = ImGui::CalcTextSize(text);
+        ImGui::SetCursorPos(ImVec2(std::max(0.0f, (avail.x - size.x) * 0.5f),
+                                   std::max(0.0f, avail.y * 0.45f)));
+        ImGui::TextDisabled("%s", text);
         ImGui::EndChild();
         return;
     }
 
-    Primitive& p = doc().effect.primitives[doc().selectedPrimitive];
+    Primitive& p = doc().effect.primitives[static_cast<size_t>(doc().selectedPrimitive)];
 
     ImGui::TextUnformatted(typeName(p.type));
     ImGui::SameLine();
     ImGui::TextDisabled("%s", typeDescription(p.type));
-
-    // Felder, die dieser Typ gar nicht ausliest, aber gesetzt sind. Das ist
-    // die haeufigste Art, Zeit zu verlieren: man dreht an einer Zahl, die
-    // niemand liest, und sucht den Fehler dann woanders.
+    // Was in der Datei steht, aber fuer diesen Typ nichts bewirkt — das
+    // Original hat solche Felder still mitgeschleppt.
     const auto useless = fields::uselessFields(p);
     if (!useless.empty()) {
         const theme::Palette& palette = activeTheme(settings_).palette;
@@ -53,277 +491,325 @@ void App::drawProperties(float width, float height) {
         }
         ImGui::TextColored(toImGui(palette.warning), "%s", text.c_str());
     }
-    ImGui::Separator();
 
-    // Nur die Reiter, die dieser Typ tatsaechlich hat. Die Zuordnung steht in
-    // src/fields.cpp und ist aus dem Spielcode hergeleitet, nicht geraten.
-    if (ImGui::BeginTabBar("propertyTabs")) {
-        for (auto tab : fields::tabsFor(p.type)) {
-            if (ImGui::BeginTabItem(tr(fields::tabLabel(tab)))) {
-                propertyTab_ = tab;
-                ImGui::BeginChild("tabbody", ImVec2(0, 0), ImGuiChildFlags_None);
-                drawTab(tab, p);
-                ImGui::EndChild();
-                ImGui::EndTabItem();
-            }
-        }
-        ImGui::EndTabBar();
+    // Die Reiter. Eigene Leiste statt ImGui-TabBar: die bricht nicht um.
+    // Tail hat sechs Seiten — in einer schmalen Spalte rollten "Physics" und
+    // "Color" aus dem Bild, oder ImGui stauchte die Beschriftungen, und die
+    // Reiter rueckten unter der Maus (Selbsttest). Das Original (Win32-
+    // Eigenschaftsblatt) zeigt alle Reiter, notfalls in mehreren Reihen.
+    const auto tabs = fields::tabsFor(p.type);
+    if (std::find(tabs.begin(), tabs.end(), propertyTab_) == tabs.end()) {
+        propertyTab_ = tabs.front();
     }
+    {
+        ImGui::PushID("propertyTabs");
+        const ImGuiStyle& style = ImGui::GetStyle();
+        const float left = ImGui::GetCursorScreenPos().x;
+        const float right = left + ImGui::GetContentRegionAvail().x;
+        float x = left;
+        bool first = true;
+        for (auto tab : tabs) {
+            const char* text = tr(fields::tabLabel(tab));
+            const float w = ImGui::CalcTextSize(text).x + style.FramePadding.x * 2.0f;
+            if (!first) {
+                if (x + style.ItemInnerSpacing.x + w <= right) {
+                    ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
+                } else {
+                    x = left;  // neue Reihe
+                }
+            }
+            first = false;
+            const bool active = tab == propertyTab_;
+            ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(
+                                                        active ? ImGuiCol_TabSelected : ImGuiCol_Tab));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                                  ImGui::GetStyleColorVec4(ImGuiCol_TabHovered));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+                                  ImGui::GetStyleColorVec4(ImGuiCol_TabSelected));
+            ImGui::PushID(fields::tabName(tab));
+            if (ImGui::Button(text, ImVec2(w, 0.0f))) propertyTab_ = tab;
+            ImGui::PopID();
+            ImGui::PopStyleColor(3);
+            x = ImGui::GetItemRectMax().x;
+        }
+        ImGui::PopID();
+        ImGui::Separator();
+    }
+    ImGui::BeginChild("tabbody", ImVec2(0, 0), ImGuiChildFlags_None,
+                      ImGuiWindowFlags_HorizontalScrollbar);
+    beginPage();
+    drawTab(propertyTab_, p);
+    ImGui::EndChild();
 
     ImGui::EndChild();
 }
 
 void App::drawTab(fields::Tab tab, Primitive& p) {
     bool changed = false;
+    const PrimitiveType type = p.type;
+    const auto applies = [type](fields::Field f) { return fields::applies(type, f); };
 
     switch (tab) {
+        // --- Generation ---------------------------------------------------------
         case fields::Tab::Generation: {
-            char nameBuffer[32];
-            std::snprintf(nameBuffer, sizeof(nameBuffer), "%s", p.name.c_str());
-            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 17.0f);
-            if (ImGui::InputText(tr(Str::FieldName), nameBuffer, sizeof(nameBuffer))) {
-                p.name = nameBuffer;
-                changed = true;
+            minMaxHeader();
+            changed |= rowRange("delay", tr(Str::FieldDelayMs), p.delay, 0.0f, 10.0f, 0.0f, 1.0e7f);
+            {
+                ImGui::SetCursorScreenPos(ImVec2(minX(), ImGui::GetCursorScreenPos().y));
+                ImGui::BeginDisabled(!applies(fields::Field::Count));
+                changed |= flagBox(tr(Str::GenEvenDelay), p.spawnFlags, kSpawnEvenDistribution,
+                                   false, "evenDelay");
+                ImGui::EndDisabled();
             }
-            // FX_MAX_PRIM_NAME ist 32 einschliesslich Nullbyte — das Feld
-            // begrenzt schon, aber der Hinweis erspart die Suche.
-            if (p.name.size() >= 31) {
-                ImGui::TextDisabled("31");
-            }
+            ImGui::BeginDisabled(!applies(fields::Field::Count));
+            changed |= rowRange("count", tr(Str::FieldCount), p.count, kDefaultCount, 1.0f, 0.0f, 1000.0f, "%.0f");
+            ImGui::EndDisabled();
+            ImGui::BeginDisabled(!applies(fields::Field::Life));
+            changed |= rowRange("life", tr(Str::FieldLifeMs), p.life, kDefaultLife, 10.0f, 0.0f, 1.0e7f);
+            ImGui::EndDisabled();
 
-            // Felder, die fuer diesen Typ nichts bewirken, werden AUSGEGRAUT
-            // gezeigt — nicht weggelassen.
-            //
-            // Das Original macht es so, und es ist die bessere Loesung: ein
-            // fehlendes Feld sieht aus wie ein Fehler im Programm, ein
-            // ausgegrautes sagt "gibt es, wirkt hier aber nicht". Beim
-            // CameraShake ist genau das aufgefallen — "count is missing".
-            //
-            // Der Kurzhinweis nennt den Grund, den man dem grauen Feld sonst
-            // nicht ansieht.
+            // Sichtweite. Das Haekchen schaltet die Zeile; der Wert ist eine
+            // einzige Zahl ("cullrange 500").
             {
-                const bool hasCount = fields::applies(p.type, fields::Field::Count);
-                ImGui::BeginDisabled(!hasCount);
-                changed |= editRange("count", tr(Str::FieldCount), p.count, 1.0f);
-                ImGui::EndDisabled();
-                if (!hasCount && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                    ImGui::SetTooltip("%s", tr(Str::FieldCountFixed));
-                }
-            }
-            {
-                const bool hasLife = fields::applies(p.type, fields::Field::Life);
-                ImGui::BeginDisabled(!hasLife);
-                changed |= editRange("life", tr(Str::FieldLife), p.life, 10.0f);
-                ImGui::EndDisabled();
-            }
-            changed |= editRange("delay", tr(Str::FieldDelay), p.delay, 10.0f);
-            // Gehoert direkt unter die Verzoegerung, nicht in eine Flagliste
-            // weiter unten — es beschreibt, wie diese Spanne benutzt wird.
-            {
-                bool even = (p.spawnFlags & kSpawnEvenDistribution) != 0;
-                ImGui::Indent();
-                // Ohne Anzahl gibt es nichts zu verteilen — im Original ist
-                // das Haekchen dann ebenfalls ausgegraut.
-                ImGui::BeginDisabled(!p.delay.set || !p.delay.ranged ||
-                                     !fields::applies(p.type, fields::Field::Count));
-                if (ImGui::Checkbox(tr(Str::GenEvenDelay), &even)) {
-                    p.spawnFlags = even ? (p.spawnFlags | kSpawnEvenDistribution)
-                                        : (p.spawnFlags & ~kSpawnEvenDistribution);
+                bool cull = p.cullRangeSet;
+                if (ImGui::Checkbox(tr(Str::GenUseCulling), &cull)) {
+                    p.cullRangeSet = cull;
                     changed = true;
                 }
-                ImGui::EndDisabled();
-                ImGui::Unindent();
-            }
-
-            if (fields::applies(p.type, fields::Field::CullRange)) {
-                bool set = p.cullRangeSet;
-                if (ImGui::Checkbox("##cullset", &set)) {
-                    p.cullRangeSet = set;
-                    changed = true;
-                }
-                ImGui::SameLine();
+                testmarke::marke("cull/an");
                 ImGui::BeginDisabled(!p.cullRangeSet);
-                ImGui::SetNextItemWidth(ImGui::GetFontSize() * 11.0f);
-                if (ImGui::DragInt(tr(Str::FieldCullRange), &p.cullRange, 10.0f, 0,
-                                   100000)) {
+                labelCell(tr(Str::FieldCullDistance));
+                ImGui::SetCursorScreenPos(ImVec2(minX(), ImGui::GetCursorScreenPos().y));
+                ImGui::SetNextItemWidth(g_page.field);
+                if (ImGui::DragInt("##cull", &p.cullRange, 10.0f, 0, 1000000)) {
                     p.cullRangeSet = true;
                     changed = true;
                 }
+                testmarke::marke("cull/min");
                 ImGui::EndDisabled();
             }
 
-            // "Death Effects" mit "Enable Death Effects" — im Original
-            // Dialog 152, nicht bei der Physik.
-            if (fields::applies(p.type, fields::Field::DeathFx)) {
-                ImGui::SeparatorText(tr(Str::FieldDeathFx));
-                bool enabled = (p.flags & kFlagDeathRunsFx) != 0;
-                if (ImGui::Checkbox("deathFx", &enabled)) {
-                    p.flags = enabled ? (p.flags | kFlagDeathRunsFx)
-                                      : (p.flags & ~kFlagDeathRunsFx);
+            // Ende-Effekte. Ab heute spiegelt das Haekchen die Engine: eine
+            // Liste setzt das Bit selbst (CPrimitiveTemplate::ParseDeathFxStrings).
+            ImGui::BeginDisabled(!hasDeathFx(type));
+            {
+                bool on = (p.flags & kFlagDeathRunsFx) != 0 || !p.deathFx.empty();
+                bool clicked = false;
+                const bool open = frameBegin("death", tr(Str::FieldDeathFx), nullptr);
+                clicked = ImGui::Checkbox(tr(Str::DeathEnable), &on);
+                testmarke::marke("deathfx/an");
+                if (clicked) {
+                    p.flags = on ? (p.flags | kFlagDeathRunsFx) : (p.flags & ~kFlagDeathRunsFx);
+                    // Aus heisst aus: eine stehengebliebene Liste wuerde die
+                    // Engine trotzdem abspielen. Rueckgaengig holt sie zurueck.
+                    if (!on) p.deathFx.clear();
                     changed = true;
                 }
-                ImGui::BeginDisabled(!enabled);
+                ImGui::BeginDisabled(!on);
                 changed |= editStringList("deathfx", "", p.deathFx, "");
                 ImGui::EndDisabled();
-            }
-
-            // Die vollstaendige Flagliste bleibt zusaetzlich. Raven verteilt
-            // die Flags auf die Reiter, an die sie gehoeren — das haben wir
-            // uebernommen —, aber wer eine fremde Datei oeffnet, will alles
-            // an einer Stelle sehen koennen.
-            if (ImGui::CollapsingHeader(tr(Str::FlagsGroup))) {
-                changed |= editFlags(p);
-            }
-            break;
-        }
-
-        case fields::Tab::OriginSize: {
-            // Forward / Right / Up statt X / Y / Z.
-            //
-            // Der Ursprung wird mit der Effektachse verrechnet:
-            //     org = ax[0]*x + ax[1]*y + ax[2]*z
-            // ax[0] ist vorwaerts, ax[1] rechts, ax[2] oben. X/Y/Z zu
-            // schreiben waere schlicht falsch, solange die Achse nicht der
-            // Weltachse entspricht — Raven hat das richtig benannt, ich nicht.
-            ImGui::SeparatorText(tr(Str::FieldOrigin));
-            changed |= editVec3Range("origin", "", p.origin);
-            ImGui::TextDisabled("%s / %s / %s", tr(Str::OriginForward),
-                                tr(Str::OriginRight), tr(Str::OriginUp));
-
-            // "Relativ zur Effektachse" ist die Umkehrung von cheapOrgCalc:
-            //   if (cheapOrgCalc || relative) -> reine Weltversaetze
-            //   sonst                          -> entlang der Effektachse
-            bool relativeToAxis = (p.spawnFlags & kSpawnCheapOrgCalc) == 0;
-            if (ImGui::Checkbox(tr(Str::OriginRelativeAxis), &relativeToAxis)) {
-                p.spawnFlags = relativeToAxis ? (p.spawnFlags & ~kSpawnCheapOrgCalc)
-                                              : (p.spawnFlags | kSpawnCheapOrgCalc);
-                changed = true;
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr(Str::OriginAxisHint));
-
-            // Kugel- und Zylinderverteilung. Im Original sind das
-            // Auswahlknoepfe neben Radius und Hoehe statt roher Flagnamen —
-            // und das ist verstaendlicher, weil man sieht, welche Felder
-            // dazugehoeren.
-            ImGui::SeparatorText(tr(Str::OriginSpecialOffsets));
-            const bool onSphere = (p.spawnFlags & kSpawnOrgOnSphere) != 0;
-            const bool onCylinder = (p.spawnFlags & kSpawnOrgOnCylinder) != 0;
-            bool special = onSphere || onCylinder;
-            if (ImGui::Checkbox("##special", &special)) {
-                if (!special) {
-                    p.spawnFlags &= ~(kSpawnOrgOnSphere | kSpawnOrgOnCylinder |
-                                      kSpawnAxisFromSphere);
-                } else {
-                    p.spawnFlags |= kSpawnOrgOnSphere;
-                }
-                changed = true;
-            }
-            ImGui::SameLine();
-            ImGui::BeginDisabled(!special);
-            int shape = onCylinder ? 1 : 0;
-            if (ImGui::RadioButton(tr(Str::OriginSpherical), &shape, 0)) {
-                p.spawnFlags |= kSpawnOrgOnSphere;
-                p.spawnFlags &= ~kSpawnOrgOnCylinder;
-                changed = true;
-            }
-            ImGui::SameLine();
-            if (ImGui::RadioButton(tr(Str::OriginCylindrical), &shape, 1)) {
-                p.spawnFlags |= kSpawnOrgOnCylinder;
-                p.spawnFlags &= ~kSpawnOrgOnSphere;
-                changed = true;
-            }
-            if (fields::applies(p.type, fields::Field::Radius)) {
-                changed |= editRange("radius", tr(Str::FieldRadius), p.radius);
-            }
-            if (fields::applies(p.type, fields::Field::Height)) {
-                changed |= editRange("height", tr(Str::FieldHeight), p.height);
-            }
-            bool axisFromOffset = (p.spawnFlags & kSpawnAxisFromSphere) != 0;
-            if (ImGui::Checkbox(tr(Str::OriginAxisFromOffset), &axisFromOffset)) {
-                p.spawnFlags = axisFromOffset
-                                   ? (p.spawnFlags | kSpawnAxisFromSphere)
-                                   : (p.spawnFlags & ~kSpawnAxisFromSphere);
-                changed = true;
+                frameEnd(open);
             }
             ImGui::EndDisabled();
 
-            if (fields::applies(p.type, fields::Field::Size)) {
-                ImGui::SeparatorText(tr(Str::FieldSize));
-                changed |= editChannel("size", "", p.size);
+            // Alles, was das Original nicht als Haekchen kennt (MP-Flags,
+            // seltene Bits) — fuer Fortgeschrittene, eingeklappt.
+            if (ImGui::CollapsingHeader(tr(Str::PropAdvancedFlags))) {
+                changed |= editFlags(p);
             }
-            // Die Drehung steht im Original in beiden Seiten. Wir zeigen sie
-            // nur einmal: hier, wenn es keine Bewegungsseite gibt, sonst dort.
-            const auto tabsOfType = fields::tabsFor(p.type);
-            const bool hasMotion =
-                std::find(tabsOfType.begin(), tabsOfType.end(),
-                          fields::Tab::Motion) != tabsOfType.end();
-            if (!hasMotion && fields::applies(p.type, fields::Field::Rotation)) {
-                ImGui::SeparatorText(tr(Str::FieldRotation));
-                changed |= editRange("rotation", "", p.rotation, 0.5f);
-                if (fields::applies(p.type, fields::Field::RotationDelta)) {
-                    changed |= editRange("rotationDelta",
-                                         tr(Str::FieldRotationDelta),
-                                         p.rotationDelta, 0.5f);
-                }
-            }
+            ImGui::TextDisabled("%s", tr(Str::PropDefaultHint));
+            break;
+        }
 
-            // "Always draw on top" — dasselbe Flag, aber dort, wo es wirkt.
+        // --- Origin/Size --------------------------------------------------------
+        case fields::Tab::OriginSize: {
+            minMaxHeader();
             {
-                bool onTop = (p.flags & kFlagDepthHack) != 0;
-                if (ImGui::Checkbox(tr(Str::OriginDepthHack), &onTop)) {
-                    p.flags = onTop ? (p.flags | kFlagDepthHack)
-                                    : (p.flags & ~kFlagDepthHack);
+                const bool open = frameBegin("originFrame", tr(Str::FieldOrigin));
+                changed |= rowsVector("origin", p.origin, Str::OriginForward, Str::OriginRight,
+                                      Str::OriginUp);
+                ImGui::SetCursorScreenPos(ImVec2(minX(), ImGui::GetCursorScreenPos().y));
+                changed |= flagBox(tr(Str::OriginRelativeAxis), p.spawnFlags, kSpawnCheapOrgCalc,
+                                   true, "origin/relativ");
+                frameEnd(open);
+            }
+            // Besondere Verteilung: Kugel oder Zylinder.
+            const bool canSpecial = applies(fields::Field::Radius) || applies(fields::Field::Height) ||
+                                    type == PrimitiveType::Particle;
+            ImGui::BeginDisabled(type == PrimitiveType::ScreenFlash || type == PrimitiveType::Light ||
+                                 type == PrimitiveType::Sound || type == PrimitiveType::CameraShake ||
+                                 !canSpecial);
+            {
+                const bool onSphere = (p.spawnFlags & kSpawnOrgOnSphere) != 0;
+                const bool onCylinder = (p.spawnFlags & kSpawnOrgOnCylinder) != 0;
+                bool special = onSphere || onCylinder;
+                if (ImGui::Checkbox(tr(Str::OriginEnableSpecial), &special)) {
+                    if (!special) {
+                        p.spawnFlags &= ~(kSpawnOrgOnSphere | kSpawnOrgOnCylinder | kSpawnAxisFromSphere);
+                    } else {
+                        p.spawnFlags |= kSpawnOrgOnSphere;
+                    }
                     changed = true;
                 }
+                testmarke::marke("special/an");
+                ImGui::BeginDisabled(!special);
+                ImGui::Indent();
+                int shape = onCylinder ? 1 : 0;
+                if (ImGui::RadioButton(tr(Str::OriginSpherical), &shape, 0)) {
+                    p.spawnFlags = (p.spawnFlags | kSpawnOrgOnSphere) & ~kSpawnOrgOnCylinder;
+                    changed = true;
+                }
+                if (ImGui::RadioButton(tr(Str::OriginCylindrical), &shape, 1)) {
+                    p.spawnFlags = (p.spawnFlags | kSpawnOrgOnCylinder) & ~kSpawnOrgOnSphere;
+                    changed = true;
+                }
+                ImGui::Unindent();
+                changed |= rowRange("radius", tr(Str::FieldRadiusWidth), p.radius, kDefaultRadius);
+                ImGui::BeginDisabled(!onCylinder);
+                changed |= rowRange("height", tr(Str::FieldHeight), p.height, kDefaultRadius);
+                ImGui::EndDisabled();
+                ImGui::SetCursorScreenPos(ImVec2(minX(), ImGui::GetCursorScreenPos().y));
+                changed |= flagBox(tr(Str::OriginAxisFromOffset), p.spawnFlags, kSpawnAxisFromSphere,
+                                   false, "special/achse");
+                ImGui::EndDisabled();
+            }
+            ImGui::EndDisabled();
+
+            changed |= channelGroup("size", Str::GroupSizeWidth, p.size, Str::FieldStartSize,
+                                    Str::FieldEndSize, kDefaultCurve, 0.5f,
+                                    applies(fields::Field::Size));
+
+            // Drehung steht im Original hier nur bei Typen ohne Bewegungsseite
+            // (Decal); bei allen anderen auf der Seite Motion.
+            const auto tabs = fields::tabsFor(type);
+            const bool hasMotion =
+                std::find(tabs.begin(), tabs.end(), fields::Tab::Motion) != tabs.end();
+            if (!hasMotion && applies(fields::Field::Rotation)) {
+                changed |= rowRange("rotation", tr(Str::FieldRotation), p.rotation, 0.0f, 0.5f);
+            }
+            if (showsDepthHack(type)) {
+                changed |= flagBox(tr(Str::OriginDepthHack), p.flags, kFlagDepthHack, false, "depthhack");
             }
             break;
         }
 
-        case fields::Tab::Color:
-            if (p.type == PrimitiveType::Emitter) {
+        // --- Motion ---------------------------------------------------------------
+        case fields::Tab::Motion: {
+            minMaxHeader();
+            {
+                const bool open = frameBegin("velFrame", tr(Str::FieldVelocity));
+                changed |= rowsVector("velocity", p.velocity, Str::OriginForward, Str::OriginRight,
+                                      Str::OriginUp);
+                ImGui::SetCursorScreenPos(ImVec2(minX(), ImGui::GetCursorScreenPos().y));
+                changed |= flagBox(tr(Str::MotionRelativeAxis), p.spawnFlags, kSpawnVelIsAbsolute,
+                                   true, "velocity/relativ");
+                changed |= flagBox(tr(Str::MotionAffectedByWind), p.spawnFlags, kSpawnAffectedByWind,
+                                   false, "wind/an");
+                ImGui::BeginDisabled((p.spawnFlags & kSpawnAffectedByWind) == 0);
+                changed |= rowRange("wind", tr(Str::MotionPercentage), p.windModifier, kDefaultWind, 0.5f);
+                ImGui::SetCursorScreenPos(ImVec2(minX(), ImGui::GetCursorScreenPos().y));
+                ImGui::TextDisabled("%s", tr(Str::MotionPercentHint));
+                ImGui::EndDisabled();
+                frameEnd(open);
+            }
+            {
+                const bool open = frameBegin("accFrame", tr(Str::FieldAcceleration));
+                changed |= rowsVector("accel", p.acceleration, Str::OriginForward, Str::OriginRight,
+                                      Str::OriginUp);
+                ImGui::SetCursorScreenPos(ImVec2(minX(), ImGui::GetCursorScreenPos().y));
+                changed |= flagBox(tr(Str::MotionRelativeAxis), p.spawnFlags, kSpawnAccelIsAbsolute,
+                                   true, "accel/relativ");
+                frameEnd(open);
+            }
+            changed |= rowRange("gravity", tr(Str::FieldGravity), p.gravity, 0.0f, 10.0f);
+            ImGui::SetCursorScreenPos(ImVec2(minX(), ImGui::GetCursorScreenPos().y));
+            ImGui::TextDisabled("(%s)", tr(Str::MotionGravityHint));
+            ImGui::BeginDisabled(!applies(fields::Field::Rotation));
+            changed |= rowRange("rotation", tr(Str::FieldRotation), p.rotation, 0.0f, 0.5f);
+            changed |= rowRange("rotationDelta", tr(Str::FieldRotationDelta), p.rotationDelta, 0.0f, 0.5f);
+            ImGui::EndDisabled();
+            break;
+        }
+
+        // --- Physics --------------------------------------------------------------
+        case fields::Tab::Physics: {
+            minMaxHeader();
+            const bool physics = (efx::effectiveFlags(p) & kFlagApplyPhysics) != 0;
+            {
+                bool on = physics;
+                if (ImGui::Checkbox(tr(Str::PhysicsEnable), &on)) {
+                    p.flags = on ? (p.flags | kFlagApplyPhysics) : (p.flags & ~kFlagApplyPhysics);
+                    changed = true;
+                }
+                testmarke::marke("physik/an");
+            }
+            ImGui::BeginDisabled(!physics);
+            ImGui::Indent();
+            changed |= flagBox(tr(Str::PhysicsExpensive), p.flags, kFlagExpensivePhysics, false,
+                               "physik/teuer");
+            ImGui::Unindent();
+            changed |= rowRange("bounce", tr(Str::FieldBounceOnly), p.elasticity, 0.0f, 0.05f);
+            {
+                const bool open = frameBegin("impacts", tr(Str::PhysicsImpacts));
+                changed |= flagBox(tr(Str::PhysicsKillOnImpact), p.flags, kFlagKillOnImpact, false,
+                                   "impact/kill");
+                bool play = (p.flags & kFlagImpactRunsFx) != 0 || !p.impactFx.empty();
+                if (ImGui::Checkbox(tr(Str::PhysicsPlayOnImpact), &play)) {
+                    p.flags = play ? (p.flags | kFlagImpactRunsFx) : (p.flags & ~kFlagImpactRunsFx);
+                    if (!play) p.impactFx.clear();
+                    changed = true;
+                }
+                testmarke::marke("impact/an");
+                ImGui::BeginDisabled(!play);
+                changed |= editStringList("impactfx", "", p.impactFx, "");
+                ImGui::EndDisabled();
+                frameEnd(open);
+            }
+            {
+                const bool open = frameBegin("bbox", tr(Str::PhysicsBoundingBox));
+                changed |= flagBox(tr(Str::PhysicsEnableBBox), p.flags, kFlagUseBBox, false, "bbox/an");
+                ImGui::BeginDisabled((p.flags & kFlagUseBBox) == 0);
+                // Spalte 1 = Ecke "min", Spalte 2 = Ecke "max" (Datei: min x y z,
+                // max x y z) — so belegt das Original die drei Zeilen X, Y, Z.
+                const Str axes[3] = {Str::BoxX, Str::BoxY, Str::BoxZ};
+                for (int k = 0; k < 3; ++k) {
+                    ImGui::PushID(k);
+                    const char* names[3] = {"x", "y", "z"};
+                    testmarke::Bereich bereich((std::string("bbox/") + names[k]).c_str());
+                    labelCell(tr(axes[k]));
+                    float low = p.min.set ? p.min.min[k] : 0.0f;
+                    float high = p.max.set ? p.max.min[k] : 0.0f;
+                    if (pairFields(low, high, p.min.set || p.max.set, 1.0f, 0.0f, 0.0f, "%.4g")) {
+                        if (!p.min.set) p.min = Vec3Range{};
+                        if (!p.max.set) p.max = Vec3Range{};
+                        p.min.min[k] = low;
+                        p.max.min[k] = high;
+                        p.min.max = p.min.min;
+                        p.max.max = p.max.min;
+                        p.min.set = p.max.set = true;
+                        p.min.ranged = p.max.ranged = false;
+                        changed = true;
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::EndDisabled();
+                frameEnd(open);
+            }
+            ImGui::EndDisabled();
+            break;
+        }
+
+        // --- Color ----------------------------------------------------------------
+        case fields::Tab::Color: {
+            if (type == PrimitiveType::Emitter) {
                 ImGui::TextDisabled("%s", tr(Str::ColorEmitterNote));
                 ImGui::Separator();
             }
-            changed |= editColorChannel(p.rgb);
-            if (fields::applies(p.type, fields::Field::Alpha)) {
-                changed |= editChannel("alpha", tr(Str::FieldAlpha), p.alpha, 0.01f);
-            }
-            {
-                // "Modulate RGB value using alpha value" — im Original genau
-                // hier, weil es beschreibt, wie Farbe und Alpha
-                // zusammenwirken. In einer Flagliste weiter unten waere der
-                // Zusammenhang nicht zu erkennen.
-                bool useAlpha = (p.flags & kFlagUseAlpha) != 0;
-                if (ImGui::Checkbox(tr(Str::ColorModulateAlpha), &useAlpha)) {
-                    p.flags = useAlpha ? (p.flags | kFlagUseAlpha)
-                                       : (p.flags & ~kFlagUseAlpha);
-                    changed = true;
-                }
-            }
-            if (fields::applies(p.type, fields::Field::Shaders)) {
-                ImGui::SeparatorText(tr(Str::FieldShaders));
+            if (applies(fields::Field::Shaders)) {
+                const bool open = frameBegin("shadersFrame", tr(Str::FieldShaders));
                 changed |= editStringList("shaders", "", p.shaders, "gfx/");
-
-                // Wie jeder Shader tatsaechlich aufgeloest wurde.
-                //
-                // Warum das noetig ist: ob ein Feuer einen hellen Kern
-                // bekommt, haengt an der Mischung. ADDITIV addieren sich
-                // uebereinanderliegende Sprites zu Weiss auf — das ist der
-                // Kern. ALPHAGEMISCHT deckt jedes das darunter nur ab, und
-                // der Kern bleibt aus.
-                //
-                // Steht der Name in keiner .shader-Datei, baut die Engine
-                // einen Ersatz. `RE_RegisterShader` meldet ihn mit
-                // `lightmaps2d` an, und R_FindShader nimmt dafuer
-                //
-                //     GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE_MINUS_SRC_ALPHA
-                //
-                // also Alphamischung. Ein Feuer, dessen Shader nicht gefunden
-                // wird, sieht deshalb flau aus — und man sucht den Fehler an
-                // der falschen Stelle, naemlich beim Effekt statt beim Pfad.
-                //
-                // Die Zeile sagt beides: gefunden oder Ersatz, und welche
-                // Mischung daraus folgt.
+                // Welche Mischung jeder Shader hat — das Original sagt es nicht,
+                // und ohne das ist "warum ist mein Rauch so hell" nicht zu klaeren.
                 for (const std::string& name : p.shaders) {
                     const bool known = assets_.hasShader(name);
                     const shader::BlendMode mode = assets_.blendOf(name);
@@ -332,153 +818,30 @@ void App::drawTab(fields::Tab tab, Primitive& p) {
                         : mode == shader::BlendMode::AlphaBlend ? tr(Str::BlendAlpha)
                                                                 : tr(Str::BlendOpaque);
                     const theme::Palette& pal = activeTheme(settings_).palette;
-                    if (known) {
-                        ImGui::TextColored(toImGui(pal.textDim), "%s: %s",
-                                           name.c_str(), modeText);
-                    } else {
-                        ImGui::TextColored(toImGui(pal.warning), "%s: %s (%s)",
-                                           name.c_str(), modeText,
-                                           tr(Str::ShaderFallback));
-                    }
+                    ImGui::TextColored(toImGui(known ? pal.textDim : pal.warning), "%s: %s%s%s",
+                                       name.c_str(), modeText, known ? "" : " - ",
+                                       known ? "" : tr(Str::ShaderFallback));
                 }
-                bool shaderTime = (p.flags & kFlagSetShaderTime) != 0;
-                if (ImGui::Checkbox(tr(Str::ColorShaderTime), &shaderTime)) {
-                    p.flags = shaderTime ? (p.flags | kFlagSetShaderTime)
-                                         : (p.flags & ~kFlagSetShaderTime);
-                    changed = true;
-                }
+                frameEnd(open);
+                changed |= flagBox(tr(Str::ColorShaderTime), p.flags, kFlagSetShaderTime, false,
+                                   "shadertime");
             }
-            break;
-
-        case fields::Tab::Motion: {
-            // Aufbau wie Dialog 160, gemessen am Emitter.
-            ImGui::SeparatorText(tr(Str::FieldVelocity));
-            changed |= editVec3Range("velocity", "", p.velocity);
-            ImGui::TextDisabled("%s / %s / %s", tr(Str::OriginForward),
-                                tr(Str::OriginRight), tr(Str::OriginUp));
-            {
-                // "Relativ zur Effektachse" ist die Umkehrung von absoluteVel.
-                bool relative = (p.spawnFlags & kSpawnVelIsAbsolute) == 0;
-                if (ImGui::Checkbox(tr(Str::MotionRelativeAxis), &relative)) {
-                    p.spawnFlags = relative ? (p.spawnFlags & ~kSpawnVelIsAbsolute)
-                                            : (p.spawnFlags | kSpawnVelIsAbsolute);
-                    changed = true;
-                }
-                // Wind: Haekchen und Anteil gehoeren zusammen. Das Flag kennt
-                // nur der Multiplayer-Zweig — das steht im Flagnamen selbst,
-                // und die Pruefung meldet es beim SP-Ziel.
-                bool wind = (p.spawnFlags & kSpawnAffectedByWind) != 0;
-                if (ImGui::Checkbox(tr(Str::MotionAffectedByWind), &wind)) {
-                    p.spawnFlags = wind ? (p.spawnFlags | kSpawnAffectedByWind)
-                                        : (p.spawnFlags & ~kSpawnAffectedByWind);
-                    changed = true;
-                }
-                ImGui::SameLine();
-                ImGui::TextDisabled("(%s)", dialectName(Dialect::MP));
-                ImGui::BeginDisabled(!wind);
-                ImGui::Indent();
-                changed |= editRange("wind", "", p.windModifier, 0.5f);
-                ImGui::TextDisabled("%s", tr(Str::MotionWindPercent));
-                ImGui::Unindent();
-                ImGui::EndDisabled();
-            }
-
-            ImGui::SeparatorText(tr(Str::FieldAcceleration));
-            changed |= editVec3Range("accel", "", p.acceleration);
-            {
-                bool relative = (p.spawnFlags & kSpawnAccelIsAbsolute) == 0;
-                if (ImGui::Checkbox(tr(Str::MotionRelativeAxis), &relative)) {
-                    p.spawnFlags = relative ? (p.spawnFlags & ~kSpawnAccelIsAbsolute)
-                                            : (p.spawnFlags | kSpawnAccelIsAbsolute);
-                    changed = true;
-                }
-            }
-
-            changed |= editRange("gravity", tr(Str::FieldGravity), p.gravity, 10.0f);
-            ImGui::TextDisabled("%s", tr(Str::MotionGravityHint));
-
-            if (fields::applies(p.type, fields::Field::Rotation)) {
-                ImGui::SeparatorText(tr(Str::FieldRotation));
-                changed |= editRange("rotation", "", p.rotation, 0.5f);
-                if (fields::applies(p.type, fields::Field::RotationDelta)) {
-                    changed |= editRange("rotationDelta",
-                                         tr(Str::FieldRotationDelta),
-                                         p.rotationDelta, 0.5f);
-                }
-            }
-            break;
-        }
-
-        case fields::Tab::Physics: {
-            // Aufbau wie Dialog 161: Physik einschalten, Rueckprall,
-            // Aufprall-Gruppe, Begrenzungsbox, teure Physik. Schwerkraft und
-            // Wind gehoeren zur Bewegung, Dichte und Streuung zum Emitter —
-            // ich hatte sie hier.
-            bool physics = (p.flags & kFlagApplyPhysics) != 0;
-            if (ImGui::Checkbox("usePhysics", &physics)) {
-                p.flags = physics ? (p.flags | kFlagApplyPhysics)
-                                  : (p.flags & ~kFlagApplyPhysics);
-                changed = true;
-            }
-            ImGui::BeginDisabled(!physics);
-            // Direkt unter "Enable Physics", wie im Original — nicht am Ende.
-            // Es beschreibt, *wie* die Physik rechnet, gehoert also neben den
-            // Schalter, der sie einschaltet.
-            {
-                bool expensive = (p.flags & kFlagExpensivePhysics) != 0;
-                ImGui::Indent();
-                if (ImGui::Checkbox(tr(Str::PhysicsExpensive), &expensive)) {
-                    p.flags = expensive ? (p.flags | kFlagExpensivePhysics)
-                                        : (p.flags & ~kFlagExpensivePhysics);
-                    changed = true;
-                }
-                ImGui::Unindent();
-            }
-            changed |= editRange("bounce", tr(Str::FieldBounce), p.elasticity, 0.05f);
-
-            ImGui::SeparatorText(tr(Str::PhysicsImpacts));
-            bool kill = (p.flags & kFlagKillOnImpact) != 0;
-            if (ImGui::Checkbox(tr(Str::PhysicsKillOnImpact), &kill)) {
-                p.flags = kill ? (p.flags | kFlagKillOnImpact)
-                               : (p.flags & ~kFlagKillOnImpact);
-                changed = true;
-            }
-            bool impactPlay = (p.flags & kFlagImpactRunsFx) != 0;
-            if (ImGui::Checkbox(tr(Str::PhysicsPlayOnImpact), &impactPlay)) {
-                p.flags = impactPlay ? (p.flags | kFlagImpactRunsFx)
-                                     : (p.flags & ~kFlagImpactRunsFx);
-                changed = true;
-            }
-            ImGui::BeginDisabled(!impactPlay);
-            changed |= editStringList("impactfx", "", p.impactFx, "");
-            ImGui::EndDisabled();
-
-            // Die Begrenzungsbox: min und max, und das Flag, das sie erst
-            // wirksam macht. Im Original stehen sie in einem Kasten zusammen.
-            ImGui::SeparatorText(tr(Str::PhysicsBoundingBox));
-            bool bbox = (p.flags & kFlagUseBBox) != 0;
-            if (ImGui::Checkbox("useBBox", &bbox)) {
-                p.flags = bbox ? (p.flags | kFlagUseBBox) : (p.flags & ~kFlagUseBBox);
-                changed = true;
-            }
-            ImGui::BeginDisabled(!bbox);
-            changed |= editVec3Range("min", tr(Str::FieldMin), p.min);
-            changed |= editVec3Range("max", tr(Str::FieldMax), p.max);
-            ImGui::EndDisabled();
-
+            changed |= editColorChannel(p.rgb);
+            changed |= flagBox(tr(Str::ColorPickCube), p.spawnFlags, kSpawnRgbComponentInterp, true,
+                               "farbwuerfel");
+            ImGui::BeginDisabled(!applies(fields::Field::Alpha));
+            changed |= flagBox(tr(Str::ColorModulateAlpha), p.flags, kFlagUseAlpha, true,
+                               "modulate");
+            minMaxHeader();
+            changed |= channelGroup("alpha", Str::GroupAlphaTransparency, p.alpha, Str::FieldStartAlpha,
+                                    Str::FieldEndAlpha, kDefaultCurve, 0.01f,
+                                    applies(fields::Field::Alpha));
             ImGui::EndDisabled();
             break;
         }
 
+        // --- Line -----------------------------------------------------------------
         case fields::Tab::Line: {
-            // Drei Auswahlknoepfe statt zweier Flags in einer Liste: der
-            // Endpunkt ist entweder angegeben, getract oder ein Versatz.
-            // Genau so steht es in Dialog 172.
-            // Zwei Auswahlknoepfe, und "als Versatz benutzen" haengt am
-            // zweiten. Ich hatte drei gleichrangige Knoepfe — im Original ist
-            // der dritte ein eingerueckter Zusatz zum Trace, und das stimmt
-            // auch mit der Engine ueberein: org2isOffset veraendert, wie der
-            // Trace-Endpunkt gestreut wird.
             int endpointMode = (p.spawnFlags & kSpawnOrg2FromTrace) ? 1 : 0;
             if (ImGui::RadioButton(tr(Str::LineEndpointGiven), &endpointMode, 0)) {
                 p.spawnFlags &= ~(kSpawnOrg2FromTrace | kSpawnOrg2IsOffset);
@@ -490,143 +853,117 @@ void App::drawTab(fields::Tab tab, Primitive& p) {
             }
             ImGui::Indent();
             ImGui::BeginDisabled(endpointMode != 1);
-            bool asOffset = (p.spawnFlags & kSpawnOrg2IsOffset) != 0;
-            if (ImGui::Checkbox(tr(Str::LineEndpointOffset), &asOffset)) {
-                p.spawnFlags = asOffset ? (p.spawnFlags | kSpawnOrg2IsOffset)
-                                        : (p.spawnFlags & ~kSpawnOrg2IsOffset);
-                changed = true;
-            }
+            changed |= flagBox(tr(Str::LineEndpointOffset), p.spawnFlags, kSpawnOrg2IsOffset, false,
+                               "endpunkt/versatz");
             ImGui::EndDisabled();
             ImGui::Unindent();
-
-            ImGui::SeparatorText(tr(Str::FieldOrigin2));
-            changed |= editVec3Range("origin2", "", p.origin2);
-            ImGui::TextDisabled("%s / %s / %s", tr(Str::OriginForward),
-                                tr(Str::OriginRight), tr(Str::OriginUp));
+            minMaxHeader();
             {
-                // Eigenes "Relativ zur Effektachse" fuer den Endpunkt:
-                // cheapOrg2Calc, nicht cheapOrgCalc.
-                bool relative2 = (p.spawnFlags & kSpawnCheapOrg2Calc) == 0;
-                if (ImGui::Checkbox(tr(Str::OriginRelativeAxis), &relative2)) {
-                    p.spawnFlags = relative2 ? (p.spawnFlags & ~kSpawnCheapOrg2Calc)
-                                             : (p.spawnFlags | kSpawnCheapOrg2Calc);
+                const bool open = frameBegin("endFrame", tr(Str::LineEndpoint));
+                changed |= rowsVector("origin2", p.origin2, Str::OriginForward, Str::OriginRight,
+                                      Str::OriginUp);
+                ImGui::SetCursorScreenPos(ImVec2(minX(), ImGui::GetCursorScreenPos().y));
+                changed |= flagBox(tr(Str::OriginRelativeAxis), p.spawnFlags, kSpawnCheapOrg2Calc,
+                                   true, "origin2/relativ");
+                frameEnd(open);
+            }
+            {
+                const bool open = frameBegin("endFx", tr(Str::LineEndpointEffects));
+                bool traceFx = (p.spawnFlags & kSpawnTraceImpactFx) != 0;
+                if (ImGui::Checkbox(tr(Str::LinePlayAtEndpoint), &traceFx)) {
+                    p.spawnFlags = traceFx ? (p.spawnFlags | kSpawnTraceImpactFx)
+                                           : (p.spawnFlags & ~kSpawnTraceImpactFx);
                     changed = true;
                 }
+                testmarke::marke("endfx/an");
+                ImGui::BeginDisabled(!traceFx);
+                changed |= editStringList("impactfx", "", p.impactFx, "");
+                ImGui::EndDisabled();
+                frameEnd(open);
             }
-
-            ImGui::SeparatorText(tr(Str::LineEndpointEffects));
-            bool traceFx = (p.spawnFlags & kSpawnTraceImpactFx) != 0;
-            if (ImGui::Checkbox(tr(Str::LinePlayAtEndpoint), &traceFx)) {
-                p.spawnFlags = traceFx ? (p.spawnFlags | kSpawnTraceImpactFx)
-                                       : (p.spawnFlags & ~kSpawnTraceImpactFx);
-                changed = true;
+            // Blitz: im Original auf jeder Linienseite, bei Line gesperrt.
+            ImGui::BeginDisabled(type != PrimitiveType::Electricity);
+            {
+                const bool open = frameBegin("electricity", tr(Str::GroupElectricity));
+                // Die Unruhe steht in der Datei unter "bounce" (mElasticity) —
+                // der Kern liest sie dort (particles.cpp). Vorher schrieb
+                // dieses Feld in `variance`, und der Blitz blieb unbeeindruckt.
+                changed |= rowRange("chaos", tr(Str::LineChaos), p.elasticity, 0.0f, 0.05f);
+                changed |= flagBox(tr(Str::LineTaper), p.flags, kFlagElectricityTaper, false, "taper");
+                changed |= flagBox(tr(Str::LineBranch), p.flags, kFlagElectricityBranch, false, "branch");
+                changed |= flagBox(tr(Str::LineGrow), p.flags, kFlagElectricityGrow, false, "grow");
+                frameEnd(open);
             }
-            ImGui::BeginDisabled(!traceFx);
-            changed |= editStringList("impactfx", "", p.impactFx, "");
             ImGui::EndDisabled();
-
-            if (p.type == PrimitiveType::Electricity) {
-                // Dialog 172 nennt variance hier "Chaos" — dasselbe Feld,
-                // aber der Name sagt endlich, was es tut.
-                ImGui::SeparatorText(tr(Str::GroupElectricity));
-                changed |= editRange("chaos", tr(Str::LineChaos), p.variance, 0.05f);
-
-                // Verjuengung, Verzweigung, Wachsen. Diese drei teilen sich
-                // ihre Bits mit useModel, usePhysics und useBBox — der Parser
-                // kennt keine eigenen Schluessel dafuer. In der Datei steht
-                // also "flags useModel usePhysics useBBox".
-                struct ElectricityFlag { Str label; uint32_t bits; };
-                const ElectricityFlag electricityFlags[] = {
-                    {Str::LineTaper, kFlagElectricityTaper},
-                    {Str::LineBranch, kFlagElectricityBranch},
-                    {Str::LineGrow, kFlagElectricityGrow},
-                };
-                for (const auto& entry : electricityFlags) {
-                    bool on = (p.flags & entry.bits) != 0;
-                    if (ImGui::Checkbox(tr(entry.label), &on)) {
-                        p.flags = on ? (p.flags | entry.bits)
-                                     : (p.flags & ~entry.bits);
-                        changed = true;
-                    }
-                }
-                ImGui::TextDisabled("%s", tr(Str::LineSharedBits));
-            }
             break;
         }
 
+        // --- Length/Size2 ---------------------------------------------------------
         case fields::Tab::Tail:
         case fields::Tab::LengthSize2:
-            changed |= editChannel("length", tr(Str::FieldLength), p.length);
-            if (fields::applies(p.type, fields::Field::Size2)) {
-                changed |= editChannel("size2", tr(Str::FieldSize2), p.size2);
-            }
+            minMaxHeader();
+            changed |= channelGroup("length", Str::FieldLength, p.length, Str::FieldStartLength,
+                                    Str::FieldEndLength, kDefaultCurve, 0.5f);
+            changed |= channelGroup("size2", Str::GroupSize2Width2, p.size2, Str::FieldStartSize2,
+                                    Str::FieldEndSize2, kDefaultCurve, 0.5f,
+                                    applies(fields::Field::Size2));
             break;
 
+        // --- Model ----------------------------------------------------------------
         case fields::Tab::Model: {
-            // Winkel und Winkeldifferenz gehoeren hierher, nicht zur Bewegung:
-            // sie richten das angehaengte Modell aus. Im Original heissen sie
-            // Pitch/Yaw/Roll, und das ist die richtige Benennung fuer Winkel
-            // in Quake-Reihenfolge.
-            ImGui::SeparatorText(tr(Str::FieldAngles));
-            changed |= editVec3Range("angles", "", p.angles, 0.5f);
-            ImGui::TextDisabled("%s / %s / %s", tr(Str::AnglePitch),
-                                tr(Str::AngleYaw), tr(Str::AngleRoll));
-            ImGui::SeparatorText(tr(Str::FieldAngleDelta));
-            changed |= editVec3Range("angleDelta", "", p.anglesDelta, 0.5f);
-
-            ImGui::SeparatorText(tr(Str::FieldModels));
-            bool attach = (p.flags & kFlagAttachedModel) != 0;
-            if (ImGui::Checkbox(tr(Str::ModelAttach), &attach)) {
-                p.flags = attach ? (p.flags | kFlagAttachedModel)
-                                 : (p.flags & ~kFlagAttachedModel);
-                changed = true;
+            minMaxHeader();
+            {
+                const bool open = frameBegin("angleFrame", tr(Str::GroupAngle));
+                changed |= rowsVector("angles", p.angles, Str::AnglePitch, Str::AngleYaw, Str::AngleRoll);
+                frameEnd(open);
             }
-            changed |= editStringList("models", "", p.models, "models/");
+            {
+                const bool open = frameBegin("deltaFrame", tr(Str::GroupAngleDelta));
+                changed |= rowsVector("angleDelta", p.anglesDelta, Str::AnglePitch, Str::AngleYaw,
+                                      Str::AngleRoll);
+                frameEnd(open);
+            }
+            {
+                const bool open = frameBegin("modelsFrame", tr(Str::FieldModels));
+                changed |= flagBox(tr(Str::ModelAttach), p.flags, kFlagAttachedModel, false, "attach");
+                changed |= editStringList("models", "", p.models, "models/");
+                frameEnd(open);
+            }
             break;
         }
 
+        // --- Emitter --------------------------------------------------------------
         case fields::Tab::Emitter: {
-            bool emit = (p.flags & kFlagEmitFx) != 0;
-            if (ImGui::Checkbox(tr(Str::EmitterEnable), &emit)) {
-                p.flags = emit ? (p.flags | kFlagEmitFx) : (p.flags & ~kFlagEmitFx);
-                changed = true;
+            {
+                const bool open = frameBegin("emitFrame", tr(Str::FieldEmitFx));
+                bool emit = (efx::effectiveFlags(p) & kFlagEmitFx) != 0;
+                if (ImGui::Checkbox(tr(Str::EmitterEnable), &emit)) {
+                    p.flags = emit ? (p.flags | kFlagEmitFx) : (p.flags & ~kFlagEmitFx);
+                    if (!emit) p.emitFx.clear();
+                    changed = true;
+                }
+                testmarke::marke("emit/an");
+                ImGui::BeginDisabled(!emit);
+                changed |= editStringList("emitfx", "", p.emitFx, "");
+                ImGui::EndDisabled();
+                frameEnd(open);
             }
-            ImGui::SeparatorText(tr(Str::FieldEmitFx));
-            changed |= editStringList("emitfx", "", p.emitFx, "");
-            changed |= editRange("density", tr(Str::FieldDensity), p.density);
-            changed |= editRange("variance", tr(Str::FieldVariance), p.variance,
-                                 0.05f);
+            minMaxHeader();
+            changed |= rowRange("density", tr(Str::FieldDensity), p.density, kDefaultDensity);
+            changed |= rowRange("variance", tr(Str::FieldVariance), p.variance, kDefaultVariance, 0.05f);
             break;
         }
 
+        // --- Sound ----------------------------------------------------------------
         case fields::Tab::Sound: {
-            changed |= editStringList("sounds", tr(Str::FieldSounds), p.sounds,
-                                      "sound/");
-
-            // Anhoeren, ohne den ganzen Effekt abzuspielen.
-            //
-            // Im Original steht dafuer ein Lautsprecher neben der Liste, und
-            // er fehlte uns. Der Unterschied ist groesser, als er klingt: um
-            // einen Klang zu pruefen, musste man bisher den kompletten Effekt
-            // starten und den richtigen Augenblick abwarten.
-            //
-            // Ausgegraut, wenn die Liste leer ist — ein Knopf, der nichts tun
-            // kann, soll auch nicht so aussehen, als koennte er es.
-            // Eine Klangdatei aussuchen, statt den Pfad zu tippen.
-            //
-            // Im Original steht dafuer ein Ordnersymbol neben der Liste, mit
-            // dem Filter "Sound Files (*.wav; *.mp3)". Beides uebernommen —
-            // die Endungen sind genau die, die die Engine liest.
+            const bool open = frameBegin("soundsFrame", tr(Str::FieldSounds));
+            changed |= editStringList("sounds", "", p.sounds, "sound/");
+            frameEnd(open);
             if (ImGui::Button(tr(Str::SoundBrowse)) && fileDialog_) {
                 const std::string picked = fileDialog_(
-                    false, "Sound files (*.wav; *.mp3)\0*.wav;*.mp3\0"
-                           "All files\0*.*\0",
+                    false, "Sound files (*.wav; *.mp3)\0*.wav;*.mp3\0All files\0*.*\0",
                     settings_.gamePath.c_str());
                 if (!picked.empty()) {
-                    // Auf den spielinternen Namen kuerzen: in der .efx steht
-                    // `sound/...`, kein Laufwerksbuchstabe. Wer den vollen
-                    // Pfad eintraegt, bekommt eine Datei, die im Editor
-                    // klingt und im Spiel fehlt.
                     const std::string relative = toGameRelative(picked);
                     if (relative.empty()) {
                         diag::warn("sound outside game path: " + picked);
@@ -637,84 +974,75 @@ void App::drawTab(fields::Tab tab, Primitive& p) {
                 }
             }
             ImGui::SameLine();
-
             const bool empty = p.sounds.empty();
-            if (empty) ImGui::BeginDisabled();
-            if (ImGui::Button(tr(Str::SoundPlay))) playSoundNow(p.sounds.front());
-            if (empty) ImGui::EndDisabled();
-
+            ImGui::BeginDisabled(empty);
+            if (ImGui::Button(tr(Str::SoundPlay)) && !empty) playSoundNow(p.sounds.front());
+            ImGui::EndDisabled();
             if (empty) {
                 ImGui::SameLine();
                 ImGui::TextDisabled("%s", tr(Str::SoundPlayNone));
             } else if (!settings_.playSounds) {
-                // Der haeufigste Grund fuer "da kommt nichts": der Haken im
-                // Menue. Danach sucht man lange, wenn es niemand sagt.
                 ImGui::SameLine();
                 ImGui::TextDisabled("%s", tr(Str::SoundPlayOff));
             }
             break;
         }
 
+        // --- FxRunner -------------------------------------------------------------
         case fields::Tab::FxRunner: {
-            bool randomRot = (p.spawnFlags & kSpawnRandRotAroundFwd) != 0;
-            if (ImGui::Checkbox(tr(Str::FxRunnerRandomRotation), &randomRot)) {
-                p.spawnFlags = randomRot
-                                   ? (p.spawnFlags | kSpawnRandRotAroundFwd)
-                                   : (p.spawnFlags & ~kSpawnRandRotAroundFwd);
-                changed = true;
-            }
-            ImGui::SeparatorText(tr(Str::FieldPlayFx));
+            changed |= flagBox(tr(Str::FxRunnerRandomRotation), p.spawnFlags, kSpawnRandRotAroundFwd,
+                               false, "randrot");
+            const bool open = frameBegin("spawned", tr(Str::GroupSpawnedEffects));
             changed |= editStringList("playfx", "", p.playFx, "");
+            frameEnd(open);
             break;
         }
 
+        // --- CameraShake ----------------------------------------------------------
         case fields::Tab::CameraShake: {
-            // Hier heisst bounce "Staerke". Dieselbe Zahl, andere Bedeutung —
-            // die Doppelbelegung erklaert Ravens Editor nirgends, aber er
-            // beschriftet wenigstens den Regler: "Nothing" unten, "Quake" und
-            // "Insane" oben. Das ist besser als eine nackte Zahl, weil 16 fuer
-            // sich genommen nichts sagt.
-            changed |= editRange("radius", tr(Str::FieldRadius), p.radius, 5.0f);
-
-            ImGui::SeparatorText(tr(Str::ShakeIntensity));
-            bool present = p.elasticity.set;
-            if (ImGui::Checkbox("##shakeSet", &present)) {
-                p.elasticity.set = present;
-                changed = true;
-            }
-            ImGui::SameLine();
-            ImGui::BeginDisabled(!p.elasticity.set);
-            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 7.0f);
-            if (ImGui::SliderFloat("##shakeMin", &p.elasticity.min, 0.0f,
-                                   camera::Shake::kMaxIntensity, "%.2f")) {
-                if (!p.elasticity.ranged) p.elasticity.max = p.elasticity.min;
+            minMaxHeader();
+            changed |= rowRange("radius", tr(Str::FieldRadius), p.radius, kDefaultRadius, 5.0f, 0.0f, 1.0e6f);
+            // Zwei senkrechte Regler wie im Original: links Min, rechts Max,
+            // 0 = nichts, 8 = Beben, 16 = Wahnsinn. Min bleibt <= Max — das
+            // Original liess "intensity 12 6" zu (Fotos des Anwenders).
+            labelCell(tr(Str::ShakeIntensity));
+            const float sliderHeight = ImGui::GetFontSize() * 9.0f;
+            const float sliderWidth = ImGui::GetFrameHeight();
+            const float top = ImGui::GetCursorScreenPos().y;
+            float low = p.elasticity.set ? p.elasticity.min : 0.0f;
+            float high = p.elasticity.set ? p.elasticity.max : 0.0f;
+            ImGui::SetCursorScreenPos(ImVec2(minX() + (g_page.field - sliderWidth) * 0.5f, top));
+            const bool lowChanged = ImGui::VSliderFloat("##shakeMin", ImVec2(sliderWidth, sliderHeight),
+                                                        &low, 0.0f, camera::Shake::kMaxIntensity, "%.1f");
+            testmarke::marke("intensity/min");
+            ImGui::SetCursorScreenPos(ImVec2(maxX() + (g_page.field - sliderWidth) * 0.5f, top));
+            const bool highChanged = ImGui::VSliderFloat("##shakeMax", ImVec2(sliderWidth, sliderHeight),
+                                                         &high, 0.0f, camera::Shake::kMaxIntensity, "%.1f");
+            testmarke::marke("intensity/max");
+            // Die Beschriftung des Originals zwischen den Reglern.
+            const float labelX = minX() + g_page.field + g_page.gap * 0.5f;
+            const auto mark = [&](Str text, float fraction) {
+                const char* s = tr(text);
+                ImGui::GetWindowDrawList()->AddText(
+                    ImVec2(labelX - ImGui::CalcTextSize(s).x * 0.5f,
+                           top + sliderHeight * fraction - ImGui::GetTextLineHeight() * 0.5f),
+                    ImGui::GetColorU32(ImGuiCol_TextDisabled), s);
+            };
+            mark(Str::ShakeInsane, 0.04f);
+            mark(Str::ShakeQuake, 0.5f);
+            mark(Str::ShakeNothing, 0.96f);
+            ImGui::SetCursorScreenPos(ImVec2(g_page.x0, top + sliderHeight + ImGui::GetStyle().ItemSpacing.y));
+            ImGui::Dummy(ImVec2(0.0f, 0.0f));
+            if (lowChanged || highChanged) {
+                if (lowChanged && high < low) high = low;
+                if (highChanged && low > high) low = high;
+                p.elasticity.min = low;
+                p.elasticity.max = high;
                 p.elasticity.set = true;
+                p.elasticity.ranged = low != high;
+                p.elasticityAsIntensity = true;
                 changed = true;
             }
-            if (p.elasticity.ranged) {
-                ImGui::SameLine();
-                ImGui::SetNextItemWidth(ImGui::GetFontSize() * 7.0f);
-                if (ImGui::SliderFloat("##shakeMax", &p.elasticity.max, 0.0f,
-                                       camera::Shake::kMaxIntensity, "%.2f")) {
-                    p.elasticity.set = true;
-                    changed = true;
-                }
-            }
-            ImGui::SameLine();
-            bool ranged = p.elasticity.ranged;
-            if (ImGui::Checkbox("~", &ranged)) {
-                p.elasticity.ranged = ranged;
-                if (!ranged) p.elasticity.max = p.elasticity.min;
-                changed = true;
-            }
-            // Die Landmarken. MAX_SHAKE_INTENSITY ist 16; darueber wirkt
-            // nichts mehr, deshalb endet der Regler dort.
-            ImGui::Indent();
-            ImGui::TextDisabled("0 = %s     8 = %s     16 = %s",
-                                tr(Str::ShakeNothing), tr(Str::ShakeQuake),
-                                tr(Str::ShakeInsane));
-            ImGui::Unindent();
-            ImGui::EndDisabled();
             break;
         }
     }
@@ -724,14 +1052,11 @@ void App::drawTab(fields::Tab tab, Primitive& p) {
         refreshDiagnostics();
         // In den Rueckgaengig-Verlauf, sobald das Feld losgelassen wird
         // (App::buildFrame) — nicht in jedem Bild eines Ziehens. Vorher kam
-        // eine Feldaenderung NIE in den Verlauf: Strg+Z nahm stattdessen den
-        // Schritt davor zurueck.
+        // eine Feldaenderung NIE in den Verlauf.
         fieldEditOpen_ = true;
-        // Und die laufende Vorschau zeigt die Aenderung sofort, nicht erst
-        // beim naechsten Abspielen.
+        // Und die laufende Vorschau zeigt die Aenderung sofort.
         previewDirty_ = true;
     }
 }
-
 
 }  // namespace efx::gui
