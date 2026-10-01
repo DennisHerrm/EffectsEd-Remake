@@ -4,6 +4,7 @@
 // durch Tabs getrennt, Leerzeile zwischen den Bloecken. Der alte Editor
 // schreibt Zahlen mit "%1.4g" — das ist die Voreinstellung nur, wenn man sie
 // ausdruecklich waehlt, sonst schreiben wir verlustfrei.
+#include <charconv>
 #include <cmath>
 #include <cstdio>
 #include <sstream>
@@ -13,13 +14,24 @@
 namespace efx {
 namespace {
 
-// Kuerzeste Dezimaldarstellung, die denselben float wieder ergibt.
+// Kuerzeste Dezimaldarstellung, die denselben float wieder ergibt — immer
+// in Festkomma.
+//
+// Vorher: "%.*g" mit steigender Genauigkeit. Das ist zwar verlustfrei, aber
+// %g schaltet auf Exponentenschreibweise, sobald der Exponent die Genauigkeit
+// erreicht: aus `life 1500 2500` wurde `life 1.5e+03 2.5e+03`, aus `size 10`
+// wurde `1e+01`. Die Engine liest das (atof), aber kein Mensch, und keine
+// einzige Raven-Datei sieht so aus. Gefunden vom Selbsttest, nicht von den
+// 4209 Kernpruefungen — die verglichen nur Rundlaeufe, nie den Text.
+//
+// std::to_chars mit chars_format::fixed liefert die kuerzeste Festkomma-Form,
+// die exakt zuruecklaeuft: 1500 -> "1500", 0.001 -> "0.001".
 std::string exactFloat(float value) {
-    char buffer[64];
-    for (int precision = 1; precision <= 9; ++precision) {
-        std::snprintf(buffer, sizeof(buffer), "%.*g", precision, static_cast<double>(value));
-        if (static_cast<float>(std::strtod(buffer, nullptr)) == value) return buffer;
-    }
+    if (value == 0.0f) return "0";  // auch -0 als "0"
+    char buffer[96];
+    const auto result =
+        std::to_chars(buffer, buffer + sizeof(buffer), value, std::chars_format::fixed);
+    if (result.ec == std::errc{}) return std::string(buffer, result.ptr);
     std::snprintf(buffer, sizeof(buffer), "%.9g", static_cast<double>(value));
     return buffer;
 }

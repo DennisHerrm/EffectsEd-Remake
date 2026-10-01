@@ -27,50 +27,16 @@ void App::drawMenuBar() {
     if (!ImGui::BeginMenuBar()) return;
 
     if (ImGui::BeginMenu(tr(Str::MenuFile))) {
-        if (ImGui::MenuItem(tr(Str::FileNew), "Ctrl+N")) newEffect();
-        if (ImGui::MenuItem(tr(Str::FileOpen), "Ctrl+O") && fileDialog_) {
-            const std::string path =
-                fileDialog_(false, "Effect files (*.efx)\0*.efx\0All files\0*.*\0",
-                            nullptr);
-            if (!path.empty()) openFile(path);
-        }
-        // Ein .pk3 als Quelle oeffnen, ohne den Spielpfad umzustellen. Wer
-        // eine Mod-Datei bekommen hat, will hineinsehen — nicht seine
-        // Einstellungen aendern.
-        if (ImGui::MenuItem(tr(Str::FileOpenPk3)) && fileDialog_) {
-            const std::string picked = fileDialog_(
-                false, "PK3-Archive (*.pk3)\0*.pk3\0Alle Dateien\0*.*\0",
-                nullptr);
-            if (!picked.empty() && openArchive(picked)) {
-                startTabActive_ = true;
-                wantStartTab_ = true;
-            }
-        }
+        if (ImGui::MenuItem(tr(Str::FileNew), "Ctrl+N")) cmdNew();
+        if (ImGui::MenuItem(tr(Str::FileOpen), "Ctrl+O")) cmdOpen();
+        if (ImGui::MenuItem(tr(Str::FileOpenPk3))) cmdOpenPk3();
         ImGui::Separator();
-        if (ImGui::MenuItem(tr(Str::FileSave), "Ctrl+S")) {
-            // Ohne bekannten Pfad wird daraus "Speichern unter" — sonst
-            // verschwindet die Datei wortlos irgendwohin.
-            if (doc().filePath.empty() && fileDialog_) {
-                const std::string path = fileDialog_(
-                    true, "Effect files (*.efx)\0*.efx\0All files\0*.*\0",
-                    "untitled.efx");
-                if (!path.empty()) saveFile(path);
-            } else if (!doc().filePath.empty()) {
-                saveFile(doc().filePath);
-            }
-        }
-        if (ImGui::MenuItem(tr(Str::FileSaveAs)) && fileDialog_) {
-            const std::string suggestion =
-                doc().filePath.empty() ? "untitled.efx" : doc().filePath;
-            const std::string path = fileDialog_(
-                true, "Effect files (*.efx)\0*.efx\0All files\0*.*\0",
-                suggestion.c_str());
-            if (!path.empty()) saveFile(path);
-        }
+        if (ImGui::MenuItem(tr(Str::FileSave), "Ctrl+S")) cmdSave();
+        if (ImGui::MenuItem(tr(Str::FileSaveAs))) cmdSaveAs();
         ImGui::Separator();
         if (ImGui::MenuItem(tr(Str::FileReloadAssets), "F5")) rescanAssets();
         ImGui::Separator();
-        if (ImGui::MenuItem(tr(Str::FileExit), "Alt+F4")) wantsQuit_ = true;
+        if (ImGui::MenuItem(tr(Str::FileExit), "Alt+F4")) requestQuit();
         ImGui::EndMenu();
     }
 
@@ -92,63 +58,12 @@ void App::drawMenuBar() {
             if (ImGui::MenuItem(redoLabel.c_str(), "Ctrl+Y")) applyRedo();
             ImGui::EndDisabled();
         }
-        {
-            // Klonen: das gewaehlte Segment verdoppeln und die Kopie gleich
-            // auswaehlen. Der Name bekommt eine Ziffer, sonst haette man zwei
-            // gleichnamige Segmente — und die Pruefung meldet das zu Recht.
-            const bool canClone =
-                doc().selectedPrimitive >= 0 &&
-                doc().selectedPrimitive < static_cast<int>(doc().effect.primitives.size()) &&
-                doc().effect.primitives.size() < 24;
-            ImGui::BeginDisabled(!canClone);
-            if (ImGui::MenuItem(tr(Str::EditCloneEffect), "Ctrl+D") && canClone) {
-                Primitive copy = doc().effect.primitives[static_cast<size_t>(
-                    doc().selectedPrimitive)];
-                if (!copy.name.empty()) {
-                    // Einen freien Namen suchen statt blind eine 2 anzuhaengen.
-                    for (int n = 2; n < 100; ++n) {
-                        const std::string candidate =
-                            copy.name + " " + std::to_string(n);
-                        bool taken = false;
-                        for (const auto& p : doc().effect.primitives) {
-                            if (p.name == candidate) taken = true;
-                        }
-                        if (!taken) {
-                            // Der Parser begrenzt Namen auf 31 Zeichen.
-                            copy.name = candidate.size() > 31
-                                            ? candidate.substr(0, 31)
-                                            : candidate;
-                            break;
-                        }
-                    }
-                }
-                doc().effect.primitives.insert(
-                    doc().effect.primitives.begin() + doc().selectedPrimitive + 1,
-                    std::move(copy));
-                ++doc().selectedPrimitive;
-                doc().segmentEnabled.assign(doc().effect.primitives.size(), true);
-                recordChange(tr(Str::UndoCloneSegment));
-            }
-            ImGui::EndDisabled();
-        }
-        {
-            const bool canDelete =
-                doc().selectedPrimitive >= 0 &&
-                doc().selectedPrimitive < static_cast<int>(doc().effect.primitives.size());
-            ImGui::BeginDisabled(!canDelete);
-            if (ImGui::MenuItem(tr(Str::EditDelete), "Del") && canDelete) {
-                doc().effect.primitives.erase(doc().effect.primitives.begin() +
-                                         doc().selectedPrimitive);
-                if (doc().selectedPrimitive >=
-                    static_cast<int>(doc().effect.primitives.size())) {
-                    doc().selectedPrimitive =
-                        static_cast<int>(doc().effect.primitives.size()) - 1;
-                }
-                doc().segmentEnabled.assign(doc().effect.primitives.size(), true);
-                recordChange(tr(Str::UndoDeleteSegment));
-            }
-            ImGui::EndDisabled();
-        }
+        ImGui::BeginDisabled(!canCloneSegment());
+        if (ImGui::MenuItem(tr(Str::EditCloneEffect), "Ctrl+D")) cmdCloneSegment();
+        ImGui::EndDisabled();
+        ImGui::BeginDisabled(!hasSelection());
+        if (ImGui::MenuItem(tr(Str::EditDelete), "Del")) cmdDeleteSegment();
+        ImGui::EndDisabled();
         ImGui::Separator();
         if (ImGui::MenuItem(tr(Str::EditWallColor))) showWallColourDialog_ = true;
         if (ImGui::MenuItem(tr(Str::EditBgColor))) showBackgroundColourDialog_ = true;
@@ -329,38 +244,17 @@ void App::drawMenuBar() {
         if (ImGui::MenuItem(tr(Str::EffectsNewSegment), "Ins")) showNewSegmentDialog_ = true;
         {
             // "Segment Enabled" aus dem Original. Das Haekchen steht in der
-            // Segmentliste, aber der Menuepunkt fehlte — und wer im Menue
-            // sucht, findet dort sonst nichts.
-            const bool hasSelection =
-                doc().selectedPrimitive >= 0 &&
-                doc().selectedPrimitive < static_cast<int>(doc().segmentEnabled.size());
+            // Segmentliste, aber auch hier, wie dort.
+            const bool selected = hasSelection();
             const bool enabled =
-                hasSelection && doc().segmentEnabled[static_cast<size_t>(
-                                    doc().selectedPrimitive)];
-            ImGui::BeginDisabled(!hasSelection);
-            if (ImGui::MenuItem(tr(Str::EffectsEnabled), nullptr, enabled) &&
-                hasSelection) {
-                doc().segmentEnabled[static_cast<size_t>(doc().selectedPrimitive)] = !enabled;
-                if (playing()) startPlayback();
+                selected &&
+                (static_cast<size_t>(doc().selectedPrimitive) >= doc().segmentEnabled.size() ||
+                 doc().segmentEnabled[static_cast<size_t>(doc().selectedPrimitive)]);
+            ImGui::BeginDisabled(!selected);
+            if (ImGui::MenuItem(tr(Str::EffectsEnabled), nullptr, enabled)) {
+                cmdToggleSegmentEnabled();
             }
-            ImGui::EndDisabled();
-        }
-        {
-            const bool canDelete =
-                doc().selectedPrimitive >= 0 &&
-                doc().selectedPrimitive < static_cast<int>(doc().effect.primitives.size());
-            ImGui::BeginDisabled(!canDelete);
-            if (ImGui::MenuItem(tr(Str::EditDelete), "Del") && canDelete) {
-                doc().effect.primitives.erase(doc().effect.primitives.begin() +
-                                         doc().selectedPrimitive);
-                if (doc().selectedPrimitive >=
-                    static_cast<int>(doc().effect.primitives.size())) {
-                    doc().selectedPrimitive =
-                        static_cast<int>(doc().effect.primitives.size()) - 1;
-                }
-                doc().segmentEnabled.assign(doc().effect.primitives.size(), true);
-                recordChange(tr(Str::UndoDeleteSegment));
-            }
+            if (ImGui::MenuItem(tr(Str::EditDelete), "Del")) cmdDeleteSegment();
             ImGui::EndDisabled();
         }
         ImGui::Separator();
@@ -411,27 +305,11 @@ void App::drawToolbar(float dpiScale) {
     // Fenster herumziehen muss.
     bool anythingBefore = false;
     if (settings_.showMainToolbar) {
-        if (iconButton("##new", Icon::New, tr(Str::FileNew), false, iconSize)) {
-            newEffect();
-        }
+        if (iconButton("##new", Icon::New, tr(Str::FileNew), false, iconSize)) cmdNew();
         ImGui::SameLine();
-        if (iconButton("##open", Icon::Open, tr(Str::FileOpen), false, iconSize) &&
-            fileDialog_) {
-            const std::string path = fileDialog_(
-                false, "Effect files (*.efx)\0*.efx\0All files\0*.*\0", nullptr);
-            if (!path.empty()) openFile(path);
-        }
+        if (iconButton("##open", Icon::Open, tr(Str::FileOpen), false, iconSize)) cmdOpen();
         ImGui::SameLine();
-        if (iconButton("##save", Icon::Save, tr(Str::FileSave), false, iconSize)) {
-            if (!doc().filePath.empty()) {
-                saveFile(doc().filePath);
-            } else if (fileDialog_) {
-                const std::string path = fileDialog_(
-                    true, "Effect files (*.efx)\0*.efx\0All files\0*.*\0",
-                    "untitled.efx");
-                if (!path.empty()) saveFile(path);
-            }
-        }
+        if (iconButton("##save", Icon::Save, tr(Str::FileSave), false, iconSize)) cmdSave();
         anythingBefore = true;
     }
 
@@ -443,18 +321,10 @@ void App::drawToolbar(float dpiScale) {
             showNewSegmentDialog_ = true;
         }
         ImGui::SameLine();
-        const bool canDelete =
-            doc().selectedPrimitive >= 0 &&
-            doc().selectedPrimitive < static_cast<int>(doc().effect.primitives.size());
-        ImGui::BeginDisabled(!canDelete);
-        if (iconButton("##delSegment", Icon::DeleteSegment,
-                       tr(Str::ToolDeleteSegment), false, iconSize) && canDelete) {
-            doc().effect.primitives.erase(doc().effect.primitives.begin() + doc().selectedPrimitive);
-            if (doc().selectedPrimitive >= static_cast<int>(doc().effect.primitives.size())) {
-                doc().selectedPrimitive = static_cast<int>(doc().effect.primitives.size()) - 1;
-            }
-            doc().segmentEnabled.assign(doc().effect.primitives.size(), true);
-            recordChange(tr(Str::UndoDeleteSegment));
+        ImGui::BeginDisabled(!hasSelection());
+        if (iconButton("##delSegment", Icon::DeleteSegment, tr(Str::ToolDeleteSegment), false,
+                       iconSize)) {
+            cmdDeleteSegment();
         }
         ImGui::EndDisabled();
         anythingBefore = true;
@@ -685,7 +555,15 @@ void App::drawDocumentTabs() {
         // Wer das aendern will, faengt hier an: `open` auf false pruefen und
         // statt closeDocument einen Dialog aufmachen.
         bool open = true;
-        if (ImGui::BeginTabItem(label.c_str(), &open)) {
+        // Der Reiter muss AUSGEWAEHLT werden, nicht nur intern umgeschaltet:
+        // sonst haelt die Leiste "Start" fest, und im naechsten Bild setzt
+        // BeginTabItem(Start) die Startseite wieder nach vorn. So blieb nach
+        // dem Oeffnen einer Datei die Bibliothek sichtbar.
+        const ImGuiTabItemFlags documentFlags =
+            (wantDocumentTab_ && static_cast<int>(i) == activeDocument_)
+                ? ImGuiTabItemFlags_SetSelected
+                : ImGuiTabItemFlags_None;
+        if (ImGui::BeginTabItem(label.c_str(), &open, documentFlags)) {
             startTabActive_ = false;
             if (static_cast<int>(i) != activeDocument_) {
                 activateDocument(static_cast<int>(i));
@@ -700,7 +578,8 @@ void App::drawDocumentTabs() {
 
     // Erst nach der Schleife schliessen — sonst zieht man ImGui den Reiter
     // unter den Fuessen weg, ueber den es gerade laeuft.
-    if (closeAt >= 0) closeDocument(closeAt);
+    wantDocumentTab_ = false;
+    if (closeAt >= 0) requestCloseDocument(closeAt);
 
     if (ImGui::TabItemButton("+", ImGuiTabItemFlags_Trailing |
                                   ImGuiTabItemFlags_NoTooltip)) {

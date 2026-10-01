@@ -7,6 +7,7 @@
 // mehrere Dateien verteilt. app.cpp war mit 3524 Zeilen und einem Dutzend
 // Zustaendigkeiten die Stelle, an der ein Leser aufgibt.
 #include "app.h"
+#include <chrono>
 #include <filesystem>
 #include "efx/diag.h"
 #include "efx/i18n.h"
@@ -182,7 +183,14 @@ void App::startPlayback() {
     // Bei jedem Start ein neuer Ausgangswert, sonst sieht ein Effekt mit
     // Spannen jedes Mal identisch aus — und gerade das Wuerfeln will man
     // beurteilen.
-    doc().playbackSeed = static_cast<unsigned>(ImGui::GetTime() * 1000.0) | 1u;
+    //
+    // Die Zeit kommt von der Uhr des Systems, nicht von ImGui::GetTime():
+    // beim Oeffnen ueber die Kommandozeile (Doppelklick auf eine .efx) laeuft
+    // das hier, bevor es einen ImGui-Kontext gibt — und GetTime las dann
+    // durch einen Nullzeiger. Das Programm stuerzte bei jedem Doppelklick ab.
+    doc().playbackSeed =
+        static_cast<unsigned>(std::chrono::steady_clock::now().time_since_epoch().count() /
+                              1000000) | 1u;
     doc().segmentEnabled.resize(doc().effect.primitives.size(), true);
     doc().particles.play(doc().effect, doc().playbackSeed, doc().segmentEnabled,
                     particles::axisFor(settings_.orientation),

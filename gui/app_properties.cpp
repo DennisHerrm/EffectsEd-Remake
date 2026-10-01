@@ -79,7 +79,7 @@ void App::drawTab(fields::Tab tab, Primitive& p) {
         case fields::Tab::Generation: {
             char nameBuffer[32];
             std::snprintf(nameBuffer, sizeof(nameBuffer), "%s", p.name.c_str());
-            ImGui::SetNextItemWidth(220.0f);
+            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 17.0f);
             if (ImGui::InputText(tr(Str::FieldName), nameBuffer, sizeof(nameBuffer))) {
                 p.name = nameBuffer;
                 changed = true;
@@ -142,7 +142,7 @@ void App::drawTab(fields::Tab tab, Primitive& p) {
                 }
                 ImGui::SameLine();
                 ImGui::BeginDisabled(!p.cullRangeSet);
-                ImGui::SetNextItemWidth(146.0f);
+                ImGui::SetNextItemWidth(ImGui::GetFontSize() * 11.0f);
                 if (ImGui::DragInt(tr(Str::FieldCullRange), &p.cullRange, 10.0f, 0,
                                    100000)) {
                     p.cullRangeSet = true;
@@ -683,7 +683,7 @@ void App::drawTab(fields::Tab tab, Primitive& p) {
             }
             ImGui::SameLine();
             ImGui::BeginDisabled(!p.elasticity.set);
-            ImGui::SetNextItemWidth(200.0f);
+            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 7.0f);
             if (ImGui::SliderFloat("##shakeMin", &p.elasticity.min, 0.0f,
                                    camera::Shake::kMaxIntensity, "%.2f")) {
                 if (!p.elasticity.ranged) p.elasticity.max = p.elasticity.min;
@@ -692,7 +692,7 @@ void App::drawTab(fields::Tab tab, Primitive& p) {
             }
             if (p.elasticity.ranged) {
                 ImGui::SameLine();
-                ImGui::SetNextItemWidth(200.0f);
+                ImGui::SetNextItemWidth(ImGui::GetFontSize() * 7.0f);
                 if (ImGui::SliderFloat("##shakeMax", &p.elasticity.max, 0.0f,
                                        camera::Shake::kMaxIntensity, "%.2f")) {
                     p.elasticity.set = true;
@@ -721,6 +721,14 @@ void App::drawTab(fields::Tab tab, Primitive& p) {
     if (changed) {
         doc().dirty = true;
         refreshDiagnostics();
+        // In den Rueckgaengig-Verlauf, sobald das Feld losgelassen wird
+        // (App::buildFrame) — nicht in jedem Bild eines Ziehens. Vorher kam
+        // eine Feldaenderung NIE in den Verlauf: Strg+Z nahm stattdessen den
+        // Schritt davor zurueck.
+        fieldEditOpen_ = true;
+        // Und die laufende Vorschau zeigt die Aenderung sofort, nicht erst
+        // beim naechsten Abspielen.
+        previewDirty_ = true;
     }
 }
 

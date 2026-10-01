@@ -80,6 +80,10 @@ struct Document {
 };
 
 class App {
+    // Der Selbsttest (gui/selbsttest.cpp) liest und setzt das Innenleben
+    // direkt — er prueft, ob ein Knopf das Datenmodell aendert.
+    friend class Selbsttest;
+
 public:
     App();
     ~App();
@@ -97,6 +101,8 @@ public:
 
     // Der Nutzer hat Beenden gewaehlt oder das Fenster geschlossen.
     bool wantsQuit() const { return wantsQuit_; }
+    // Beenden erbitten: fragt bei ungespeicherten Aenderungen erst nach.
+    void requestQuit();
 
     // Ein Wechsel der Grafikschnittstelle wurde bestaetigt. Das Fenster muss
     // dann neu aufgebaut werden — ImGui erlaubt keinen Tausch im Betrieb.
@@ -276,8 +282,34 @@ private:
     bool splitter(const char* id, bool vertical, float thickness, float* fraction,
                   float totalPx, float minFirstPx, float minSecondPx);
 
-    void newEffect();
     bool saveFile(const std::string& path);
+
+    // --- Befehle (gui/app_commands.cpp) -----------------------------------
+    // Menue, Werkzeugleiste und Tastenkuerzel rufen nur diese.
+    bool hasSelection() const;
+    bool documentInUse(const Document& document) const;
+    void showEditor();
+    void cmdNew();
+    void cmdOpen();
+    void cmdOpenPk3();
+    bool cmdSave();
+    bool cmdSaveAs();
+    void cmdAddSegment(PrimitiveType type);
+    bool canCloneSegment() const;
+    void cmdCloneSegment();
+    void cmdDeleteSegment();
+    void cmdToggleSegmentEnabled();
+    // Vor dem Verwerfen ungespeicherter Arbeit fragen.
+    void requestCloseDocument(int index);
+    void drawSaveChangesDialog();
+    bool showSaveChangesDialog_ = false;
+    int pendingClose_ = -1;
+    bool pendingQuit_ = false;
+    // Eine Feldaenderung auf der Eigenschaftsseite ist noch nicht im
+    // Rueckgaengig-Verlauf (das geschieht, wenn das Feld losgelassen wird).
+    bool fieldEditOpen_ = false;
+    // Die Vorschau muss neu aufgebaut werden (einmal je Bild, nicht je Feld).
+    bool previewDirty_ = false;
     void refreshDiagnostics();
     std::string windowTitle() const;
 
@@ -358,6 +390,8 @@ private:
     // Zustand koppelt, hält den Reiter für immer fest — man kann ihn anklicken
     // und landet sofort wieder dort.
     bool wantStartTab_ = true;
+    // Einmalig: den Reiter des aktiven Dokuments auswaehlen (showEditor).
+    bool wantDocumentTab_ = false;
     std::vector<std::string> archiveSources_;   // per „Archiv öffnen" geladen
 
     void drawBrowser(render::Renderer* renderer, float dpiScale);
