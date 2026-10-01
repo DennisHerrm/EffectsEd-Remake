@@ -257,6 +257,16 @@ struct Settings {
     float timeScale = 1.0f;
     float repeatRate = 0.300f;
     bool repeat = false;
+    // Der Rest des Dialogs "Playback Settings" — das Original merkt sich
+    // alles davon (Registry EffectPlay PlayDuration, PerframeRespawn,
+    // AnimateSpawnPoint, SpawnVelocityX/Y/Z, SpawnResetDuration).
+    // playbackMode: 0 einmal, 1 bis zum Anhalten, 2 fuer N Sekunden.
+    int playbackMode = 0;
+    float playDuration = 2.0f;
+    bool perFrameRespawn = false;
+    bool animateSpawnPoint = false;
+    float spawnVelocity[3] = {0.0f, 0.0f, 0.0f};
+    float spawnResetSeconds = 1.0f;
 
 
     std::string toIni() const;

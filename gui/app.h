@@ -369,6 +369,8 @@ private:
     const Document& doc() const;
 
     void newDocument();
+    // Die Uhr-Endart, die zur eingestellten Wiederholart gehoert.
+    timeline::EndMode playbackEndMode() const;
     void closeDocument(int index);
     void activateDocument(int index);
     void drawDocumentTabs();

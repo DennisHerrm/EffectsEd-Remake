@@ -92,6 +92,14 @@ std::string Settings::toIni() const {
     out << "timeScale=" << timeScale << "\n";
     out << "repeatRate=" << repeatRate << "\n";
     out << "repeat=" << (repeat ? 1 : 0) << "\n";
+    out << "playbackMode=" << playbackMode << "\n";
+    out << "playDuration=" << playDuration << "\n";
+    out << "perFrameRespawn=" << (perFrameRespawn ? 1 : 0) << "\n";
+    out << "animateSpawnPoint=" << (animateSpawnPoint ? 1 : 0) << "\n";
+    out << "spawnVelocityX=" << spawnVelocity[0] << "\n";
+    out << "spawnVelocityY=" << spawnVelocity[1] << "\n";
+    out << "spawnVelocityZ=" << spawnVelocity[2] << "\n";
+    out << "spawnResetSeconds=" << spawnResetSeconds << "\n";
     out << "orientation=" << orientation << "\n";
     out << "showStatusBar=" << (showStatusBar ? 1 : 0) << "\n";
     out << "showMainToolbar=" << (showMainToolbar ? 1 : 0) << "\n";
@@ -169,6 +177,14 @@ Settings Settings::fromIni(const std::string& text) {
         else if (key == "timeScale") s.timeScale = toFloat();
         else if (key == "repeatRate") s.repeatRate = toFloat();
         else if (key == "repeat") s.repeat = toBool();
+        else if (key == "playbackMode") s.playbackMode = toInt();
+        else if (key == "playDuration") s.playDuration = toFloat();
+        else if (key == "perFrameRespawn") s.perFrameRespawn = toBool();
+        else if (key == "animateSpawnPoint") s.animateSpawnPoint = toBool();
+        else if (key == "spawnVelocityX") s.spawnVelocity[0] = toFloat();
+        else if (key == "spawnVelocityY") s.spawnVelocity[1] = toFloat();
+        else if (key == "spawnVelocityZ") s.spawnVelocity[2] = toFloat();
+        else if (key == "spawnResetSeconds") s.spawnResetSeconds = toFloat();
         else if (key == "orientation") s.orientation = toInt();
         else if (key == "showStatusBar") s.showStatusBar = toBool();
         else if (key == "showMainToolbar") s.showMainToolbar = toBool();
@@ -251,6 +267,14 @@ Settings Settings::fromIni(const std::string& text) {
         if (!(value > -100000.0f && value < 100000.0f)) value = -32.0f;
     }
     if (s.roomStyle < 0 || s.roomStyle > 2) s.roomStyle = 0;
+    // Aeltere Einstellungsdateien kennen nur "repeat".
+    if (s.playbackMode < 0 || s.playbackMode > 2) s.playbackMode = s.repeat ? 1 : 0;
+    if (s.playbackMode == 0 && s.repeat) s.playbackMode = 1;
+    if (!(s.playDuration >= 0.0f && s.playDuration <= 600.0f)) s.playDuration = 2.0f;
+    if (!(s.spawnResetSeconds >= 0.0f && s.spawnResetSeconds <= 600.0f)) s.spawnResetSeconds = 1.0f;
+    for (float& v : s.spawnVelocity) {
+        if (!(v >= -4000.0f && v <= 4000.0f)) v = 0.0f;
+    }
     if (s.sunAmbient < 0.0f || s.sunAmbient > 1.0f) s.sunAmbient = 0.35f;
     // Eine Sonne ohne Richtung waere keine — dann lieber die Voreinstellung.
     if (s.sunDirection[0] == 0.0f && s.sunDirection[1] == 0.0f &&
