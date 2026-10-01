@@ -534,7 +534,12 @@ void App::drawDocumentTabs() {
         wantStartTab_ ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
     wantStartTab_ = false;
 
-    if (ImGui::BeginTabItem(tr(Str::TabStart), nullptr, startFlags)) {
+    // Feste Kennung "###start": sonst ist der Reiter nach einem Sprachwechsel
+    // ein NEUER Reiter (andere Beschriftung = andere Kennung), und
+    // AutoSelectNewTabs waehlte ihn aus - die Ansicht sprang auf die
+    // Startseite (Selbsttest, Sprachwechsel).
+    const std::string startLabel = std::string(tr(Str::TabStart)) + "###start";
+    if (ImGui::BeginTabItem(startLabel.c_str(), nullptr, startFlags)) {
         startTabActive_ = true;
         ImGui::EndTabItem();
     }

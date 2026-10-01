@@ -51,6 +51,7 @@
 #include "efx/image.h"
 #include "efx/io.h"
 #include "efx/paths.h"
+#include "efx/theme.h"
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "testmarke.h"
@@ -436,6 +437,12 @@ public:
         return klickAuf("Klick \"" + sichtbarerText(label) + "\"" +
                             (fenster.empty() ? "" : " in " + fenster),
                         [=] { return finde(label, fenster, nte); }, taste);
+    }
+    // Beschriftung erst beim Klicken uebersetzen - nach einem Sprachwechsel
+    // heisst "View" ploetzlich "Ansicht".
+    static Schritt klickTr(Str text, const std::string& fenster) {
+        return klickAuf(std::string("Klick tr(") + std::to_string(static_cast<int>(text)) + ") in " + fenster,
+                        [=] { return finde(tr(text), fenster); });
     }
     static Schritt klickMarke(const std::string& marke, int nte = 0, bool doppelt = false) {
         return klickAuf(std::string(doppelt ? "Doppelklick" : "Klick") + " Marke " + marke,
@@ -1125,6 +1132,197 @@ public:
         return s;
     }
 
+    // --- Bedienung: Zeitleiste, 3D-Ansicht, Reiter, Sprachen, Beenden ------
+    static std::vector<Schritt> teilBedienung() {
+        std::vector<Schritt> s;
+        s.push_back(teil("bedienung"));
+        frischesDokument(s);
+        neuesSegment(s, PrimitiveType::Particle);
+        s.push_back(tu("Lebensdauer 2000 ms", [] {
+            if (gewaehlt()) gewaehlt()->life = Range::single(2000.0f);
+            app->recordChange("life");
+            app->buildPreviewStopped();
+        }));
+        s.push_back(warte(2));
+
+        // Zeitleiste: ein Bild vor, eins zurueck, an den Anfang.
+        s.push_back(klick(">", "##main"));
+        s.push_back(pruefSchritt("Zeitleiste '>' geht ein Bild vor",
+                                 [] { return doc().clock.currentFrame() == 1; }));
+        s.push_back(klick(">", "##main"));
+        s.push_back(klick("<", "##main"));
+        s.push_back(pruefSchritt("Zeitleiste '<' geht ein Bild zurueck",
+                                 [] { return doc().clock.currentFrame() == 1; }));
+        s.push_back(klick("|<", "##main"));
+        s.push_back(pruefSchritt("Zeitleiste '|<' an den Anfang", [] { return doc().clock.timeMs() == 0.0f; }));
+        // Pause-Knopf der Zeitleiste.
+        s.push_back(klick("##tlPlay", "##main"));
+        s.push_back(warte(5));
+        s.push_back(klick("##tlPause", "##main"));
+        s.push_back(pruefSchritt("Zeitleiste Pause haelt an",
+                                 [] { return doc().clock.state() == timeline::State::Paused; }));
+        s.push_back(klick("##tlStop", "##main"));
+
+        // 3D-Ansicht: links ziehen dreht, rechts ziehen faehrt, Alt+links verschiebt, Rad zoomt.
+        auto vorher = std::make_shared<camera::Matrix>();
+        auto abstand = std::make_shared<float>(0.0f);
+        const auto ansichtMitte = [] { return findeMarke("ansicht"); };
+        s.push_back(tu("Kamera merken", [=] { *vorher = app->camera_.viewMatrix(); }));
+        s.push_back(ziehe("Links ziehen in der Ansicht", ansichtMitte, ansichtMitte, ImVec2(80, 30)));
+        s.push_back(pruefSchritt("Links ziehen dreht die Kamera", [=] {
+            return app->camera_.viewMatrix() != *vorher;
+        }));
+        s.push_back(tu("Abstand merken", [=] { *abstand = app->camera_.distance(); }));
+        s.push_back({"Rechts ziehen in der Ansicht", [=](int b) {
+                         ImGuiIO& io = ImGui::GetIO();
+                         const Element* e = findeMarke("ansicht");
+                         if (!e) {
+                             meldeFehler("Ansicht nicht gefunden");
+                             return true;
+                         }
+                         const ImVec2 m = e->rect.GetCenter();
+                         if (b == 0) setzeMaus(m);
+                         if (b == 1) io.AddMouseButtonEvent(1, true);
+                         if (b >= 2 && b <= 8) setzeMaus(ImVec2(m.x, m.y + 10.0f * float(b - 1)));
+                         if (b == 9) io.AddMouseButtonEvent(1, false);
+                         return b >= 11;
+                     }});
+        s.push_back(pruefSchritt("Rechts ziehen faehrt vor oder zurueck",
+                                 [=] { return app->camera_.distance() != *abstand; }));
+        s.push_back(tu("Abstand merken", [=] { *abstand = app->camera_.distance(); }));
+        s.push_back({"Mausrad in der Ansicht", [=](int b) {
+                         const Element* e = findeMarke("ansicht");
+                         if (!e) return true;
+                         if (b == 0) setzeMaus(e->rect.GetCenter());
+                         if (b == 2) ImGui::GetIO().AddMouseWheelEvent(0.0f, 2.0f);
+                         return b >= 4;
+                     }});
+        s.push_back(pruefSchritt("Mausrad zoomt", [=] { return app->camera_.distance() < *abstand; }));
+        s.push_back(tu("Kamera merken", [=] { *vorher = app->camera_.viewMatrix(); }));
+        s.push_back(klick("##viewTop", "##main"));
+        s.push_back(pruefSchritt("Knopf 'Ansicht von oben' setzt die Kamera",
+                                 [=] { return app->camera_.viewMatrix() != *vorher; }));
+        s.push_back(klick("##viewReset", "##main"));
+
+        // Reiter: neuer Reiter ueber '+', Wechsel, Schliessen mit Rueckfrage.
+        s.push_back(tu("Dokument als geaendert markieren", [] { doc().dirty = true; }));
+        s.push_back(klick("+", "##main"));
+        s.push_back(pruefSchritt("'+' legt einen zweiten Reiter an", [] {
+            return app->documents_.size() == 2 && app->activeDocument_ == 1;
+        }));
+        s.push_back(taste(ImGuiKey_Tab, true));
+        s.push_back(pruefSchritt("Strg+Tab wechselt zum naechsten Reiter",
+                                 [] { return app->activeDocument_ == 0; }));
+        s.push_back(taste(ImGuiKey_W, true));
+        s.push_back(warteBis("Rueckfrage beim Schliessen eines geaenderten Reiters",
+                             [] { return dialogOffen("###savechanges"); }, 30));
+        s.push_back(fensterFoto("dialog_speichern_frage"));
+        s.push_back(klick(tr(Str::MsgCancel), "###savechanges"));
+        s.push_back(pruefSchritt("Abbrechen: Reiter bleibt offen", [] { return app->documents_.size() == 2; }));
+        s.push_back(taste(ImGuiKey_W, true));
+        s.push_back(warteBis("Rueckfrage erneut", [] { return dialogOffen("###savechanges"); }, 30));
+        s.push_back(klick(tr(Str::SaveChangesNo), "###savechanges"));
+        s.push_back(pruefSchritt("Nicht speichern: Reiter ist zu", [] { return app->documents_.size() == 1; }));
+        // Speichern aus der Rueckfrage.
+        const std::string pfad = arbeitsOrdner + "/aus_rueckfrage.efx";
+        s.push_back(tu("Effekt anlegen und geaendert lassen", [] {
+            doc().effect.primitives.push_back(freshPrimitive(PrimitiveType::Light));
+            doc().dirty = true;
+        }));
+        s.push_back(taste(ImGuiKey_W, true));
+        s.push_back(warteBis("Rueckfrage", [] { return dialogOffen("###savechanges"); }, 30));
+        s.push_back(dateiAntwort(pfad));
+        s.push_back(klick(tr(Str::SaveChangesYes), "###savechanges"));
+        s.push_back(pruefSchritt("Speichern aus der Rueckfrage schreibt die Datei",
+                                 [pfad] { return fs::exists(pfad) && leseDatei(pfad).find("Light") != std::string::npos; }));
+
+        // Sprachen und Themen: jede einmal, kein Absturz, Menue bleibt bedienbar.
+        for (const auto& l : i18n::languages()) {
+            const std::string name = l.nativeName;
+            const i18n::Language sprache = l.language;
+            (void)sprache;
+            // Ueber das Menue, wie ein Mensch: nur dann wird auch die Schrift
+            // neu gebaut (Chinesisch und Japanisch brauchen eigene Zeichen).
+            s.push_back(klickTr(Str::MenuView, "##main"));
+            s.push_back(klickTr(Str::ViewLanguage, "##Menu"));
+            s.push_back(klick(name, "##Menu"));
+            s.push_back(menuesZu());
+            s.push_back(warte(4));
+            s.push_back(pruefSchritt(std::string("Sprache ") + l.code + ": Bearbeitungsansicht bleibt vorn",
+                                     [] { return !app->startTabActive_; }));
+            s.push_back(pruefSchritt(std::string("Sprache ") + l.code +
+                                         ": jedes Zeichen jeder Beschriftung ist in der Schrift",
+                                     [] {
+                ImFont* font = ImGui::GetFont();
+                std::string fehlend;
+                for (const Element& e : g_elemente) {
+                    const std::string t = sichtbarerText(e.label);
+                    for (size_t k = 0; k < t.size();) {
+                        unsigned int c = static_cast<unsigned char>(t[k]);
+                        int n = 1;
+                        if (c >= 0xF0) { c &= 0x07; n = 4; }
+                        else if (c >= 0xE0) { c &= 0x0F; n = 3; }
+                        else if (c >= 0xC0) { c &= 0x1F; n = 2; }
+                        for (int j = 1; j < n && k + j < t.size(); ++j) {
+                            c = (c << 6) | (static_cast<unsigned char>(t[k + j]) & 0x3F);
+                        }
+                        k += static_cast<size_t>(n);
+                        if (c >= 0x80 && c <= 0xFFFF && !font->FindGlyphNoFallback(static_cast<ImWchar>(c))) {
+                            char z[48];
+                            std::snprintf(z, sizeof(z), "U+%04X in \"%s\" ", c, t.substr(0, 20).c_str());
+                            if (fehlend.size() < 300) fehlend += z;
+                        }
+                    }
+                }
+                if (!fehlend.empty()) diag::info("  fehlende Zeichen: " + fehlend);
+                return fehlend.empty();
+            }));
+            s.push_back(fensterFoto(std::string("sprache_") + l.code));
+            s.push_back(pruefSchritt(std::string("Sprache ") + l.code + ": Menue Datei sichtbar",
+                                     [] { return finde(tr(Str::MenuFile), "##main") != nullptr; }));
+        }
+        s.push_back(tu("zurueck auf Englisch", [] {
+            i18n::setLanguage(i18n::Language::English);
+            app->settings_.languageCode = "en";
+        }));
+        s.push_back(warte(4));
+        for (const auto& th : theme::builtinThemes()) {
+            const std::string id = th.id;
+            s.push_back(klick(tr(Str::MenuView), "##main"));
+            s.push_back(klick(tr(Str::ViewTheme), "##Menu"));
+            s.push_back(klick(th.name(), "##Menu"));
+            s.push_back(menuesZu());
+            s.push_back(pruefSchritt("Thema " + id + " gesetzt", [id] { return app->settings_.themeId == id; }));
+            s.push_back(fensterFoto("thema_" + id));
+        }
+        return s;
+    }
+
+    // Beenden mit ungespeicherter Arbeit: fragt; Abbrechen beendet NICHT.
+    static std::vector<Schritt> teilBeenden() {
+        std::vector<Schritt> s;
+        s.push_back(teil("beenden"));
+        frischesDokument(s);
+        s.push_back(tu("geaendert", [] {
+            doc().effect.primitives.push_back(freshPrimitive(PrimitiveType::Particle));
+            doc().dirty = true;
+        }));
+        menue(s, Str::MenuFile, Str::FileExit);
+        s.push_back(warteBis("Rueckfrage beim Beenden", [] { return dialogOffen("###savechanges"); }, 30));
+        s.push_back(klick(tr(Str::MsgCancel), "###savechanges"));
+        s.push_back(pruefSchritt("Abbrechen beim Beenden: Programm laeuft weiter",
+                                 [] { return !app->wantsQuit_; }));
+        s.push_back(tu("Windows schliesst das Fenster (Alt+F4 / X)", [] {
+            PostMessageW(GetActiveWindow() ? GetActiveWindow() : GetForegroundWindow(), WM_NULL, 0, 0);
+            app->requestQuit();
+        }));
+        s.push_back(warteBis("Rueckfrage beim Schliessen", [] { return dialogOffen("###savechanges"); }, 30));
+        s.push_back(klick(tr(Str::MsgCancel), "###savechanges"));
+        s.push_back(pruefSchritt("Schliessen abgebrochen: Programm laeuft weiter",
+                                 [] { return !app->wantsQuit_; }));
+        return s;
+    }
+
     // --- Dialoge -----------------------------------------------------------
     //
     // Jeder Dialog geht auf, zeigt sich ganz, und schliesst mit Ok wie mit
@@ -1609,6 +1807,8 @@ public:
             {"eigenschaften", &teilEigenschaften},
             {"dialoge", &teilDialoge},
             {"liste", &teilListe},
+            {"bedienung", &teilBedienung},
+            {"beenden", &teilBeenden},
             {"felder", &teilFelder},
         };
         // Nicht in "alles": dauert mit allen Effekten mehrere Minuten.
