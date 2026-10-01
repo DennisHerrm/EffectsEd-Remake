@@ -818,7 +818,12 @@ static bool runSession(efx::gui::App& app, efx::render::Backend preferred,
     efx::diag::info("Startup complete, showing window.");
 
     bool restart = false;
+    std::string shownTitle;
     while (!g_quit && !app.wantsQuit()) {
+        if (const std::string title = app.windowTitle(); title != shownTitle) {
+            shownTitle = title;
+            SetWindowTextW(hwnd, toWide(title).c_str());
+        }
         // Sprachwechsel: der Zeichensatz muss neu gebaut werden, sonst fehlen
         // die Glyphen der neuen Sprache. Das geht nur zwischen zwei Bildern,
         // nie mitten in einem.

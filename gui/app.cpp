@@ -414,7 +414,8 @@ std::string App::windowTitle() const {
     std::string name = doc().filePath.empty() ? "Untitled" : doc().filePath;
     const size_t slash = name.find_last_of("/\\");
     if (slash != std::string::npos) name = name.substr(slash + 1);
-    return (doc().dirty ? "*" : "") + name + " - EffectsEd";
+    // Wie im Original (MFC): das " *" haengt am Dokumentnamen.
+    return name + (doc().dirty ? " *" : "") + " - EffectsEd";
 }
 
 // ---------------------------------------------------------------------------

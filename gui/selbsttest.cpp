@@ -746,10 +746,10 @@ public:
         // Klonen: Menue Edit > Clone.
         s.push_back(tu("Segment 3 waehlen", [] { doc().selectedPrimitive = 2; }));
         menue(s, Str::MenuEdit, Str::EditCloneEffect);
-        s.push_back(pruefSchritt("Klonen fuegt eine Kopie hinter dem Original ein", [] {
-            return anzahlSegmente() == 15 && doc().selectedPrimitive == 3 &&
-                   effekt().primitives.size() > 3 &&
-                   effekt().primitives[3].type == effekt().primitives[2].type;
+        s.push_back(pruefSchritt("Klonen haengt eine Kopie ans Ende und waehlt sie (wie im Original)", [] {
+            return anzahlSegmente() == 15 && doc().selectedPrimitive == 14 &&
+                   effekt().primitives[14].type == effekt().primitives[2].type &&
+                   effekt().primitives[14].name.rfind(tr(Str::ListCopyOf), 0) == 0;
         }));
         // Loeschen ueber den Werkzeugknopf.
         s.push_back(klick("##delSegment", "##main"));
