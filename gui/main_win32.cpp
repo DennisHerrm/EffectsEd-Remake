@@ -419,14 +419,26 @@ static bool runSession(efx::gui::App& app, efx::render::Backend preferred,
     HWND hwnd = nullptr;
     {
         efx::diag::Step step("Create window");
-        const auto& placement = app.settings().window;
-        hwnd = CreateWindowW(
-            wc.lpszClassName, L"EffectsEd", WS_OVERLAPPEDWINDOW,
-            placement.valid ? placement.x : CW_USEDEFAULT,
-            placement.valid ? placement.y : CW_USEDEFAULT,
-            placement.valid ? placement.width : 1280,
-            placement.valid ? placement.height : 860,
-            nullptr, nullptr, wc.hInstance, nullptr);
+        auto& placement = app.settings().window;
+        // Beim allerersten Start maximiert, wie das Original (MainFrame Show
+        // = 3 in dessen Registry). Vorher kam ein Fenster von 1280 x 860
+        // Bildpunkten — bei 150 Prozent Skalierung so klein, dass die
+        // Eigenschaftsseite nicht passte.
+        if (!placement.valid) placement.maximized = true;
+        int x = placement.valid ? placement.x : CW_USEDEFAULT;
+        int y = placement.valid ? placement.y : CW_USEDEFAULT;
+        int width = placement.valid ? placement.width : 1280;
+        int height = placement.valid ? placement.height : 860;
+        // Der Selbsttest laeuft in fester Groesse (EFXED_FENSTER=BxH), damit
+        // seine Ergebnisse nicht vom letzten Fenster abhaengen.
+        if (const char* size = std::getenv("EFXED_FENSTER");
+            efx::gui::selbsttestAktiv() && size && std::sscanf(size, "%dx%d", &width, &height) == 2) {
+            x = 0;
+            y = 0;
+            placement.maximized = false;
+        }
+        hwnd = CreateWindowW(wc.lpszClassName, L"EffectsEd", WS_OVERLAPPEDWINDOW, x, y, width,
+                             height, nullptr, nullptr, wc.hInstance, nullptr);
         if (!hwnd) {
             step.fail("CreateWindowW failed");
             UnregisterClassW(wc.lpszClassName, wc.hInstance);
@@ -743,7 +755,13 @@ static bool runSession(efx::gui::App& app, efx::render::Backend preferred,
         renderer->resizeSwapChain(g_width, g_height);
     }
 
-    ShowWindow(hwnd, app.settings().window.maximized ? SW_SHOWMAXIMIZED : SW_SHOWDEFAULT);
+    // Im Selbsttest ohne Aktivieren: der Anwender arbeitet nebenher weiter,
+    // und ein Fenster, das sich nach vorn draengt, nimmt ihm den Fokus.
+    if (efx::gui::selbsttestAktiv()) {
+        ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+    } else {
+        ShowWindow(hwnd, app.settings().window.maximized ? SW_SHOWMAXIMIZED : SW_SHOWDEFAULT);
+    }
     UpdateWindow(hwnd);
     efx::diag::info("Startup complete, showing window.");
 

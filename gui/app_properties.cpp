@@ -60,6 +60,7 @@ void App::drawProperties(float width, float height) {
     if (ImGui::BeginTabBar("propertyTabs")) {
         for (auto tab : fields::tabsFor(p.type)) {
             if (ImGui::BeginTabItem(tr(fields::tabLabel(tab)))) {
+                propertyTab_ = tab;
                 ImGui::BeginChild("tabbody", ImVec2(0, 0), ImGuiChildFlags_None);
                 drawTab(tab, p);
                 ImGui::EndChild();
