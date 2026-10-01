@@ -43,6 +43,11 @@ struct Split {
     // Untergrenzen in Bildpunkten bei 100 Prozent Skalierung. Ein Bereich
     // darf nicht so klein gezogen werden, dass man ihn nicht mehr fassen kann.
     static constexpr float kMinPanelPx = 180.0f;
+    // Die Eigenschaftsseite braucht mehr: Beschriftung, zwei Zahlenfelder
+    // und das Spannen-Haekchen nebeneinander. Das Original hat 334 Punkte
+    // bei 100 Prozent. Mit 180 lief bei 150 Prozent das Haekchen rechts aus
+    // dem Bild (Selbsttest, 1.10.2026).
+    static constexpr float kMinPropertiesPx = 330.0f;
     static constexpr float kMinViewPx = 200.0f;
     static constexpr float kSplitterPx = 5.0f;
 
