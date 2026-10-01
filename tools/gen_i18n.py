@@ -552,6 +552,7 @@ S = [
  ("SaveChangesText","Save changes to %s?","Änderungen an %s speichern?","是否保存对 %s 的更改？","%s への変更を保存しますか？"),
  ("SaveChangesYes","Save","Speichern","保存","保存"),
  ("SaveChangesNo","Don't Save","Nicht speichern","不保存","保存しない"),
+ ("MsgScreenshotClipboard","Screenshot copied to clipboard","Bildschirmfoto in der Zwischenablage","截图已复制到剪贴板","スクリーンショットをクリップボードにコピーしました"),
 ]
 
 # --- Formatplatzhalter pruefen -------------------------------------------

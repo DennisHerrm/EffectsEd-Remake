@@ -284,6 +284,9 @@ void App::drawGamePathDialog() {
 
 void App::drawPlaybackDialog() {
     if (showPlaybackDialog_) {
+        // Im Dialog wird ein ENTWURF bearbeitet; erst Ok uebernimmt ihn.
+        // Vorher wirkte jede Aenderung sofort, und Abbrechen tat nichts.
+        playbackDraft_ = playback_;
         ImGui::OpenPopup("###playback");
         showPlaybackDialog_ = false;
     }
@@ -306,67 +309,67 @@ void App::drawPlaybackDialog() {
     }
 
     ImGui::SeparatorText(tr(Str::PlaybackRepeatMode));
-    int mode = static_cast<int>(playback_.mode);
+    int mode = static_cast<int>(playbackDraft_.mode);
     ImGui::RadioButton(tr(Str::PlaybackOnce), &mode, 0);
     ImGui::RadioButton(tr(Str::PlaybackUntilStopped), &mode, 1);
     ImGui::RadioButton(tr(Str::PlaybackForSeconds), &mode, 2);
     ImGui::SameLine();
     ImGui::SetNextItemWidth(80.0f);
     ImGui::BeginDisabled(mode != 2);
-    ImGui::DragFloat("##repeatFor", &playback_.repeatForSeconds, 0.1f, 0.0f, 600.0f,
+    ImGui::DragFloat("##repeatFor", &playbackDraft_.repeatForSeconds, 0.1f, 0.0f, 600.0f,
                      "%.1f");
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::TextUnformatted(tr(Str::PlaybackSeconds));
-    playback_.mode = static_cast<playback::RepeatMode>(mode);
+    playbackDraft_.mode = static_cast<playback::RepeatMode>(mode);
     // In die Uhr durchreichen: sie ist die einzige Wahrheit ueber das, was am
     // Ende geschieht.
-    doc().clock.setEndMode(playback_.mode == playback::RepeatMode::Once
+    doc().clock.setEndMode(playbackDraft_.mode == playback::RepeatMode::Once
                           ? timeline::EndMode::Stop
                           : timeline::EndMode::Repeat);
 
     // Der ganze Block gilt nur beim Wiederholen — im Original ist er dann
     // ausgegraut, und das ist die richtige Anzeige: die Felder existieren
     // weiter, sie wirken nur nicht.
-    const bool repeating = playback_.mode != playback::RepeatMode::Once;
+    const bool repeating = playbackDraft_.mode != playback::RepeatMode::Once;
     ImGui::BeginDisabled(!repeating);
 
     ImGui::SeparatorText(tr(Str::PlaybackRateGroup));
-    ImGui::Checkbox(tr(Str::PlaybackEveryFrame), &playback_.respawnEveryFrame);
+    ImGui::Checkbox(tr(Str::PlaybackEveryFrame), &playbackDraft_.respawnEveryFrame);
 
-    ImGui::BeginDisabled(playback_.respawnEveryFrame);
+    ImGui::BeginDisabled(playbackDraft_.respawnEveryFrame);
     // Zwei Felder, ein Wert. Wer eines aendert, fuehrt das andere nach —
     // gespeichert wird nur die Rate, die Frequenz ist ihr Kehrwert.
     ImGui::TextUnformatted(tr(Str::PlaybackRate));
-    float rate = playback_.repeatRateSeconds;
+    float rate = playbackDraft_.repeatRateSeconds;
     ImGui::SetNextItemWidth(-1.0f);
     if (ImGui::SliderFloat("##rate", &rate, playback::Settings::kMinRate, 2.0f,
                            "%.3f", ImGuiSliderFlags_Logarithmic)) {
-        playback_.setRate(rate);
+        playbackDraft_.setRate(rate);
     }
 
     ImGui::TextUnformatted(tr(Str::PlaybackFrequency));
-    float frequency = playback_.frequency();
+    float frequency = playbackDraft_.frequency();
     ImGui::SetNextItemWidth(-1.0f);
     if (ImGui::SliderFloat("##frequency", &frequency, 0.5f, 200.0f, "%.3f",
                            ImGuiSliderFlags_Logarithmic)) {
-        playback_.setFrequency(frequency);
+        playbackDraft_.setFrequency(frequency);
     }
 
-    const int total = playback_.totalRepetitions();
+    const int total = playbackDraft_.totalRepetitions();
     ImGui::Text("%s: %s", tr(Str::PlaybackTotal),
                 total < 0 ? tr(Str::PlaybackNotApplicable)
                           : std::to_string(total).c_str());
     ImGui::EndDisabled();
 
     ImGui::SeparatorText(tr(Str::PlaybackMoveGroup));
-    ImGui::Checkbox(tr(Str::PlaybackAnimate), &playback_.animateSpawnLocation);
-    ImGui::BeginDisabled(!playback_.animateSpawnLocation);
+    ImGui::Checkbox(tr(Str::PlaybackAnimate), &playbackDraft_.animateSpawnLocation);
+    ImGui::BeginDisabled(!playbackDraft_.animateSpawnLocation);
     ImGui::SetNextItemWidth(-1.0f);
-    ImGui::DragFloat3(tr(Str::PlaybackVelocity), &playback_.spawnVelocity.x, 1.0f,
+    ImGui::DragFloat3(tr(Str::PlaybackVelocity), &playbackDraft_.spawnVelocity.x, 1.0f,
                       -4000.0f, 4000.0f, "%.1f");
     ImGui::SetNextItemWidth(120.0f);
-    ImGui::DragFloat(tr(Str::PlaybackResetAfter), &playback_.resetLocationAfter,
+    ImGui::DragFloat(tr(Str::PlaybackResetAfter), &playbackDraft_.resetLocationAfter,
                      0.1f, 0.0f, 600.0f, "%.2f");
     ImGui::EndDisabled();
 
@@ -374,6 +377,10 @@ void App::drawPlaybackDialog() {
 
     ImGui::Separator();
     if (ImGui::Button(tr(Str::MsgOk), ImVec2(120, 0))) {
+        playback_ = playbackDraft_;
+        doc().clock.setEndMode(playback_.mode == playback::RepeatMode::Once
+                                   ? timeline::EndMode::Stop
+                                   : timeline::EndMode::Repeat);
         settings_.repeatRate = playback_.repeatRateSeconds;
         settings_.repeat = repeating;
         ImGui::CloseCurrentPopup();
@@ -453,6 +460,7 @@ void App::drawNewSegmentDialog() {
 
 void App::drawSpawnOriginDialog() {
     if (showSpawnOriginDialog_) {
+        spawnOriginDraft_ = spawnOrigin_;  // erst Ok uebernimmt
         ImGui::OpenPopup("###spawnorigin");
         showSpawnOriginDialog_ = false;
     }
@@ -463,28 +471,31 @@ void App::drawSpawnOriginDialog() {
     }
 
     ImGui::SeparatorText(tr(Str::OriginPosition));
-    int mode = static_cast<int>(spawnOrigin_.mode);
+    int mode = static_cast<int>(spawnOriginDraft_.mode);
     const Str labels[] = {Str::OriginDefault, Str::OriginRoomCentre,
                           Str::OriginOnFloor, Str::OriginOnCeiling,
                           Str::OriginOnWall, Str::OriginCustom};
     for (int i = 0; i < 6; ++i) ImGui::RadioButton(tr(labels[i]), &mode, i);
-    spawnOrigin_.mode = static_cast<playback::OriginMode>(mode);
+    spawnOriginDraft_.mode = static_cast<playback::OriginMode>(mode);
 
-    ImGui::BeginDisabled(spawnOrigin_.mode != playback::OriginMode::Custom);
+    ImGui::BeginDisabled(spawnOriginDraft_.mode != playback::OriginMode::Custom);
     ImGui::SetNextItemWidth(220.0f);
-    ImGui::DragFloat3("##customOrigin", &spawnOrigin_.custom.x, 1.0f, -100000.0f,
+    ImGui::DragFloat3("##customOrigin", &spawnOriginDraft_.custom.x, 1.0f, -100000.0f,
                       100000.0f, "%.1f");
     ImGui::EndDisabled();
 
     // Was dabei herauskommt, sofort anzeigen. Der alte Dialog liess einen
     // raten, wo "an der Wand" liegt.
-    const auto resolved = spawnOrigin_.resolve(roomSize_, settings_.worldScale);
+    const auto resolved = spawnOriginDraft_.resolve(roomSize_, settings_.worldScale);
     ImGui::TextDisabled("-> %.1f  %.1f  %.1f", static_cast<double>(resolved.x),
                         static_cast<double>(resolved.y),
                         static_cast<double>(resolved.z));
 
     ImGui::Separator();
-    if (ImGui::Button(tr(Str::MsgOk), ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+    if (ImGui::Button(tr(Str::MsgOk), ImVec2(120, 0))) {
+        spawnOrigin_ = spawnOriginDraft_;
+        ImGui::CloseCurrentPopup();
+    }
     ImGui::SameLine();
     if (ImGui::Button(tr(Str::MsgCancel), ImVec2(120, 0))) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
@@ -517,6 +528,13 @@ void App::drawColourDialogs() {
                 entry.value[1] = entry.themeColour->g;
                 entry.value[2] = entry.themeColour->b;
             }
+            // Fuer Abbrechen: den Stand beim Oeffnen merken. Vorher gab es
+            // nur "Zuruecksetzen" und "Ok" — wer sich verklickt hatte, kam
+            // nicht mehr zu seiner Farbe zurueck.
+            colourBackup_[0] = entry.value[0];
+            colourBackup_[1] = entry.value[1];
+            colourBackup_[2] = entry.value[2];
+            colourBackupOverridden_ = *entry.overridden;
             ImGui::OpenPopup(id.c_str());
             *entry.show = false;
         }
@@ -536,6 +554,15 @@ void App::drawColourDialogs() {
             }
             ImGui::SameLine();
             if (ImGui::Button(tr(Str::MsgOk), ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+            ImGui::SameLine();
+            if (ImGui::Button(tr(Str::MsgCancel), ImVec2(120, 0))) {
+                entry.value[0] = colourBackup_[0];
+                entry.value[1] = colourBackup_[1];
+                entry.value[2] = colourBackup_[2];
+                *entry.overridden = colourBackupOverridden_;
+                geometryDirty_ = true;
+                ImGui::CloseCurrentPopup();
+            }
             ImGui::EndPopup();
         }
     }
@@ -979,10 +1006,17 @@ void App::takeScreenshot(render::Renderer* renderer, bool toClipboard) {
     }
 
     if (toClipboard) {
-        // Die Zwischenablage braucht Win32 und gehoert damit nicht hierher.
-        // Bis der Rahmen das anbietet, wird stattdessen gespeichert und
-        // gesagt, was passiert ist — besser als ein Menuepunkt, der schweigt.
-        diag::info("screenshot to clipboard is not available yet, saving instead");
+        // Die Zwischenablage braucht Win32 — der Rahmen reicht sie als
+        // Rueckruf herein. Vorher schrieb dieser Menuepunkt stattdessen eine
+        // Datei, obwohl er "in die Zwischenablage" hiess.
+        if (clipboardImage_ && clipboardImage_(pixels, width, height)) {
+            screenshotMessage_ = tr(Str::MsgScreenshotClipboard);
+            screenshotMessageUntil_ = static_cast<float>(ImGui::GetTime()) + 4.0f;
+            diag::info("screenshot copied to clipboard (" + std::to_string(width) + "x" +
+                       std::to_string(height) + ")");
+            return;
+        }
+        diag::warn("screenshot: clipboard not available, saving instead");
     }
 
     // Neben die Einstellungen, mit Zeitstempel im Namen. Ein fester Name

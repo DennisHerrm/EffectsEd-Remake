@@ -584,6 +584,52 @@ static bool runSession(efx::gui::App& app, efx::render::Backend preferred,
                       SW_SHOWNORMAL);
     });
 
+    // Ein Bild in die Zwischenablage, als CF_DIB (32 Bit, von unten nach
+    // oben, BGRA). Jedes Windows-Programm kann das einfuegen.
+    app.setClipboardImage([hwnd](const std::vector<unsigned char>& rgba, int width,
+                                 int height) -> bool {
+        if (width <= 0 || height <= 0 ||
+            rgba.size() < static_cast<size_t>(width) * height * 4) {
+            return false;
+        }
+        const size_t pixelBytes = static_cast<size_t>(width) * height * 4;
+        HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, sizeof(BITMAPINFOHEADER) + pixelBytes);
+        if (!memory) return false;
+        auto* header = static_cast<BITMAPINFOHEADER*>(GlobalLock(memory));
+        if (!header) {
+            GlobalFree(memory);
+            return false;
+        }
+        *header = BITMAPINFOHEADER{};
+        header->biSize = sizeof(BITMAPINFOHEADER);
+        header->biWidth = width;
+        header->biHeight = height;  // positiv: unterste Zeile zuerst
+        header->biPlanes = 1;
+        header->biBitCount = 32;
+        header->biCompression = BI_RGB;
+        auto* out = reinterpret_cast<unsigned char*>(header + 1);
+        for (int y = 0; y < height; ++y) {
+            const unsigned char* row = rgba.data() + static_cast<size_t>(height - 1 - y) * width * 4;
+            unsigned char* target = out + static_cast<size_t>(y) * width * 4;
+            for (int x = 0; x < width; ++x) {
+                target[x * 4 + 0] = row[x * 4 + 2];
+                target[x * 4 + 1] = row[x * 4 + 1];
+                target[x * 4 + 2] = row[x * 4 + 0];
+                target[x * 4 + 3] = 255;
+            }
+        }
+        GlobalUnlock(memory);
+        if (!OpenClipboard(hwnd)) {
+            GlobalFree(memory);
+            return false;
+        }
+        EmptyClipboard();
+        const bool ok = SetClipboardData(CF_DIB, memory) != nullptr;
+        CloseClipboard();
+        if (!ok) GlobalFree(memory);  // sonst gehoert der Speicher Windows
+        return ok;
+    });
+
     app.setFileDialog([&](bool save, const char* filter,
                           const char* defaultName) -> std::string {
         wchar_t buffer[1024] = {};
@@ -812,6 +858,7 @@ static bool runSession(efx::gui::App& app, efx::render::Backend preferred,
         renderer->clear(palette.windowBg.r, palette.windowBg.g, palette.windowBg.b,
                         1.0f);
         renderer->renderImGui();
+        efx::gui::selbsttestNachZeichnen(renderer.get());
         // Im Selbsttest ohne Warten auf den Bildschirm: der Test braucht
         // viele Bilder, nicht schoene.
         renderer->present(!efx::gui::selbsttestAktiv());

@@ -496,6 +496,7 @@ const Entry kTable[] = {
     {"Save changes to %s?", "Änderungen an %s speichern?", "是否保存对 %s 的更改？", "%s への変更を保存しますか？"},  // SaveChangesText
     {"Save", "Speichern", "保存", "保存"},  // SaveChangesYes
     {"Don't Save", "Nicht speichern", "不保存", "保存しない"},  // SaveChangesNo
+    {"Screenshot copied to clipboard", "Bildschirmfoto in der Zwischenablage", "截图已复制到剪贴板", "スクリーンショットをクリップボードにコピーしました"},  // MsgScreenshotClipboard
 };
 
 static_assert(sizeof(kTable) / sizeof(kTable[0]) == static_cast<size_t>(Str::Count),

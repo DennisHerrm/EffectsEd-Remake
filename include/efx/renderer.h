@@ -259,6 +259,13 @@ public:
     virtual bool readViewport(std::vector<unsigned char>& rgba, int& width,
                               int& height) = 0;
 
+    // Das ganze Fenster, wie es gleich angezeigt wird — nach renderImGui,
+    // vor present. Fuer die Fotos des Selbsttests: ein Bildschirmfoto von
+    // aussen zeigte, was gerade auf dem Bildschirm des Anwenders liegt, und
+    // kaeme nie genau im richtigen Bild.
+    virtual bool readBackbuffer(std::vector<unsigned char>& rgba, int& width,
+                                int& height) = 0;
+
     virtual TextureId createTexture(const unsigned char* rgba, int width,
                                     int height, bool clamp, bool mipmaps) = 0;
     virtual void destroyTexture(TextureId texture) = 0;
