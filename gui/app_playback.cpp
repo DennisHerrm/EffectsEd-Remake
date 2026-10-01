@@ -345,11 +345,17 @@ void App::startPlayback() {
 }
 
 bool App::usesSpawnSchedule() const {
-    // Einmal abspielen braucht kein Nachlegen; "bis zum Anhalten" ohne
-    // Zusatz bleibt die nahtlose Schleife mit Vorlauf (repeatDelay).
-    if (playback_.mode == playback::RepeatMode::Once) return false;
-    return playback_.mode == playback::RepeatMode::ForSeconds || playback_.respawnEveryFrame ||
-           playback_.animateSpawnLocation;
+    // Einmal abspielen braucht kein Nachlegen.
+    if (playback_.mode == playback::RepeatMode::ForSeconds) return true;
+    if (doc().clock.endMode() != timeline::EndMode::Repeat) return false;
+    if (playback_.respawnEveryFrame || playback_.animateSpawnLocation) return true;
+    // Bis zum Anhalten bei einer Datei OHNE repeatDelay: das Original legt
+    // alle "Repeat Rate" Sekunden nach (gemessen an explosion.efx: Active
+    // 16 -> 34 -> 44 -> ... -> 90 bei 0.3 s). Vorher lief der Effekt hier
+    // aus und begann von vorn. Mit repeatDelay bleibt es bei der nahtlosen
+    // Schleife mit Vorlauf; die Fassung des alten Editors hat ihren Schalter.
+    const bool fileRepeats = doc().effect.repeatDelaySet && doc().effect.repeatDelay > 0;
+    return !fileRepeats && !settings_.legacyRepeat;
 }
 
 float App::spawnScheduleDurationMs() const {
