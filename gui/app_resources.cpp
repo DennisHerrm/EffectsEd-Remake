@@ -420,6 +420,17 @@ render::TextureId App::textureFor(render::Renderer* renderer,
     return fallbackTexture(renderer);
 }
 
+bool App::textureStillLoading(const std::string& shaderName, float seconds) const {
+    if (shaderName.empty()) return false;
+    std::string key = shaderName;
+    if (const auto* anim = assets_.animOf(shaderName)) {
+        const int frame = shader::animFrameAt(static_cast<int>(anim->frames.size()),
+                                              anim->framesPerSecond, anim->oneShot, seconds);
+        key = anim->frames[static_cast<size_t>(frame)];
+    }
+    return textureCache_.find(key) == textureCache_.end();
+}
+
 void App::requestTexture(const std::string& imageName) {
     if (imageName.empty()) return;
     if (textureCache_.find(imageName) != textureCache_.end()) return;

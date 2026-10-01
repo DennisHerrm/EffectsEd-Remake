@@ -1108,6 +1108,102 @@ public:
         return s;
     }
 
+    // --- Alle Effekte des Spiels ---------------------------------------------
+    //
+    // Spielpfad setzen (EFXED_SPIELPFAD, sonst Movie Duels), jeden Effekt aus
+    // dem Bestand oeffnen — ueber denselben Weg wie die Bibliothek —, feste
+    // Zeitpunkte anfahren, die Ansicht fotografieren und messen: wie viele
+    // Teilchen leben, wie viele gezeichnet werden, wie lange ein Bild dauert.
+    // Mit festem Zufallswert, damit zwei Laeufe Bild fuer Bild gleich sind
+    // (Vergleich vor/nach einer Aenderung am Renderer).
+    static std::string bericht;
+    static std::vector<Schritt> teilDarstellung() {
+        std::vector<Schritt> s;
+        s.push_back(teil("darstellung"));
+        s.push_back(tu("Spielpfad setzen und Bestand lesen", [] {
+            const char* pfad = std::getenv("EFXED_SPIELPFAD");
+            app->settings_.gamePath =
+                pfad && pfad[0] ? pfad
+                                : "C:/Program Files (x86)/Steam/steamapps/common/Jedi Academy/"
+                                  "GameData Movie Duels/base";
+            app->settings_.extraGamePaths.clear();
+            app->rescanAssets();
+            app->fixedSeed_ = 4242;
+            bericht = "effekt\tzeit_ms\tlebend\tgezeichnet\tbild_ms\n";
+        }));
+        s.push_back(pruefSchritt("Bestand enthaelt Effekte",
+                                 [] { return !app->assets_.effects.empty(); }));
+        s.push_back({"Effekte einplanen", [](int) {
+                         std::vector<std::string> liste = app->assets_.effects;
+                         std::sort(liste.begin(), liste.end());
+                         int grenze = static_cast<int>(liste.size());
+                         if (const char* n = std::getenv("EFXED_EFFEKTE"); n && std::atoi(n) > 0) {
+                             grenze = std::min(grenze, std::atoi(n));
+                         }
+                         std::vector<Schritt> neu;
+                         for (int i = 0; i < grenze; ++i) {
+                             einzelnerEffekt(neu, liste[static_cast<size_t>(i)]);
+                         }
+                         diag::info("Selbsttest: " + std::to_string(grenze) + " Effekte eingeplant");
+                         einfuegen(std::move(neu));
+                         return true;
+                     }});
+        s.push_back(tu("Bericht schreiben", [] {
+            schreibeDatei(paths::configDir() + "/darstellung.tsv", bericht);
+            app->fixedSeed_ = 0;
+        }));
+        return s;
+    }
+
+    static void einzelnerEffekt(std::vector<Schritt>& s, const std::string& name) {
+        std::string datei = name;
+        for (char& c : datei) {
+            if (c == '/' || c == '\\' || c == ':') c = '_';
+        }
+        s.push_back(tu("Oeffne " + name, [name] {
+            App::BrowserEntry eintrag;
+            eintrag.name = name;
+            const size_t vorher = app->documents_.size();
+            app->openBrowserEntry(eintrag);
+            if (app->documents_.size() == vorher) {
+                meldeFehler(name + ": liess sich nicht oeffnen");
+                return;
+            }
+            app->showEditor();
+        }));
+        s.push_back(warte(3));
+        for (float ms : {150.0f, 600.0f, 1500.0f}) {
+            s.push_back(tu("Zeit " + std::to_string(static_cast<int>(ms)), [ms] {
+                app->pressStop();
+                app->startPlayback();
+                app->doc().clock.stop();
+                app->doc().clock.scrubTo(ms);
+                // Vergleichbar machen: Kamera zurueck, Wackeln aus (laeuft
+                // auf Echtzeit), keine Windfahne (ebenfalls Echtzeit).
+                app->shake_ = camera::Shake{};
+                app->camera_.reset(app->settings_.worldScale);
+                app->settings_.drawWindVector = false;
+            }));
+            s.push_back(warte(3));
+            s.push_back(foto("e_" + datei + "_" + std::to_string(static_cast<int>(ms))));
+            s.push_back(tu("messen", [name, ms] {
+                char z[512];
+                std::snprintf(z, sizeof(z), "%s\t%.0f\t%d\t%d\t%.2f\n", name.c_str(), double(ms),
+                              app->lastAlive_, app->lastDrawn_,
+                              double(ImGui::GetIO().DeltaTime * 1000.0f));
+                bericht += z;
+            }));
+        }
+        // Eine Sekunde echt abspielen — stuerzt nichts ab, wenn die Uhr laeuft?
+        s.push_back(tu("abspielen", [] { app->pressPlay(); }));
+        s.push_back(warte(20));
+        s.push_back(tu("schliessen", [] {
+            app->pressStop();
+            app->doc().dirty = false;
+            app->closeDocument(app->activeDocument_);
+        }));
+    }
+
     // --- Jedes Feld jedes Typs -------------------------------------------
     //
     // Fuer jeden der dreizehn Typen: Segment anlegen, jeden Reiter oeffnen,
@@ -1343,6 +1439,10 @@ public:
             {"dialoge", &teilDialoge},
             {"felder", &teilFelder},
         };
+        // Nicht in "alles": dauert mit allen Effekten mehrere Minuten.
+        const Teil extra[] = {
+            {"darstellung", &teilDarstellung},
+        };
         std::vector<Schritt> s;
         for (const Teil& t : teile) {
             const bool gewollt = auswahl == "alles" || auswahl == "1" ||
@@ -1350,6 +1450,10 @@ public:
                                      std::string::npos;
             if (!gewollt) continue;
             for (Schritt& x : t.f()) s.push_back(std::move(x));
+        }
+        for (const Teil& t2 : extra) {
+            if (("," + auswahl + ",").find("," + std::string(t2.name) + ",") == std::string::npos) continue;
+            for (Schritt& x : t2.f()) s.push_back(std::move(x));
         }
         for (Schritt& x : ende()) s.push_back(std::move(x));
         return s;
@@ -1372,6 +1476,7 @@ std::vector<std::string> Selbsttest::geoeffnetPerShell;
 std::string Selbsttest::aktuellerTeil = "vorlauf";
 size_t Selbsttest::einfuegeAn = 0;
 std::string Selbsttest::fensterFotoName;
+std::string Selbsttest::bericht;
 
 // ===========================================================================
 // Einstieg

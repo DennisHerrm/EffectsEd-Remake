@@ -191,6 +191,9 @@ void App::startPlayback() {
     doc().playbackSeed =
         static_cast<unsigned>(std::chrono::steady_clock::now().time_since_epoch().count() /
                               1000000) | 1u;
+    // Fester Ausgangswert fuer den Selbsttest: nur dann sind zwei Laeufe
+    // Bild fuer Bild vergleichbar.
+    if (fixedSeed_ != 0) doc().playbackSeed = fixedSeed_;
     doc().segmentEnabled.resize(doc().effect.primitives.size(), true);
     doc().particles.play(doc().effect, doc().playbackSeed, doc().segmentEnabled,
                     particles::axisFor(settings_.orientation),
