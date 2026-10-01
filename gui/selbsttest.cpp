@@ -1141,6 +1141,23 @@ public:
         menue(s, Str::MenuFile, Str::FileNew);
         s.push_back(pruefSchritt("Neues Dokument erbt 'bis zum Anhalten'",
                                  [] { return doc().clock.endMode() == timeline::EndMode::Repeat; }));
+        // Reiterwechsel waehrend des Auslaufens: nichts bleibt haengen.
+        auto sofort = std::make_shared<bool>(false);
+        s.push_back(tu("Abspielen, Play (Auslaufen), Reiter wechseln", [=] {
+            Primitive p;
+            p.type = PrimitiveType::Particle;
+            p.life = Range::single(2000.0f);
+            effekt().primitives.push_back(p);
+            doc().segmentEnabled.assign(effekt().primitives.size(), true);
+            app->pressPlay();
+            app->pressPlay();
+            app->activateDocument(0);
+            *sofort = !app->playOut_;   // gleich danach, nicht erst ein Bild spaeter
+        }));
+        s.push_back(pruefSchritt("Reiterwechsel beendet das Auslaufen sauber", [=] {
+            return *sofort && app->documents_.size() >= 2 && !app->playOut_ &&
+                   app->documents_.back().clock.state() == timeline::State::Stopped;
+        }));
         s.push_back(tu("aufraeumen", [] {
             app->pressStop();
             app->playback_ = playback::Settings{};
