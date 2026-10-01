@@ -958,6 +958,7 @@ namespace {
 
 void App::buildFrame(render::Renderer* renderer, int windowWidth, int windowHeight,
                      float dpiScale) {
+    renderer_ = renderer;
     // Eine Feldaenderung ist abgeschlossen, sobald kein Feld mehr aktiv ist.
     if (fieldEditOpen_ && !ImGui::IsAnyItemActive()) {
         fieldEditOpen_ = false;

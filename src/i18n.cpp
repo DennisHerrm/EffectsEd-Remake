@@ -537,6 +537,9 @@ const Entry kTable[] = {
     {"Advanced: all flags", "Erweitert: alle Flags", "高级：全部标志", "詳細：すべてのフラグ"},  // PropAdvancedFlags
     {"Grey values are engine defaults and are not written to the file", "Graue Werte sind Vorgaben der Engine und stehen nicht in der Datei", "灰色数值是引擎默认值，不会写入文件", "灰色の値はエンジンの既定値で、ファイルには書き込まれません"},  // PropDefaultHint
     {"Rename", "Umbenennen", "重命名", "名前を変更"},  // ListRename
+    {"Yes", "Ja", "是", "はい"},  // MsgYes
+    {"No", "Nein", "否", "いいえ"},  // MsgNo
+    {"This physics type should not be used unless absolutely necessary since it will make any effect significantly more expensive. Would you like to continue and use this physics type anyway?", "Diese Physik sollte nur benutzt werden, wenn es unbedingt nötig ist — sie macht jeden Effekt deutlich teurer. Trotzdem benutzen?", "除非绝对必要，否则不应使用此物理类型，因为它会显著增加任何特效的开销。仍要继续使用吗？", "この物理タイプは絶対に必要な場合以外は使用しないでください。エフェクトの負荷が大幅に増加します。それでも使用しますか？"},  // PhysicsExpensiveWarning
     {"Unnamed", "Unbenannt", "未命名", "名前なし"},  // ListUnnamedPrefix
     {"Copy of", "Kopie von", "副本：", "コピー："},  // ListCopyOf
     {"X", "X", "X", "X"},  // BoxX

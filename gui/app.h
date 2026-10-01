@@ -314,6 +314,12 @@ private:
     // Vor dem Verwerfen ungespeicherter Arbeit fragen.
     void requestCloseDocument(int index);
     void drawSaveChangesDialog();
+    // Eine Ja/Nein-Frage. `yes` laeuft nur bei Ja.
+    void askConfirm(std::string text, std::function<void()> yes);
+    void drawConfirmDialog();
+    bool showConfirm_ = false;
+    std::string confirmText_;
+    std::function<void()> confirmYes_;
     bool showSaveChangesDialog_ = false;
     int pendingClose_ = -1;
     bool pendingQuit_ = false;
@@ -549,6 +555,11 @@ private:
     std::vector<std::string>* pickerTarget_ = nullptr;
     char pickerFilter_[128] = {};
     int pickerSelected_ = -1;
+    std::set<int> pickerChosen_;   // Mehrfachauswahl
+    int pickerAnchor_ = -1;        // fuer Umschalt-Klick
+    bool pickerPreview_ = false;
+    // Der Renderer dieses Bildes (fuer Vorschaubilder in Dialogen).
+    render::Renderer* renderer_ = nullptr;
     bool showBackgroundColourDialog_ = false;
 
     FileDialog fileDialog_;
