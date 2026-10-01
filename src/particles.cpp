@@ -52,15 +52,30 @@ curve::Curve makeCurve(const Channel& channel, sim::Random& random) {
     // vorher landete die Null im Alphakanal, den additive Mischung gar nicht
     // ausliest, und blieb deshalb folgenlos. Zwei Fehler, die sich gegenseitig
     // verdeckt haben.
+    //
+    // Das gilt fuer `end` genauso wie fuer `start`. Hier stand
+    //
+    //     out.end = channel.end.set ? random.pick(channel.end) : out.start;
+    //
+    // — ein fehlendes Ende war der Startwert. Bei `size { start 10 flags
+    // linear }` blieb das Teilchen damit 10 gross; im Spiel schrumpft es auf
+    // 1, weil FxScheduler.cpp `mSizeEnd.GetVal()` unveraendert weitergibt und
+    // mSizeEnd im Erzeuger auf 1.0 steht. In den ausgelieferten Dateien steht
+    // so ein Block ueber 150-mal (size, rgb, length, alpha).
     curve::Curve out;
-    out.start = 1.0f;
-    out.end = 1.0f;
+    out.start = kDefaultCurveValue;
+    out.end = kDefaultCurveValue;
     if (!channel.present) return out;
-    out.start = channel.start.set ? random.pick(channel.start) : 1.0f;
-    out.end = channel.end.set ? random.pick(channel.end) : out.start;
+    out.start = channel.start.set ? random.pick(channel.start) : kDefaultCurveValue;
+    out.end = channel.end.set ? random.pick(channel.end) : kDefaultCurveValue;
     out.parm = random.pick(channel.parm);
     out.flags = normaliseCurveFlags(channel.curveFlags);
     return out;
+}
+
+// Ein Wert aus der Datei, oder die Voreinstellung der Engine, wenn er fehlt.
+float pickOr(const Range& value, float fallback, sim::Random& random) {
+    return value.set ? random.pick(value) : fallback;
 }
 
 camera::Vec3 pickVec3(const Vec3Range& value, sim::Random& random) {
@@ -418,6 +433,12 @@ void System::playInto(const Effect& effect, sim::Random& random,
     for (const auto& spawn : sim::schedule(effect, random, enabledMask)) {
         const Primitive& p = effect.primitives[spawn.primitiveIndex];
 
+        // Die Flags, wie die Engine sie sieht: mit den Bits, die der Parser
+        // beim Lesen von impactfx, deathfx, emitfx und models selbst setzt
+        // (efx::effectiveFlags). `p.flags` allein ist nur, was in der Zeile
+        // `flags` steht.
+        const uint32_t flags = effectiveFlags(p);
+
         Live item;
         item.type = p.type;
         item.primitiveIndex = spawn.primitiveIndex;
@@ -453,19 +474,25 @@ void System::playInto(const Effect& effect, sim::Random& random,
 
         // Ein Punkt auf Kugel oder Zylinder kommt oben drauf. Beides
         // schliesst sich aus — die Engine prueft `else if`.
+        //
+        // Ohne radius/height sind beide 10, nicht 0: der Erzeuger von
+        // CPrimitiveTemplate setzt mRadius und mHeight auf 10, und
+        // FxScheduler.cpp liest `fx->mRadius.GetVal()` ohne Pruefung. Mit 0
+        // fiel jedes `orgOnSphere` ohne radius auf einen Punkt zusammen
+        // (70 Primitive in 42 ausgelieferten Dateien).
         if ((p.spawnFlags & kSpawnOrgOnSphere) != 0) {
             const camera::Vec3 onSphere = pointOnSphere(
                 random.next(), random.next(),
-                p.radius.set ? random.pick(p.radius) : 0.0f,
-                p.height.set ? random.pick(p.height) : 0.0f);
+                pickOr(p.radius, kDefaultRadius, random),
+                pickOr(p.height, kDefaultHeight, random));
             item.origin = item.origin + onSphere;
             if ((p.spawnFlags & kSpawnAxisFromSphere) != 0) {
                 own = axisFromDirection(onSphere);
             }
         } else if ((p.spawnFlags & kSpawnOrgOnCylinder) != 0) {
             const camera::Vec3 onCylinder = pointOnCylinder(
-                own, p.radius.set ? random.pick(p.radius) : 0.0f,
-                p.height.set ? random.pick(p.height) : 0.0f,
+                own, pickOr(p.radius, kDefaultRadius, random),
+                pickOr(p.height, kDefaultHeight, random),
                 random.range(-1.0f, 1.0f), random.next() * 360.0f);
             item.origin = item.origin + onCylinder;
             if ((p.spawnFlags & kSpawnAxisFromSphere) != 0) {
@@ -555,9 +582,14 @@ void System::playInto(const Effect& effect, sim::Random& random,
                     range.min[2] + (range.max[2] - range.min[2]) * shared};
             };
 
-            const camera::Vec3 start =
-                pickColour(p.rgb.start, camera::Vec3{1.0f, 1.0f, 1.0f});
-            const camera::Vec3 end = pickColour(p.rgb.end, start);
+            // Beide Enden fehlen als 1 1 1, nicht das Ende als Startfarbe —
+            // mRedEnd/mGreenEnd/mBlueEnd stehen im Erzeuger auf 1.0 (siehe
+            // makeCurve). `rgb { start 1 0 0 flags linear }` blendet im
+            // Spiel von Rot nach Weiss.
+            const camera::Vec3 white{kDefaultCurveValue, kDefaultCurveValue,
+                                     kDefaultCurveValue};
+            const camera::Vec3 start = pickColour(p.rgb.start, white);
+            const camera::Vec3 end = pickColour(p.rgb.end, white);
             item.rgb[0].start = start.x; item.rgb[0].end = end.x;
             item.rgb[1].start = start.y; item.rgb[1].end = end.y;
             item.rgb[2].start = start.z; item.rgb[2].end = end.z;
@@ -598,7 +630,8 @@ void System::playInto(const Effect& effect, sim::Random& random,
         // — `elasticity` als Staerke, `radius` als Reichweite.
         if (p.type == PrimitiveType::CameraShake) {
             item.shakeIntensity = p.elasticity.set ? random.pick(p.elasticity) : 0.0f;
-            item.shakeRadius = p.radius.set ? random.pick(p.radius) : 0.0f;
+            // Ohne radius 10 wie in der Engine (mRadius im Erzeuger).
+            item.shakeRadius = pickOr(p.radius, kDefaultRadius, random);
         }
         item.seed = static_cast<unsigned>(random.next() * 4000000000.0f) | 1u;
 
@@ -611,13 +644,6 @@ void System::playInto(const Effect& effect, sim::Random& random,
         item.randomAlpha = random.next();
         item.randomRgb = random.next();
         item.randomLength = random.next();
-
-        // Die Parameter einmal umrechnen statt in jedem Bild.
-        item.sizeParm = curve::resolveParm(item.size, item.spawnMs, life);
-        item.size2Parm = curve::resolveParm(item.size2, item.spawnMs, life);
-        item.lengthParm = curve::resolveParm(item.length, item.spawnMs, life);
-        item.alphaParm = curve::resolveParm(item.alpha, item.spawnMs, life);
-        item.rgbParm = curve::resolveParm(item.rgb[0], item.spawnMs, life);
 
         // Untergeordnete Effekte starten mit dem Versatz ihres Erzeugers.
         //
@@ -634,6 +660,25 @@ void System::playInto(const Effect& effect, sim::Random& random,
         item.spawnMs += atMs;
         item.deathMs += atMs;
 
+        // Die Parameter einmal umrechnen statt in jedem Bild — und erst
+        // JETZT, mit der verschobenen Startzeit.
+        //
+        // Bei nonlinear und clamp ist der Parameter ein ABSOLUTER Zeitpunkt:
+        // CParticle::Init rechnet `mSizeParm = sizeParm * 0.01f * killTime +
+        // theFxHelper.mTime`, also mit der Uhr, zu der DIESES Teilchen
+        // entsteht. curve::bias vergleicht spaeter mit der absoluten Uhr.
+        //
+        // Stand die Umrechnung vor dem Versatz, rechnete sie mit der lokalen
+        // Zeit des Kindeffekts. Ein Kind, das 2000 ms nach dem Start kam,
+        // hatte seinen Ausblendpunkt 2000 ms in der Vergangenheit und war vom
+        // ersten Bild an dunkel. Dasselbe traf jede Wiederholungsgeneration
+        // (`repeatDelay`), die mit einem Versatz von -d, -2d, ... startet.
+        item.sizeParm = curve::resolveParm(item.size, item.spawnMs, life);
+        item.size2Parm = curve::resolveParm(item.size2, item.spawnMs, life);
+        item.lengthParm = curve::resolveParm(item.length, item.spawnMs, life);
+        item.alphaParm = curve::resolveParm(item.alpha, item.spawnMs, life);
+        item.rgbParm = curve::resolveParm(item.rgb[0], item.spawnMs, life);
+
         // Physik: die Bahn einmal in Abschnitte zerlegen.
         //
         // NACH dem Versatz. Die Bahn enthaelt absolute Punkte; wuerde
@@ -644,14 +689,17 @@ void System::playInto(const Effect& effect, sim::Random& random,
         // Nur bei gesetztem Flag — die Engine macht dasselbe, und eine
         // Kollisionsrechnung fuer jeden Funken waere teuer, ohne dass es
         // jemand verlangt hat.
-        if ((p.flags & kFlagApplyPhysics) != 0 && !planes.empty()) {
+        //
+        // `flags`, nicht `p.flags`: eine impactfx-Liste schaltet die Physik
+        // im Spiel selbst ein (ParseImpactFxStrings setzt FX_APPLY_PHYSICS).
+        if ((flags & kFlagApplyPhysics) != 0 && !planes.empty()) {
             const float elasticity =
                 p.elasticity.set ? random.pick(p.elasticity) : 0.0f;
             item.path = sim::buildPath(item.origin, item.velocity,
                                        item.acceleration, item.gravity,
                                        item.deathMs - item.spawnMs, planes,
                                        elasticity,
-                                       (p.flags & kFlagKillOnImpact) != 0);
+                                       (flags & kFlagKillOnImpact) != 0);
             item.hasPath = true;
             // killOnImpact verkuerzt die Lebensdauer bis zum Aufprall.
             if (item.path.killed) {
@@ -691,11 +739,24 @@ void System::playInto(const Effect& effect, sim::Random& random,
         // Quadrat des Abstands zum letzten Aussenden mit
         //     step = density + zufall(-1..1) * variance
         // und setzt den Merkpunkt danach neu.
-        if (p.type == PrimitiveType::Emitter && !p.playFx.empty() && loader) {
-            const float density = p.density.set ? random.pick(p.density) : 0.0f;
-            const float variance = p.variance.set ? random.pick(p.variance) : 0.0f;
+        //
+        // Ausgesendet wird die `emitfx`-Liste, nicht `playfx`. FxScheduler.cpp
+        // reicht dem Emitter `fx->mEmitterFxHandles.GetHandle()` mit, und
+        // CEmitter::UpdateEmitter fragt `mFlags & FX_EMIT_FX` — das Bit setzt
+        // ParseEmitterFxStrings selbst, sobald die Liste da ist. `playfx`
+        // liest nur der FxRunner. Hier stand `p.playFx`: kein einziger der 47
+        // Emitter in den ausgelieferten Dateien sendete in der Vorschau aus,
+        // denn Raven schreibt ausnahmslos `emitfx`.
+        //
+        // Ohne density und variance gelten 10 und 1 (Erzeuger von
+        // CPrimitiveTemplate) — vorher 0, und ein Emitter ohne density
+        // sendete gar nichts.
+        if (p.type == PrimitiveType::Emitter && (flags & kFlagEmitFx) != 0 &&
+            !p.emitFx.empty() && loader) {
+            const float density = pickOr(p.density, kDefaultDensity, random);
+            const float variance = pickOr(p.variance, kDefaultVariance, random);
             if (density > 0.0f) {
-                const Effect* child = loader(pickEffect(p.playFx));
+                const Effect* child = loader(pickEffect(p.emitFx));
                 if (!child) {
                     ++missingEffects_;
                 } else {
@@ -730,10 +791,12 @@ void System::playInto(const Effect& effect, sim::Random& random,
         // beim deathFx. Das ist auch sinnvoll: ein Einschlag zeigt von der
         // Wand weg, und die Engine reicht `trace.plane.normal` durch.
         //
-        // Wie beim deathFx braucht es das Flag; ein gesetztes impactfx allein
-        // tut nichts.
+        // Das Flag FX_IMPACT_RUNS_FX braucht es — aber es steht schon, wenn
+        // die Liste da ist: ParseImpactFxStrings setzt es selbst, zusammen
+        // mit FX_APPLY_PHYSICS (siehe efx::effectiveFlags). Hier stand "ein
+        // gesetztes impactfx allein tut nichts" — im Spiel tut es sehr wohl.
         if (item.hasPath && !p.impactFx.empty() && loader &&
-            (p.flags & kFlagImpactRunsFx) != 0) {
+            (flags & kFlagImpactRunsFx) != 0) {
             const Effect* child = loader(pickEffect(p.impactFx));
             if (!child) {
                 ++missingEffects_;
@@ -771,8 +834,10 @@ void System::playInto(const Effect& effect, sim::Random& random,
         // beim Aufschlag kommt die Explosion. Drei Details aus
         // CParticle::Die, die man alle falsch raten wuerde:
         //
-        //   1. Es braucht das Flag FX_DEATH_RUNS_FX. Ein gesetztes deathfx
-        //      allein tut nichts.
+        //   1. Es braucht das Flag FX_DEATH_RUNS_FX — aber das setzt
+        //      ParseDeathFxStrings selbst, sobald die Liste da ist (SP und
+        //      MP). Hier stand "ein gesetztes deathfx allein tut nichts";
+        //      das galt fuer unsere Vorschau, nicht fuer das Spiel.
         //   2. Bei FX_KILL_ON_IMPACT wird es beim natuerlichen Tod NICHT
         //      ausgeloest — dann gehoert es zum Aufschlag.
         //   3. Die Achse ist eine ZUFAELLIGE Richtung, nicht die Flugrichtung.
@@ -782,8 +847,8 @@ void System::playInto(const Effect& effect, sim::Random& random,
         // Der dritte Punkt ist der ueberraschendste: ein Todeseffekt zeigt in
         // eine beliebige Richtung, egal wohin die Primitive flog.
         if (!p.deathFx.empty() && loader &&
-            (p.flags & kFlagDeathRunsFx) != 0 &&
-            (p.flags & kFlagKillOnImpact) == 0) {
+            (flags & kFlagDeathRunsFx) != 0 &&
+            (flags & kFlagKillOnImpact) == 0) {
             if (const Effect* child = loader(pickEffect(p.deathFx))) {
                 ++startedEffects_;
 
@@ -965,11 +1030,21 @@ bool addOrientedQuad(scene::Mesh& mesh, const camera::Vec3& centre,
     return true;
 }
 
-void addCylinder(scene::Mesh& mesh, const camera::Vec3& base,
+bool addCylinder(scene::Mesh& mesh, const camera::Vec3& base,
                  const camera::Vec3& axis, float length, float radius,
                  float radius2, uint32_t colour, int segments) {
-    if (length <= 0.0f || segments < 3) return;
-    if (radius <= 0.0f && radius2 <= 0.0f) return;
+    if (length <= 0.0f || segments < 3) return true;
+    if (radius <= 0.0f && radius2 <= 0.0f) return true;
+
+    // Dieselbe Grenze wie bei den Vierecken (hasRoomForQuad), aber fuer den
+    // GANZEN Mantel: vier Eckpunkte je Abschnitt, 16 Abschnitte sind 64
+    // Eckpunkte. Ohne diese Pruefung liefen die 16-Bit-Indizes ab etwa 1024
+    // Zylindern mit demselben Shader still ueber — `count 2000` ergab ein
+    // Netz mit 128000 Eckpunkten, dessen Indizes auf fremde Ecken zeigten.
+    // Ganz oder gar nicht: ein halber Zylinder waere schlimmer als keiner.
+    if (mesh.vertices.size() + static_cast<size_t>(segments) * 4u > 65535u) {
+        return false;
+    }
 
     camera::Vec3 up = camera::normalise(axis);
     if (camera::length(up) < 1e-5f) up = {0.0f, 0.0f, 1.0f};
@@ -1006,6 +1081,7 @@ void addCylinder(scene::Mesh& mesh, const camera::Vec3& base,
             mesh.indices.push_back(static_cast<uint16_t>(start + offset));
         }
     }
+    return true;
 }
 
 void addLightning(scene::LineSet& lines, const camera::Vec3& from,
@@ -1190,8 +1266,11 @@ DrawList System::build(float nowMs, const camera::Vec3& right,
                 // damit einen Zylinder, der immer senkrecht stand.
                 camera::Vec3 axis = camera::normalise(item.forward);
                 if (camera::length(axis) < 1e-5f) axis = {0.0f, 0.0f, 1.0f};
-                addCylinder(out.byTexture[item.shader], position, axis, length,
-                            size * 0.5f, radius2 * 0.5f, colour);
+                if (!addCylinder(out.byTexture[item.shader], position, axis, length,
+                                 size * 0.5f, radius2 * 0.5f, colour)) {
+                    ++out.skipped;
+                    break;
+                }
                 ++out.drawn;
                 break;
             }

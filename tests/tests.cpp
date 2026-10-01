@@ -84,14 +84,34 @@ bool same(const efx::Vec3Range& a, const efx::Vec3Range& b) {
     return true;
 }
 
+// Kurven vergleichen: die Bits UND die Woerter, wie sie in der Datei standen,
+// und die Schreibweisen parm/parms, flag/flags.
+//
+// Hier wurden nur die Bits verglichen. Damit ging durch, dass der Schreiber
+// aus "linear clamp" ein "clamp linear wave" machte — die Bits sind gleich
+// (clamp IST nonlinear|wave), die Datei aber nicht, und die Pruefung meldete
+// danach einen Fehler, den das Original nicht hatte. Und "random linear
+// clamp" verlor sein random, ohne dass ein Rundlauf hier rot wurde, weil
+// keine der fuenf Dateien in data/ es enthielt.
+bool sameCurve(int flagsA, const std::vector<std::string>& wordsA, bool parmPluralA,
+               bool flagsPluralA, int flagsB, const std::vector<std::string>& wordsB,
+               bool parmPluralB, bool flagsPluralB) {
+    return flagsA == flagsB && wordsA == wordsB && parmPluralA == parmPluralB &&
+           flagsPluralA == flagsPluralB;
+}
+
 bool same(const efx::Channel& a, const efx::Channel& b) {
     return a.present == b.present && same(a.start, b.start) && same(a.end, b.end) &&
-           same(a.parm, b.parm) && a.curveFlags == b.curveFlags;
+           same(a.parm, b.parm) &&
+           sameCurve(a.curveFlags, a.curveWords, a.parmPlural, a.flagsPlural,
+                     b.curveFlags, b.curveWords, b.parmPlural, b.flagsPlural);
 }
 
 bool same(const efx::ColorChannel& a, const efx::ColorChannel& b) {
     return a.present == b.present && same(a.start, b.start) && same(a.end, b.end) &&
-           same(a.parm, b.parm) && a.curveFlags == b.curveFlags;
+           same(a.parm, b.parm) &&
+           sameCurve(a.curveFlags, a.curveWords, a.parmPlural, a.flagsPlural,
+                     b.curveFlags, b.curveWords, b.parmPlural, b.flagsPlural);
 }
 
 bool same(const efx::Primitive& a, const efx::Primitive& b, std::string& why) {
@@ -148,6 +168,19 @@ bool same(const efx::Effect& a, const efx::Effect& b, std::string& why) {
     if (a.primitives.size() != b.primitives.size()) {
         why = "Anzahl Primitive";
         return false;
+    }
+    // Bloecke, die die Engine nicht kennt (ForceFeedback), muessen
+    // wortwoertlich und an derselben Stelle wiederkommen.
+    if (a.foreignGroups.size() != b.foreignGroups.size()) {
+        why = "Anzahl fremder Bloecke";
+        return false;
+    }
+    for (size_t i = 0; i < a.foreignGroups.size(); ++i) {
+        if (a.foreignGroups[i].text != b.foreignGroups[i].text ||
+            a.foreignGroups[i].beforePrimitive != b.foreignGroups[i].beforePrimitive) {
+            why = "fremder Block " + std::to_string(i + 1);
+            return false;
+        }
     }
     for (size_t i = 0; i < a.primitives.size(); ++i) {
         std::string field;
@@ -3584,10 +3617,16 @@ void testAssets() {
                           "gfx/effects/both.tga").path == "gfx/effects/both.tga",
               "eine vorhandene Endung wird nicht verdoppelt");
 
-        // Sonderwerte fuehren zu keiner Datei.
-        check(!findTexture(texIndex, texBase.string(),
-                           "gfx/effects/whiteonly").found,
-              "$whiteimage fuehrt zu keiner Datei");
+        // `$whiteimage` fuehrt zu keiner Datei, aber zu einem Bild: dem
+        // eingebauten weissen (ParseStage in tr_shader.cpp setzt
+        // tr.whiteImage). Hier stand "fuehrt zu keiner Datei" mit
+        // found == false — und die Vorschau zeichnete den Ersatzfleck.
+        {
+            const auto white = findTexture(texIndex, texBase.string(),
+                                           "gfx/effects/whiteonly");
+            check(white.found && white.white && white.archive.empty(),
+                  "$whiteimage fuehrt zum eingebauten weissen Bild, nicht zu einer Datei");
+        }
         check(!findTexture(texIndex, texBase.string(), "").found, "leer auch nicht");
         check(!findTexture(texIndex, texBase.string(), "gibt/es/nicht").found,
               "ein erfundener Name ebenso");
@@ -3782,8 +3821,12 @@ void testCurves() {
         check(warnings == 0, "und bei gleichem Anfang und Ende auch nicht");
     }
 
-    // impactfx braucht Flag UND Physik. Die beiden Felder stehen in
-    // verschiedenen Reitern, deshalb faellt es noch weniger auf.
+    // impactfx braucht KEIN Flag und keine Physik in der Datei.
+    //
+    // Hier stand das Gegenteil ("impactfx braucht Flag UND Physik"), und die
+    // Pruefung meldete in drei ausgelieferten Dateien "wird nie gestartet".
+    // ParseImpactFxStrings (FxTemplate.cpp, SP und MP) setzt beim Lesen der
+    // Liste selbst FX_IMPACT_RUNS_FX | FX_APPLY_PHYSICS.
     {
         efx::Effect effect;
         effect.primitives.push_back(efx::Primitive{});
@@ -3799,23 +3842,26 @@ void testCurves() {
             }
             return false;
         };
-        check(has(efx::i18n::Str::VImpactFxNoFlag), "ohne Flag gemeldet");
+        check(!has(efx::i18n::Str::VImpactFxNoFlag) &&
+                  !has(efx::i18n::Str::VImpactFxNoPhysics),
+              "impactfx ohne Flag und ohne usePhysics ist kein Befund");
+        check((efx::effectiveFlags(p) &
+               (efx::kFlagImpactRunsFx | efx::kFlagApplyPhysics)) ==
+                  (efx::kFlagImpactRunsFx | efx::kFlagApplyPhysics),
+              "die Liste setzt beide Bits selbst, wie ParseImpactFxStrings");
 
-        p.flags |= efx::kFlagImpactRunsFx;
-        check(!has(efx::i18n::Str::VImpactFxNoFlag), "mit Flag nicht mehr");
-        check(has(efx::i18n::Str::VImpactFxNoPhysics),
-              "dafuer fehlt jetzt die Physik");
-
-        p.flags |= efx::kFlagApplyPhysics;
-        check(!has(efx::i18n::Str::VImpactFxNoPhysics), "mit Physik ist es still");
-
+        // killOnImpact ohne usePhysics ist mit der Liste kein Widerspruch —
+        // die Physik kommt aus der Liste.
+        p.flags |= efx::kFlagKillOnImpact;
+        check(!has(efx::i18n::Str::VImpactKills),
+              "impactKills mit impactfx-Liste braucht kein usePhysics");
         p.impactFx.clear();
-        p.flags = 0;
-        check(!has(efx::i18n::Str::VImpactFxNoFlag), "ohne impactfx gar nichts");
+        check(has(efx::i18n::Str::VImpactKills),
+              "ohne die Liste fehlt die Physik wirklich");
     }
 
-    // deathfx ohne das Flag: die Datei sieht vollstaendig aus, und beim
-    // Sterben passiert nichts.
+    // deathfx braucht KEIN Flag in der Datei: ParseDeathFxStrings setzt
+    // FX_DEATH_RUNS_FX selbst (FxTemplate.cpp, SP und MP).
     {
         efx::Effect effect;
         effect.primitives.push_back(efx::Primitive{});
@@ -3831,11 +3877,11 @@ void testCurves() {
             }
             return false;
         };
-        check(has(efx::i18n::Str::VDeathFxNoFlag),
-              "deathfx ohne Flag wird gemeldet");
+        check(!has(efx::i18n::Str::VDeathFxNoFlag),
+              "deathfx ohne Flag ist kein Befund");
 
         p.flags |= efx::kFlagDeathRunsFx;
-        check(!has(efx::i18n::Str::VDeathFxNoFlag), "mit Flag nicht mehr");
+        check(!has(efx::i18n::Str::VDeathFxNoFlag), "mit Flag ebenso wenig");
         check(!has(efx::i18n::Str::VDeathFxKillOnImpact), "und kein Hinweis");
 
         p.flags |= efx::kFlagKillOnImpact;
@@ -4812,7 +4858,11 @@ void testParticles() {
             e.velocity.min = {100.0f, 0.0f, 0.0f};
             e.velocity.max = e.velocity.min;
             e.density = efx::Range::single(25.0f);
-            e.playFx.push_back("kinder/funke");
+            // emitfx, nicht playfx: CEmitter sendet mEmitterFxHandles aus
+            // (FxScheduler.cpp, FX_AddEmitter). Der Test hatte playfx — und
+            // pruefte damit genau den Fehler mit, dass in der Vorschau kein
+            // einziger Raven-Emitter aussandte.
+            e.emitFx.push_back("kinder/funke");
 
             System emitting;
             emitting.play(emitter, 1, {}, {}, loader);
@@ -4829,13 +4879,17 @@ void testParticles() {
             check(sparser.startedEffects() < emitting.startedEffects(),
                   "groessere Dichte heisst weniger Aussendungen");
 
-            // Ohne density sendet er nichts aus — sonst waere jeder Emitter
-            // ohne das Feld eine Endlosquelle.
-            efx::Effect silent = emitter;
-            silent.primitives[0].density.set = false;
-            System quiet;
-            quiet.play(silent, 1, {}, {}, loader);
-            check(quiet.startedEffects() == 0, "ohne density wird nichts ausgesendet");
+            // Ohne density gilt 10 — nicht 0. Der Erzeuger von
+            // CPrimitiveTemplate setzt `mDensity.SetRange( 10.0f, 10.0f )`,
+            // mit Ravens Kommentar "default this high so it doesn't do bad
+            // things". Hier stand "ohne density wird nichts ausgesendet".
+            // 100 Einheiten Weg bei Schritt 10 +- 1: rund zehn Aussendungen.
+            efx::Effect plain = emitter;
+            plain.primitives[0].density.set = false;
+            System defaulted;
+            defaulted.play(plain, 1, {}, {}, loader);
+            check(defaulted.startedEffects() >= 8 && defaulted.startedEffects() <= 12,
+                  "ohne density gilt die Voreinstellung 10: rund zehn Aussendungen");
         }
 
             // --- Physik am Partikel -------------------------------------------
@@ -4937,13 +4991,15 @@ void testParticles() {
                     return e;
                 };
 
-                // Ohne das Flag passiert nichts — wie beim deathFx.
+                // Auch ohne das Flag in der Datei: die Liste setzt es
+                // (ParseImpactFxStrings, FxTemplate.cpp). Hier stand "ohne
+                // das Flag passiert nichts" — im Spiel passiert es.
                 {
-                    System quiet;
-                    quiet.play(withImpact(efx::kFlagApplyPhysics), 1, {}, {},
-                               impactLoader, planes);
-                    check(quiet.startedEffects() == 0,
-                          "ohne FX_IMPACT_RUNS_FX kein Aufpralleffekt");
+                    System implied;
+                    implied.play(withImpact(efx::kFlagApplyPhysics), 1, {}, {},
+                                 impactLoader, planes);
+                    check(implied.startedEffects() > 0,
+                          "die impactfx-Liste allein startet den Aufpralleffekt");
                 }
 
                 // Mit dem Flag schon, und einmal je Aufprall.
@@ -4982,13 +5038,20 @@ void testParticles() {
                     }
                 }
 
-                // Ohne Physik gibt es keine Aufpralle, also auch keine Effekte.
+                // Auch usePhysics braucht es nicht: dieselbe Funktion setzt
+                // FX_APPLY_PHYSICS mit. Ohne jedes Flag prallt es also ab und
+                // startet seinen Effekt — wie im Spiel.
                 {
-                    System noPhysics;
-                    noPhysics.play(withImpact(efx::kFlagImpactRunsFx), 1, {}, {},
-                                   impactLoader, planes);
-                    check(noPhysics.startedEffects() == 0,
-                          "ohne usePhysics gibt es keine Aufpralle");
+                    System bare;
+                    bare.play(withImpact(0), 1, {}, {}, impactLoader, planes);
+                    // Das Elternteil steht HINTER seinen Kindern in live() —
+                    // es wird erst nach ihnen eingetragen. Gesucht wird also
+                    // das eine mit Bahn.
+                    bool anyPath = false;
+                    for (const auto& item : bare.live()) anyPath |= item.hasPath;
+                    check(anyPath, "die impactfx-Liste schaltet die Physik ein");
+                    check(bare.startedEffects() > 0,
+                          "und der Aufpralleffekt startet ohne jedes Flag");
                 }
             }
 
@@ -5023,13 +5086,15 @@ void testParticles() {
                 return e;
             };
 
-            // Ohne das Flag passiert nichts. Ein gesetztes deathfx allein tut
-            // nicht — das ist der haeufigste Irrtum am Feld.
+            // Auch ohne das Flag in der Datei: ParseDeathFxStrings setzt
+            // FX_DEATH_RUNS_FX selbst (FxTemplate.cpp, SP und MP). Hier stand
+            // "ein gesetztes deathfx allein tut nichts" — das galt nur fuer
+            // unsere Vorschau.
             {
                 System noFlag;
                 noFlag.play(projectile(0), 1, {}, {}, loader);
-                check(noFlag.startedEffects() == 0,
-                      "ohne FX_DEATH_RUNS_FX wird deathFx nicht ausgeloest");
+                check(noFlag.startedEffects() == 1,
+                      "die deathfx-Liste allein loest den Todeseffekt aus");
             }
 
             // Mit dem Flag schon.
@@ -5167,10 +5232,10 @@ void testParticles() {
             f.velocity.min = {1000.0f, 0.0f, 0.0f};
             f.velocity.max = f.velocity.min;
             f.density = efx::Range::single(0.01f);
-            f.playFx.push_back("kinder/funke");
+            f.emitFx.push_back("kinder/funke");
             System flooded;
             flooded.play(flood, 1, {}, {}, loader);
-            check(flooded.startedEffects() <= 256,
+            check(flooded.startedEffects() > 0 && flooded.startedEffects() <= 256,
                   "eine unsinnig kleine Dichte wird gedeckelt");
         }
 
@@ -11651,6 +11716,694 @@ void testValidator() {
     check(foundLimit, "bounce ueber 16 wird als wirkungslos gemeldet");
 }
 
+// ===========================================================================
+// Befunde aus dem Massentest ueber alle 634 ausgelieferten .efx-Dateien
+// (Movie Duels und Jedi Outcast). Jede Pruefung nennt die Fundstelle in der
+// Engine (OpenJK: SP code/, MP codemp/); jede wurde gegengeprueft, indem die
+// Korrektur voruebergehend zurueckgenommen wurde — dann wird sie rot.
+// ===========================================================================
+
+// Ein unkomprimiertes Zip von Hand, fuer Pruefungen mit mehreren Archiven.
+void writeStoredZip(const std::filesystem::path& path,
+                    const std::vector<std::pair<std::string, std::string>>& entries) {
+    auto put16 = [](std::string& out, std::uint16_t v) {
+        out += static_cast<char>(v & 0xFF);
+        out += static_cast<char>((v >> 8) & 0xFF);
+    };
+    auto put32 = [](std::string& out, std::uint32_t v) {
+        for (int i = 0; i < 4; ++i) out += static_cast<char>((v >> (i * 8)) & 0xFF);
+    };
+    std::string local, directory;
+    for (const auto& [name, content] : entries) {
+        const auto offset = static_cast<std::uint32_t>(local.size());
+        const auto size = static_cast<std::uint32_t>(content.size());
+        const auto nameSize = static_cast<std::uint16_t>(name.size());
+        local += "PK";
+        local += static_cast<char>(3);
+        local += static_cast<char>(4);
+        put16(local, 20); put16(local, 0); put16(local, 0); put16(local, 0); put16(local, 0);
+        put32(local, 0); put32(local, size); put32(local, size);
+        put16(local, nameSize); put16(local, 0);
+        local += name;
+        local += content;
+
+        directory += "PK";
+        directory += static_cast<char>(1);
+        directory += static_cast<char>(2);
+        put16(directory, 20); put16(directory, 20); put16(directory, 0); put16(directory, 0);
+        put16(directory, 0); put16(directory, 0);
+        put32(directory, 0); put32(directory, size); put32(directory, size);
+        put16(directory, nameSize); put16(directory, 0); put16(directory, 0);
+        put16(directory, 0); put16(directory, 0);
+        put32(directory, 0); put32(directory, offset);
+        directory += name;
+    }
+    const auto count = static_cast<std::uint16_t>(entries.size());
+    std::string end = "PK";
+    end += static_cast<char>(5);
+    end += static_cast<char>(6);
+    put16(end, 0); put16(end, 0); put16(end, count); put16(end, count);
+    put32(end, static_cast<std::uint32_t>(directory.size()));
+    put32(end, static_cast<std::uint32_t>(local.size()));
+    put16(end, 0);
+    std::ofstream file(path, std::ios::binary);
+    file << local << directory << end;
+}
+
+// Ein Lader fuer untergeordnete Effekte aus einer kleinen Tabelle.
+struct ChildLibrary {
+    std::vector<std::pair<std::string, efx::Effect>> effects;
+    void add(const std::string& name, const char* text) {
+        effects.emplace_back(name, efx::read(text).effect);
+    }
+    efx::particles::EffectLoader loader() {
+        return [this](const std::string& name) -> const efx::Effect* {
+            for (const auto& entry : effects) {
+                if (entry.first == name) return &entry.second;
+            }
+            return nullptr;
+        };
+    }
+};
+
+// --- 1. Emitter senden `emitfx` aus, nicht `playfx` --------------------------
+void testEmitterEmitsEmitFx() {
+    std::cout << "== Emitter: emitfx, density 10, variance 1 ==\n";
+    // FxScheduler.cpp (SP), Fall Emitter: FX_AddEmitter( ...,
+    // fx->mEmitterFxHandles.GetHandle(), fx->mDensity.GetVal(),
+    // fx->mVariance.GetVal(), ... ). CEmitter::UpdateEmitter sendet nur bei
+    // `mFlags & FX_EMIT_FX` — das Bit setzt ParseEmitterFxStrings selbst.
+    // `playfx` liest ausschliesslich der FxRunner.
+    ChildLibrary library;
+    library.add("kind", "Particle\n{\n\tlife\t100\n\tshaders\n\t[\n\t\tgfx/x\n\t]\n}\n");
+
+    // So schreibt Raven es (47 Emitter in 36 Dateien, keiner mit playfx).
+    const auto raven = efx::read(
+        "Emitter\n{\n\tlife\t1000\n\tvelocity\t0 0 200\n\tdensity\t10\n"
+        "\tvariance\t1\n\tflags\temitFx\n\temitfx\n\t[\n\t\tkind\n\t]\n}\n");
+    efx::particles::System emitting;
+    emitting.play(raven.effect, 1, {}, {}, library.loader());
+    check(emitting.startedEffects() >= 15 && emitting.startedEffects() <= 25,
+          "200 Einheiten Weg bei density 10: rund zwanzig Aussendungen der emitfx-Liste");
+    std::printf("  Emitter mit emitfx: %d Aussendungen\n", emitting.startedEffects());
+
+    // Ohne das Flag in der Datei: die Liste setzt es (ParseEmitterFxStrings).
+    const auto noFlag = efx::read(
+        "Emitter\n{\n\tlife\t1000\n\tvelocity\t0 0 200\n\temitfx\n\t[\n\t\tkind\n\t]\n}\n");
+    efx::particles::System implied;
+    implied.play(noFlag.effect, 1, {}, {}, library.loader());
+    check(implied.startedEffects() >= 15,
+          "ohne flags emitFx und ohne density sendet er trotzdem aus (Voreinstellung 10)");
+
+    // playfx an einem Emitter wertet die Engine nicht aus.
+    const auto playOnly = efx::read(
+        "Emitter\n{\n\tlife\t1000\n\tvelocity\t0 0 200\n\tdensity\t10\n"
+        "\tplayfx\n\t[\n\t\tkind\n\t]\n}\n");
+    efx::particles::System silent;
+    silent.play(playOnly.effect, 1, {}, {}, library.loader());
+    check(silent.startedEffects() == 0, "playfx an einem Emitter sendet nichts aus");
+
+    // Die Voreinstellungen selbst, aus dem Erzeuger von CPrimitiveTemplate.
+    check(efx::kDefaultDensity == 10.0f && efx::kDefaultVariance == 1.0f,
+          "density 10 und variance 1 wie mDensity/mVariance im Erzeuger");
+}
+
+// --- 2. Kurvenwoerter ueberstehen das Speichern ------------------------------
+void testCurveWordsSurviveSaving() {
+    std::cout << "== Kurvenwoerter beim Speichern ==\n";
+    // FX_CLAMP ist 0x0C = FX_NONLINEAR|FX_WAVE (FxPrimitives.h); random (0x02)
+    // ist ein eigenes Bit. Raven schreibt "linear clamp" 118-mal und "random
+    // linear clamp" dreimal (scepter/beam_warmup.efx).
+    const auto readBack = [](const char* flags) {
+        std::string text = "Particle\n{\n\tlife\t1000\n\talpha\n\t{\n\t\tstart\t0\n"
+                           "\t\tend\t1\n\t\tparm\t30\n\t\tflags\t";
+        text += flags;
+        text += "\n\t}\n\tshaders\n\t[\n\t\tgfx/x\n\t]\n}\n";
+        return efx::read(text).effect;
+    };
+
+    {
+        const efx::Effect original = readBack("random linear clamp");
+        const std::string written = efx::write(original);
+        const efx::Effect back = efx::read(written).effect;
+        const auto& a = original.primitives[0].alpha;
+        const auto& b = back.primitives[0].alpha;
+        check(a.curveFlags == (efx::kCurveRandom | efx::kCurveLinear | efx::kCurveClamp),
+              "random linear clamp sind die Bits 0xF");
+        check(b.curveFlags == a.curveFlags, "random bleibt nach dem Speichern erhalten");
+        check(b.curveWords == a.curveWords, "die Woerter kommen unveraendert zurueck");
+        check(written.find("random linear clamp") != std::string::npos &&
+                  written.find("wave") == std::string::npos,
+              "geschrieben steht \"random linear clamp\", kein wave");
+    }
+
+    // "linear clamp" darf nach dem Speichern keinen Pruefungsfehler bekommen,
+    // den es vorher nicht hatte (126 Raven-Dateien waren betroffen).
+    {
+        const efx::Effect original = readBack("linear clamp");
+        const efx::Effect back = efx::read(efx::write(original)).effect;
+        auto errors = [](const efx::Effect& e) {
+            int n = 0;
+            for (const auto& d : efx::validate(e)) n += d.severity == efx::Severity::Error;
+            return n;
+        };
+        check(errors(original) == 0 && errors(back) == 0,
+              "linear clamp: vor und nach dem Speichern ohne Fehler");
+    }
+
+    // Geaendert in der Oberflaeche: die Woerter sind dann leer (editCurveFlags
+    // leert sie), und der Schreiber formuliert neu — ohne Kollision.
+    {
+        efx::Effect edited = readBack("linear");
+        auto& alpha = edited.primitives[0].alpha;
+        alpha.curveFlags = efx::kCurveRandom | efx::kCurveLinear | efx::kCurveClamp;
+        alpha.curveWords.clear();
+        const std::string written = efx::write(edited);
+        check(written.find("random linear clamp") != std::string::npos,
+              "neu formuliert in Ravens Reihenfolge: random linear clamp");
+        const efx::Effect back = efx::read(written).effect;
+        check(back.primitives[0].alpha.curveFlags == alpha.curveFlags,
+              "und die Bits laufen zurueck");
+        bool collision = false;
+        for (const auto& d : efx::validate(back)) {
+            if (d.id == efx::i18n::Str::VCurveCollision) collision = true;
+        }
+        check(!collision, "ohne Kollisionsmeldung");
+
+        alpha.curveFlags = efx::kCurveLinear | efx::kCurveNonLinear;
+        alpha.curveWords.clear();
+        check(efx::write(edited).find("linear nonlinear") != std::string::npos,
+              "linear|nonlinear wird \"linear nonlinear\"");
+        // Veraltete Woerter (passen nicht mehr zu den Bits) werden nicht
+        // geschrieben, sondern neu formuliert.
+        alpha.curveFlags = efx::kCurveWave;
+        alpha.curveWords = {"linear"};
+        const std::string waveText = efx::write(edited);
+        check(waveText.find("\twave") != std::string::npos &&
+                  waveText.find("linear") == std::string::npos,
+              "Woerter, die nicht mehr zu den Bits passen, werden ersetzt");
+    }
+}
+
+// --- 3. Unbekannte Bloecke (ForceFeedback) ----------------------------------
+void testForeignGroupsKept() {
+    std::cout << "== ForceFeedback und andere fremde Bloecke ==\n";
+    // CFxScheduler::ParseEffect (FxScheduler.cpp) sucht den Gruppennamen in der
+    // Tabelle der Primitivtypen und uebergeht alles andere stumm. 51
+    // ausgelieferte Dateien haben einen forcefeedback-Block, z.B.
+    // blaster/muzzle_flash.efx — genau in dieser Lage, mitten drin:
+    const char* text =
+        "Sound\r\n{\r\n\tsounds\r\n\t[\r\n\t\tsound/weapons/blaster/fire.wav\r\n\t]\r\n}\r\n"
+        "\r\n"
+        "forcefeedback\r\n{\r\n\tforces\r\n\t[\r\n\t\tfffx/weapons/blaster/fire\r\n\t]\r\n}\r\n"
+        "\r\n"
+        "CameraShake\r\n{\r\n\tlife\t\t\t\t50\r\n\tintensity\t\t\t0.3 0.4\r\n\tradius\t60\r\n}";
+    const efx::ReadResult result = efx::read(text);
+    check(!result.hasErrors(), "forcefeedback ist kein Lesefehler");
+    bool onlyInfo = true;
+    for (const auto& d : result.diagnostics) {
+        if (d.severity != efx::Severity::Info) onlyInfo = false;
+    }
+    check(onlyInfo && !result.diagnostics.empty(), "sondern ein Hinweis");
+    check(result.effect.primitives.size() == 2, "beide Primitive gelesen");
+    check(result.effect.foreignGroups.size() == 1 &&
+              result.effect.foreignGroups[0].beforePrimitive == 1 &&
+              result.effect.foreignGroups[0].text.find('\r') == std::string::npos &&
+              result.effect.foreignGroups[0].text.rfind("forcefeedback", 0) == 0 &&
+              result.effect.foreignGroups[0].text.back() == '}',
+          "der Block wird wortwoertlich mit seiner Lage gemerkt");
+
+    const std::string written = efx::write(result.effect);
+    const size_t sound = written.find("Sound");
+    const size_t feedback = written.find("forcefeedback\r\n{\r\n\tforces\r\n\t[\r\n"
+                                         "\t\tfffx/weapons/blaster/fire\r\n\t]\r\n}");
+    const size_t shake = written.find("CameraShake");
+    check(feedback != std::string::npos, "der Block steht nach dem Speichern noch da");
+    check(sound < feedback && feedback < shake, "und an derselben Stelle");
+    std::string why;
+    check(same(result.effect, efx::read(written).effect, why),
+          "verlustfreier Umlauf mit fremdem Block (" + why + ")");
+
+    // Wird die Primitive davor geloescht, geht der Block nicht verloren.
+    efx::Effect fewer = result.effect;
+    fewer.primitives.clear();
+    check(efx::write(fewer).find("fffx/weapons/blaster/fire") != std::string::npos,
+          "auch ohne Primitive bleibt der Block erhalten");
+
+    // Ein anderer unbekannter Name ist wahrscheinlich ein Tippfehler: Warnung,
+    // aber kein Fehler, und ebenfalls erhalten.
+    const efx::ReadResult typo = efx::read("Partcle\n{\n\tlife\t100\n}\n");
+    bool warned = false;
+    for (const auto& d : typo.diagnostics) warned |= d.severity == efx::Severity::Warning;
+    check(!typo.hasErrors() && warned, "ein Tippfehler im Typ ist eine Warnung");
+    check(efx::write(typo.effect).find("Partcle") != std::string::npos,
+          "und bleibt beim Speichern stehen");
+}
+
+// --- 4. Fehlendes `end` ist 1.0 ---------------------------------------------
+void testMissingEndIsOne() {
+    std::cout << "== Fehlendes end ist 1.0 ==\n";
+    // Erzeuger von CPrimitiveTemplate (FxTemplate.cpp): mSizeEnd, mSize2End,
+    // mLengthEnd, mAlphaEnd, mRedEnd/mGreenEnd/mBlueEnd stehen auf 1.0;
+    // FxScheduler.cpp reicht `mSizeEnd.GetVal()` unveraendert weiter.
+    const auto effect = efx::read(
+        "Particle\n{\n\tlife\t1000\n\tsize\n\t{\n\t\tstart\t10\n\t\tflags\tlinear\n\t}\n"
+        "\trgb\n\t{\n\t\tstart\t1 0 0\n\t\tflags\tlinear\n\t}\n"
+        "\talpha\n\t{\n\t\tstart\t0.2\n\t\tflags\tlinear\n\t}\n"
+        "\tshaders\n\t[\n\t\tgfx/x\n\t]\n}\n").effect;
+    efx::particles::System system;
+    system.play(effect, 1u);
+    check(system.live().size() == 1, "eine Primitive");
+    if (system.live().empty()) return;
+    const auto& item = system.live()[0];
+    check(item.size.end == 1.0f, "size ohne end endet bei 1, nicht bei start");
+    check(item.alpha.end == 1.0f, "alpha ohne end endet bei 1");
+    check(item.rgb[0].end == 1.0f && item.rgb[1].end == 1.0f && item.rgb[2].end == 1.0f,
+          "rgb ohne end endet bei Weiss, nicht bei der Startfarbe");
+    const float half = efx::curve::evaluate(item.size, item.spawnMs + 500.0f, item.spawnMs,
+                                            item.deathMs, item.sizeParm, item.randomSize);
+    check(std::fabs(half - 5.5f) < 0.01f,
+          "size { start 10 flags linear } ist bei halber Zeit 5.5 wie im Spiel");
+    std::printf("  size bei 50 %%: %.2f (Engine 5.5)\n", static_cast<double>(half));
+}
+
+// --- 5. Kindeffekte und Wiederholungen: die Uhr der Kurven ------------------
+void testChildCurvesUseTheirOwnClock() {
+    std::cout << "== Kurvenparameter von Kindeffekten ==\n";
+    // CParticle::Init (FxPrimitives.cpp) bzw. FxScheduler: bei nonlinear und
+    // clamp ist der Parameter ein ABSOLUTER Zeitpunkt,
+    //     mAlphaParm = alphaParm * 0.01f * killTime + theFxHelper.mTime
+    // also ab der Entstehung DIESES Teilchens.
+    const char* fading =
+        "Particle\n{\n\tlife\t1000\n\talpha\n\t{\n\t\tstart\t1\n\t\tend\t0\n"
+        "\t\tparm\t50\n\t\tflags\tnonlinear\n\t}\n\tsize\n\t{\n\t\tstart\t10\n\t}\n"
+        "\tshaders\n\t[\n\t\tgfx/x\n\t]\n}\n";
+    ChildLibrary library;
+    library.add("kind", fading);
+    const efx::Effect root = efx::read(fading).effect;
+    const efx::Effect runner =
+        efx::read("FxRunner\n{\n\tdelay\t2000\n\tplayfx\n\t[\n\t\tkind\n\t]\n}\n").effect;
+
+    efx::particles::System direct, delayed;
+    direct.play(root, 1, {}, {}, library.loader());
+    delayed.play(runner, 1, {}, {}, library.loader());
+    check(!direct.live().empty() && !delayed.live().empty(), "beide spielen");
+    if (direct.live().empty() || delayed.live().empty()) return;
+    const auto& child = delayed.live()[0];
+    check(std::fabs(child.spawnMs - 2000.0f) < 0.01f, "das Kind startet bei 2000 ms");
+    check(std::fabs(child.alphaParm - (child.spawnMs + 500.0f)) < 0.5f,
+          "sein Ausblendpunkt liegt 500 ms nach SEINEM Start, nicht nach dem des Elternteils");
+
+    auto colourAt = [](const efx::particles::System& s, float t) {
+        const auto list = s.build(t, efx::camera::Vec3{1, 0, 0}, efx::camera::Vec3{0, 0, 1});
+        for (const auto& group : list.byTexture) {
+            if (!group.second.vertices.empty()) {
+                return static_cast<int>(group.second.vertices[0].colour & 0xFF);
+            }
+        }
+        return -1;
+    };
+    const int atRoot = colourAt(direct, 250.0f);
+    const int atChild = colourAt(delayed, 2250.0f);
+    check(atRoot == atChild && atRoot > 250,
+          "250 ms nach dem Start sieht das Kind aus wie derselbe Effekt allein: voll hell");
+    std::printf("  250 ms nach dem Start: allein %d, als Kind %d\n", atRoot, atChild);
+
+    // Dieselbe Regel fuer jede Wiederholungsgeneration (repeatDelay).
+    const efx::Effect repeating =
+        efx::read((std::string("repeatDelay\t300\n") + fading).c_str()).effect;
+    efx::particles::System generations;
+    generations.play(repeating, 1, {}, {}, {}, {}, true);
+    int total = 0, wrong = 0;
+    for (const auto& item : generations.live()) {
+        ++total;
+        const float expected = efx::curve::resolveParm(
+            item.alpha, item.spawnMs, item.deathMs - item.spawnMs);
+        if (std::fabs(expected - item.alphaParm) > 0.5f) ++wrong;
+    }
+    check(total > 1 && wrong == 0,
+          "jede Wiederholungsgeneration blendet ab ihrem eigenen Start aus");
+    std::printf("  Wiederholung: %d Teilchen, %d mit verschobenem Ausblendpunkt\n", total,
+                wrong);
+}
+
+// --- 6. Die Listen setzen ihre Flags selbst ----------------------------------
+void testListsSetTheirOwnFlags() {
+    std::cout << "== deathfx/impactfx/emitfx/models setzen ihre Flags ==\n";
+    // FxTemplate.cpp, SP ParseFX bzw. MP am Ende jeder Funktion:
+    //   ParseImpactFxStrings   mFlags |= FX_IMPACT_RUNS_FX | FX_APPLY_PHYSICS
+    //   ParseDeathFxStrings    mFlags |= FX_DEATH_RUNS_FX
+    //   ParseEmitterFxStrings  mFlags |= FX_EMIT_FX
+    //   ParseModels            mFlags |= FX_ATTACHED_MODEL
+    efx::Primitive p;
+    check(efx::effectiveFlags(p) == 0, "ohne Listen keine zusaetzlichen Bits");
+    p.deathFx = {"a"};
+    p.impactFx = {"b"};
+    p.emitFx = {"c"};
+    p.models = {"d.md3"};
+    const uint32_t flags = efx::effectiveFlags(p);
+    check((flags & efx::kFlagDeathRunsFx) && (flags & efx::kFlagImpactRunsFx) &&
+              (flags & efx::kFlagApplyPhysics) && (flags & efx::kFlagEmitFx) &&
+              (flags & efx::kFlagAttachedModel),
+          "jede Liste setzt ihr Bit wie im Parser der Engine");
+
+    // Und die Vorschau richtet sich danach: deathfx ohne Flag startet.
+    ChildLibrary library;
+    library.add("boom", "Particle\n{\n\tlife\t100\n\tshaders\n\t[\n\t\tgfx/x\n\t]\n}\n");
+    const auto dying = efx::read(
+        "Particle\n{\n\tlife\t200\n\tshaders\n\t[\n\t\tgfx/x\n\t]\n"
+        "\tdeathfx\n\t[\n\t\tboom\n\t]\n}\n");
+    efx::particles::System system;
+    system.play(dying.effect, 1, {}, {}, library.loader());
+    check(system.startedEffects() == 1, "deathfx ohne flags deathFx startet beim Tod");
+    bool falseAlarm = false;
+    for (const auto& d : efx::validate(dying.effect)) {
+        if (d.id == efx::i18n::Str::VDeathFxNoFlag || d.id == efx::i18n::Str::VImpactFxNoFlag ||
+            d.id == efx::i18n::Str::VImpactFxNoPhysics) {
+            falseAlarm = true;
+        }
+    }
+    check(!falseAlarm, "und die Pruefung meldet nichts dazu");
+
+    // impactfx ohne jedes Flag: Physik und Aufpralleffekt (huge_lightning.efx,
+    // tripmine/laserMP.efx haben es so).
+    const auto falling = efx::read(
+        "Particle\n{\n\tlife\t3000\n\torigin\t100 0 0\n\tvelocity\t-400 0 0\n"
+        "\tshaders\n\t[\n\t\tgfx/x\n\t]\n"
+        "\timpactfx\n\t[\n\t\tboom\n\t]\n}\n");
+    efx::particles::System hitting;
+    hitting.play(falling.effect, 1, {}, {}, library.loader(),
+                 efx::sim::roomPlanes(256.0f, 384.0f, 320.0f));
+    // Das Elternteil steht hinter seinen Kindern in live() — deshalb suchen.
+    bool anyPath = false;
+    for (const auto& item : hitting.live()) anyPath |= item.hasPath;
+    check(anyPath, "impactfx allein schaltet die Physik ein");
+    check(hitting.startedEffects() >= 1, "und startet beim Aufprall seinen Effekt");
+}
+
+// --- 7. orgOnSphere/orgOnCylinder ohne radius/height -------------------------
+void testSphereAndCylinderDefaults() {
+    std::cout << "== orgOnSphere/orgOnCylinder ohne radius ==\n";
+    // Erzeuger von CPrimitiveTemplate: mRadius und mHeight stehen auf 10.
+    // FxScheduler.cpp liest im Zweig FX_ORG_ON_SPHERE/CYLINDER
+    // `fx->mRadius.GetVal()` und `fx->mHeight.GetVal()` ohne Pruefung.
+    auto spread = [](const char* spawnFlags, float& minDistance, float& maxDistance) {
+        std::string text = "Particle\n{\n\tcount\t40\n\tlife\t1000\n\tspawnFlags\t";
+        text += spawnFlags;
+        text += "\n\tshaders\n\t[\n\t\tgfx/x\n\t]\n}\n";
+        efx::particles::System system;
+        system.play(efx::read(text).effect, 3u);
+        minDistance = 1e9f;
+        maxDistance = 0.0f;
+        for (const auto& item : system.live()) {
+            const float d = efx::camera::length(item.origin);
+            minDistance = std::min(minDistance, d);
+            maxDistance = std::max(maxDistance, d);
+        }
+    };
+    float lo = 0.0f, hi = 0.0f;
+    spread("orgOnSphere", lo, hi);
+    check(lo > 9.9f && hi < 10.1f, "orgOnSphere ohne radius: alle Punkte 10 vom Ursprung");
+    std::printf("  orgOnSphere: Abstand %.2f bis %.2f (Engine 10)\n",
+                static_cast<double>(lo), static_cast<double>(hi));
+    spread("orgOnCylinder", lo, hi);
+    // Mantel mit Radius 10, Hoehe 10: Abstand zwischen 10 und sqrt(10^2+5^2).
+    check(lo > 9.9f && hi < 11.2f, "orgOnCylinder ohne radius/height: auf dem Mantel, Radius 10");
+}
+
+// --- 8. Suchreihenfolge der Archive -----------------------------------------
+void testPk3SearchOrder() {
+    std::cout << "== Suchreihenfolge der .pk3 ==\n";
+    // FS_AddGameDirectory (code/qcommon/files.cpp): erst der Ordner, dann jedes
+    // Archiv (paksort = FS_PathCmp) VOR die bisherigen gestellt. Ergebnis:
+    // letztes Archiv zuerst, ausgepackte Dateien zuletzt (fs_dirbeforepak 0).
+    namespace fs = std::filesystem;
+    using namespace efx::assets;
+    const fs::path base = fs::temp_directory_path() / "efxed_pk3order";
+    fs::remove_all(base);
+    fs::create_directories(base / "effects" / "blaster");
+    fs::create_directories(base / "gfx" / "fx");
+    fs::create_directories(base / "sound" / "fx");
+
+    writeStoredZip(base / "assets0.pk3",
+                   {{"effects/blaster/muzzle_flash.efx", "ALT"},
+                    {"gfx/fx/glow.tga", "ALT"},
+                    {"sound/fx/hit.wav", "ALT"},
+                    {"shaders/fx.shader", "gfx/fx/s\n{\n\t{\n\t\tmap gfx/fx/alt.tga\n\t}\n}\n"}});
+    writeStoredZip(base / "assets2.pk3",
+                   {{"effects/blaster/muzzle_flash.efx", "NEU"},
+                    {"gfx/fx/glow.tga", "NEU"},
+                    {"sound/fx/hit.wav", "NEU"},
+                    {"shaders/fx.shader", "gfx/fx/s\n{\n\t{\n\t\tmap gfx/fx/neu.tga\n\t}\n}\n"}});
+    // FS_PathCmp vergleicht in GROSSbuchstaben: `_` liegt hinter `Z`, also
+    // kommt assets_x NACH assetsz und wird zuerst durchsucht.
+    writeStoredZip(base / "assetsz.pk3", {{"gfx/fx/under.tga", "Z"}});
+    writeStoredZip(base / "assets_x.pk3", {{"gfx/fx/under.tga", "UNTERSTRICH"}});
+    { std::ofstream(base / "effects" / "blaster" / "muzzle_flash.efx") << "LOSE"; }
+    { std::ofstream(base / "gfx" / "fx" / "glow.tga") << "LOSE"; }
+    { std::ofstream(base / "sound" / "fx" / "hit.wav") << "LOSE"; }
+
+    auto content = [&](const ResolvedTexture& where) {
+        const auto bytes = readFile(base.string(), where);
+        return std::string(bytes.begin(), bytes.end());
+    };
+    for (int parallel = 0; parallel < 2; ++parallel) {
+        efx::jobs::Pool pool;
+        const Index index = scan(base.string(), parallel ? &pool : nullptr);
+        const std::string label = parallel ? " (verteilt gelesen)" : "";
+        check(index.archives.size() == 4 &&
+                  fs::path(index.archives[0]).filename().string() == "assets_x.pk3" &&
+                  fs::path(index.archives[1]).filename().string() == "assetsz.pk3" &&
+                  fs::path(index.archives[3]).filename().string() == "assets0.pk3",
+              "Archive in Suchreihenfolge: assets_x, assetsz, assets2, assets0" + label);
+        check(content(findEffect(index, base.string(), "blaster/muzzle_flash")) == "NEU",
+              "Effekt: das spaetere Archiv gewinnt, auch gegen die ausgepackte Datei" + label);
+        check(content(findTexture(index, base.string(), "gfx/fx/glow")) == "NEU",
+              "Bild: ebenso" + label);
+        check(content(findSound(index, base.string(), "sound/fx/hit.wav")) == "NEU",
+              "Klang: ebenso" + label);
+        check(content(findTexture(index, base.string(), "gfx/fx/under")) == "UNTERSTRICH",
+              "paksort vergleicht in Grossbuchstaben" + label);
+        check(index.mapOf("gfx/fx/s") == "gfx/fx/neu.tga",
+              "Shaderdatei gleichen Namens: die aus dem spaeteren Archiv" + label);
+        check(fs::path(index.sourceOf("blaster/muzzle_flash")).filename().string() ==
+                  "assets2.pk3",
+              "der Browser nennt dieselbe Quelle" + label);
+    }
+    fs::remove_all(base);
+
+    // Zwei .shader-Dateien mit demselben Shader: ScanAndLoadShaderFiles haengt
+    // die Dateien RUECKWAERTS aneinander, FindShaderInShaderText nimmt den
+    // ersten Treffer — die alphabetisch letzte Datei gewinnt.
+    const fs::path shaders = fs::temp_directory_path() / "efxed_shaderorder";
+    fs::remove_all(shaders);
+    fs::create_directories(shaders / "shaders");
+    { std::ofstream(shaders / "shaders" / "a.shader")
+          << "gfx/doppelt\n{\n\t{\n\t\tmap gfx/aus_a.tga\n\t}\n}\n"; }
+    { std::ofstream(shaders / "shaders" / "b.shader")
+          << "gfx/doppelt\n{\n\t{\n\t\tmap gfx/aus_b.tga\n\t}\n}\n"; }
+    const Index twice = scan(shaders.string());
+    check(twice.mapOf("gfx/doppelt") == "gfx/aus_b.tga",
+          "doppelter Shader: die alphabetisch letzte .shader-Datei gewinnt");
+    fs::remove_all(shaders);
+}
+
+// --- 9. Shadername mit Endung -----------------------------------------------
+void testShaderNameWithExtension() {
+    std::cout << "== Shadername mit Endung ==\n";
+    // R_FindShader (tr_shader.cpp): COM_StripExtension( name, strippedName )
+    // vor FindShaderInShaderText. cinematics/takeoff.efx schreibt
+    // `gfx/effects/wcloud.tga` und meint den Shader gfx/effects/wcloud.
+    namespace fs = std::filesystem;
+    using namespace efx::assets;
+    const fs::path base = fs::temp_directory_path() / "efxed_shaderext";
+    fs::remove_all(base);
+    fs::create_directories(base / "shaders");
+    fs::create_directories(base / "gfx" / "misc");
+    { std::ofstream(base / "shaders" / "fx.shader")
+          << "gfx/effects/wcloud\n{\n\t{\n\t\tmap gfx/misc/cloud.tga\n"
+             "\t\tblendFunc GL_ONE GL_ONE\n\t}\n}\n"; }
+    { std::ofstream(base / "gfx" / "misc" / "cloud.tga") << "x"; }
+    const Index index = scan(base.string());
+    check(index.hasShader("gfx/effects/wcloud.tga"), "der Shader wird auch mit Endung gefunden");
+    check(index.mapOf("gfx/effects/wcloud.tga") == "gfx/misc/cloud.tga",
+          "mit seiner map-Zeile");
+    check(index.blendOf("gfx/effects/wcloud.tga") == efx::shader::BlendMode::Additive,
+          "und seiner Mischung statt der Ersatzmischung");
+    const auto where = findTexture(index, base.string(), "gfx/effects/wcloud.tga");
+    check(where.found && where.path == "gfx/misc/cloud.tga",
+          "das Bild kommt aus dem Shader, nicht aus dem Namen");
+    fs::remove_all(base);
+}
+
+// --- 10. Klang ohne Endung --------------------------------------------------
+void testSoundWithoutExtension() {
+    std::cout << "== Klang ohne Endung ==\n";
+    // S_LoadSound_Actual (snd_mem.cpp): ohne Endung COM_DefaultExtension
+    // ".wav", dann der Rueckfall auf ".mp3" (S_LoadSound_FileLoadAndNameAdjuster).
+    // disruptor/alt_miss.efx: `sound/weapons/disruptor/hit_wall` -> .mp3.
+    namespace fs = std::filesystem;
+    using namespace efx::assets;
+    const fs::path base = fs::temp_directory_path() / "efxed_soundnoext";
+    fs::remove_all(base);
+    fs::create_directories(base / "sound" / "fx");
+    { std::ofstream(base / "sound" / "fx" / "hit_wall.mp3") << "m"; }
+    { std::ofstream(base / "sound" / "fx" / "glass.wav") << "w"; }
+    { std::ofstream(base / "sound" / "fx" / "both.wav") << "w"; }
+    { std::ofstream(base / "sound" / "fx" / "both.mp3") << "m"; }
+    const Index index = scan(base.string());
+    const auto mp3 = findSound(index, base.string(), "sound/fx/hit_wall");
+    check(mp3.found && mp3.path == "sound/fx/hit_wall.mp3", "ohne Endung: .wav, dann .mp3");
+    const auto wav = findSound(index, base.string(), "sound/fx/glass");
+    check(wav.found && wav.path == "sound/fx/glass.wav", "ohne Endung: .wav gefunden");
+    const auto both = findSound(index, base.string(), "sound/fx/both");
+    check(both.found && both.path == "sound/fx/both.wav", ".wav kommt vor .mp3");
+    fs::remove_all(base);
+}
+
+// --- 11. Zylinder im 16-Bit-Indexbereich ------------------------------------
+void testCylinderIndexBudget() {
+    std::cout << "== Zylinder: 16-Bit-Indizes ==\n";
+    // Dieselbe Grenze wie hasRoomForQuad; ein Zylinder braucht 64 Eckpunkte.
+    const auto effect = efx::read(
+        "Cylinder\n{\n\tcount\t2000\n\tlife\t1000\n\tsize\n\t{\n\t\tstart\t10\n\t}\n"
+        "\tlength\n\t{\n\t\tstart\t20\n\t}\n\tshaders\n\t[\n\t\tgfx/x\n\t]\n}\n").effect;
+    efx::particles::System system;
+    system.play(effect, 1u);
+    const auto list = system.build(10.0f, efx::camera::Vec3{1, 0, 0},
+                                   efx::camera::Vec3{0, 0, 1});
+    bool inRange = true;
+    for (const auto& group : list.byTexture) {
+        if (group.second.vertices.size() > 65535) inRange = false;
+        for (auto index : group.second.indices) {
+            if (index >= group.second.vertices.size()) inRange = false;
+        }
+    }
+    check(inRange, "2000 Zylinder: kein Index zeigt ueber das Netz hinaus");
+    check(list.skipped > 0, "was nicht passt, wird gezaehlt statt still zerstoert");
+    std::printf("  2000 Zylinder: %d gezeichnet, %d weggelassen\n", list.drawn, list.skipped);
+
+    efx::scene::Mesh almostFull;
+    almostFull.vertices.resize(65535 - 10);
+    check(!efx::particles::addCylinder(almostFull, {}, {0, 0, 1}, 10.0f, 5.0f, 5.0f, 0) &&
+              almostFull.vertices.size() == 65535 - 10 && almostFull.indices.empty(),
+          "ein fast volles Netz bekommt keinen halben Zylinder");
+}
+
+// --- 12. Pruefregeln: doppelt und falsch ------------------------------------
+void testValidatorBulkFindings() {
+    std::cout << "== Pruefregeln aus dem Massentest ==\n";
+    // rgb-Ende ohne Kurvenart stand an zwei Stellen (VNoCurve "rgb" und
+    // VRgbEndNoCurve) — 67-mal je zweimal gemeldet.
+    const auto colour = efx::read(
+        "Particle\n{\n\tlife\t100\n\trgb\n\t{\n\t\tstart\t1 0 0\n\t\tend\t0 0 1\n\t}\n"
+        "\tshaders\n\t[\n\t\tgfx/x\n\t]\n}\n").effect;
+    int rgbWarnings = 0;
+    for (const auto& d : efx::validate(colour)) {
+        if (d.id == efx::i18n::Str::VNoCurve || d.id == efx::i18n::Str::VRgbEndNoCurve) {
+            ++rgbWarnings;
+        }
+    }
+    check(rgbWarnings == 1, "rgb-Ende ohne Kurvenart wird genau einmal gemeldet");
+
+    // Ohne life lebt die Primitive 50 ms: mLife.SetRange( 50.0f, 50.0f ) im
+    // Erzeuger von CPrimitiveTemplate — nicht "genau ein Bild".
+    const auto noLife =
+        efx::read("Particle\n{\n\tshaders\n\t[\n\t\tgfx/x\n\t]\n}\n").effect;
+    bool says50 = false;
+    for (const auto& d : efx::validate(noLife)) {
+        if (d.id == efx::i18n::Str::VNoLife && d.message.find("50") != std::string::npos) {
+            says50 = true;
+        }
+    }
+    check(says50, "der Hinweis zu fehlendem life nennt die 50 ms der Engine");
+    efx::particles::System system;
+    system.play(noLife, 1u);
+    check(!system.live().empty() &&
+              std::fabs(system.live()[0].deathMs - system.live()[0].spawnMs - 50.0f) < 0.01f,
+          "und die Vorschau rechnet ebenso mit 50 ms");
+}
+
+// --- 13. map $whiteimage ----------------------------------------------------
+void testWhiteImageShader() {
+    std::cout << "== map $whiteimage ==\n";
+    // ParseStage (tr_shader.cpp): `$whiteimage` -> tr.whiteImage, angelegt in
+    // R_CreateBuiltinImages (tr_image.cpp) als 8x8, alles 255.
+    // gfx/effects/whiteFlash in gfx2.shader, benutzt von atst/side_alt_explosion.efx.
+    namespace fs = std::filesystem;
+    using namespace efx::assets;
+    const fs::path base = fs::temp_directory_path() / "efxed_whiteimage";
+    fs::remove_all(base);
+    fs::create_directories(base / "shaders");
+    { std::ofstream(base / "shaders" / "gfx2.shader")
+          << "gfx/effects/whiteFlash\n{\n\t{\n\t\tmap $whiteimage\n"
+             "\t\tblendFunc GL_ONE GL_ONE\n\t}\n}\n"; }
+    const Index index = scan(base.string());
+    check(index.blendOf("gfx/effects/whiteFlash") == efx::shader::BlendMode::Additive,
+          "die Mischung des Shaders wird gemerkt");
+    const auto where = findTexture(index, base.string(), "gfx/effects/whiteFlash");
+    check(where.found && where.white, "der Shader fuehrt zum eingebauten weissen Bild");
+    const auto bytes = readFile(base.string(), where);
+    const auto picture = efx::image::decode(bytes.data(), bytes.size());
+    bool allWhite = picture.width == 8 && picture.rgba.size() == 8u * 8u * 4u;
+    for (unsigned char value : picture.rgba) allWhite = allWhite && value == 255;
+    check(allWhite, "readFile liefert ein weisses 8x8-Bild wie tr.whiteImage");
+    fs::remove_all(base);
+}
+
+// --- 14. scanAll uebernimmt alphaGen-Wellen einmal --------------------------
+void testScanAllCopiesAlphaWavesOnce() {
+    std::cout << "== scanAll: alphaGen wave einmal ==\n";
+    namespace fs = std::filesystem;
+    using namespace efx::assets;
+    const fs::path base = fs::temp_directory_path() / "efxed_alphawave";
+    fs::remove_all(base);
+    fs::create_directories(base / "shaders");
+    { std::ofstream(base / "shaders" / "w.shader")
+          << "gfx/pulse\n{\n\t{\n\t\tmap gfx/pulse.tga\n\t\talphaGen wave sin 0.5 0.5 0 1\n"
+             "\t}\n}\n"; }
+    const Index one = scan(base.string());
+    const Index all = scanAll({base.string()});
+    bool emptyName = false;
+    for (const auto& entry : all.shaderAlphaWaves) emptyName |= entry.first.empty();
+    check(one.shaderAlphaWaves.size() == 1 && all.shaderAlphaWaves.size() == 1 && !emptyName,
+          "scanAll uebernimmt jede Welle genau einmal, ohne leere Namen");
+    fs::remove_all(base);
+}
+
+// --- 15. Kleine Abweichungen des Lesers -------------------------------------
+void testParserMatchesEngineLimits() {
+    std::cout << "== Leser: Grenzen wie in der Engine ==\n";
+    // rgb mit einer Zahl: CPrimitiveTemplate::ParseVector verlangt 3 oder 6
+    // (`if ( v < 3 || v == 4 || v == 5 ) return false`) — die Farbe bleibt 1 1 1.
+    const efx::ReadResult grey = efx::read(
+        "Particle\n{\n\trgb\n\t{\n\t\tstart\t0.25\n\t}\n\tshaders\n\t[\n\t\tgfx/x\n\t]\n}\n");
+    check(!grey.effect.primitives[0].rgb.start.set, "rgb { start 0.25 } wird ueberlesen");
+    bool warned = false;
+    for (const auto& d : grey.diagnostics) warned |= d.severity == efx::Severity::Warning;
+    check(warned, "mit einer Warnung");
+
+    // Kurvenflags: ParseGroupFlags hat vier Plaetze. Das fuenfte Wort setzt
+    // nichts mehr — bleibt aber beim Speichern stehen.
+    const efx::ReadResult five = efx::read(
+        "Particle\n{\n\tsize\n\t{\n\t\tstart\t1\n\t\tend\t2\n"
+        "\t\tflags\trandom random random random linear\n\t}\n}\n");
+    const auto& size = five.effect.primitives[0].size;
+    check(size.curveFlags == efx::kCurveRandom, "das fuenfte Kurvenwort liest die Engine nicht");
+    check(size.curveWords.size() == 5 &&
+              efx::write(five.effect).find("random random random random linear") !=
+                  std::string::npos,
+          "die Zeile bleibt beim Speichern unveraendert");
+
+    // flags/spawnFlags: ParseFlags und ParseSpawnFlags haben sieben Plaetze.
+    const efx::ReadResult eight = efx::read(
+        "Particle\n{\n\tflags\tuseAlpha useAlpha useAlpha useAlpha useAlpha useAlpha "
+        "useAlpha depthHack\n}\n");
+    check((eight.effect.primitives[0].flags & efx::kFlagDepthHack) == 0 &&
+              (eight.effect.primitives[0].flags & efx::kFlagUseAlpha) != 0,
+          "das achte Flag-Wort liest die Engine nicht");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -11753,6 +12506,22 @@ int main(int argc, char** argv) {
     testVisualReach();
     testParallelBuild();
     testValidator();
+    // Befunde aus dem Massentest ueber alle 634 ausgelieferten .efx-Dateien.
+    testEmitterEmitsEmitFx();
+    testCurveWordsSurviveSaving();
+    testForeignGroupsKept();
+    testMissingEndIsOne();
+    testChildCurvesUseTheirOwnClock();
+    testListsSetTheirOwnFlags();
+    testSphereAndCylinderDefaults();
+    testPk3SearchOrder();
+    testShaderNameWithExtension();
+    testSoundWithoutExtension();
+    testCylinderIndexBudget();
+    testValidatorBulkFindings();
+    testWhiteImageShader();
+    testScanAllCopiesAlphaWavesOnce();
+    testParserMatchesEngineLimits();
 
     std::cout << "\n" << g_checks << " Pruefungen, " << g_failures << " Fehler";
     if (g_dataFiles > 0) {
