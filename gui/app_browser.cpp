@@ -10,6 +10,7 @@
 // einmal ins Bild geht — nicht eine Ansicht je Kachel. Sechzig eigene
 // Ansichten wären sechzig Renderdurchgänge je Bild.
 #include "app.h"
+#include "testmarke.h"
 #include "app_shared.h"
 
 #include <algorithm>
@@ -115,14 +116,13 @@ void App::drawStartPage(render::Renderer* renderer, float dpiScale) {
             const std::string picked = fileDialog_(
                 false, "Effektdateien (*.efx)\0*.efx\0Alle Dateien\0*.*\0",
                 nullptr);
-            if (!picked.empty()) {
-                openFile(picked);
-                startTabActive_ = false;
-            }
+            if (!picked.empty()) openFile(picked);  // zeigt selbst den Editor
         }
         if (ImGui::Button(tr(Str::StartNewEffect), wide)) {
-            newDocument();
-            startTabActive_ = false;
+            // Ueber den Befehl, der auch den Reiter AUSWAEHLT. Vorher wurde nur
+            // startTabActive_ geloescht - die Reiterleiste hielt "Start" fest,
+            // und im naechsten Bild war die Startseite wieder vorn.
+            cmdNew();
         }
         ImGui::Unindent(24.0f * dpiScale);
         return;
@@ -882,6 +882,7 @@ void App::drawBrowserTile(BrowserEntry& entry, float size) {
     // Die Flaeche: ein Rechteck, in das wir selbst zeichnen.
     const ImVec2 origin = ImGui::GetCursorScreenPos();
     ImGui::InvisibleButton("##tile", ImVec2(size, size));
+    testmarke::marke(("kachel:" + entry.name).c_str());
     const bool hovered = ImGui::IsItemHovered();
     // Fuer das naechste Bild merken: nur diese eine Kachel laeuft. Ein Bild
     // Verzoegerung beim Draufzeigen sieht niemand.
@@ -974,6 +975,8 @@ void App::openBrowserEntry(const BrowserEntry& entry) {
     if (bytes.empty()) return;
 
     newDocument();
+    // Den neuen Reiter auch zeigen (Doppelklick in der Bibliothek).
+    showEditor();
     auto result = read(std::string(bytes.begin(), bytes.end()));
     doc().effect = std::move(result.effect);
     doc().parseDiagnostics = std::move(result.diagnostics);
