@@ -115,6 +115,20 @@ void System::stop() {
     playing_ = false;
 }
 
+void System::spawnMore(const Effect& effect, unsigned seed, const std::vector<bool>& enabledMask,
+                       float atMs, const camera::Vec3& origin) {
+    sim::Random random(seed);
+    const PlayContext context{&loader_, &planes_, axis_};
+    playInto(effect, random, enabledMask, context, 0, atMs, origin);
+    playing_ = !live_.empty();
+}
+
+void System::forgetDeadBefore(float nowMs) {
+    live_.erase(std::remove_if(live_.begin(), live_.end(),
+                               [nowMs](const Live& item) { return item.deathMs < nowMs; }),
+                live_.end());
+}
+
 void System::clear() {
     live_.clear();
     durationMs_ = 0.0f;
@@ -239,7 +253,7 @@ Axis axisFor(int orientation) {
 void System::play(const Effect& effect, unsigned seed,
                   const std::vector<bool>& enabledMask, const Axis& axis,
                   EffectLoader loader, const std::vector<sim::Plane>& planes,
-                  bool buildUpRepeats) {
+                  bool buildUpRepeats, const camera::Vec3& origin) {
     // clear() und nicht stop().
     //
     // Der Fehler, den das behebt: `stop()` haelt seit der Trennung von
@@ -257,9 +271,11 @@ void System::play(const Effect& effect, unsigned seed,
     // Dichte des Originals — und genau das war es auch.
     clear();
     planes_ = planes;
+    loader_ = loader;
+    axis_ = axis;
     sim::Random random(seed);
     const PlayContext context{&loader, &planes, axis};
-    playInto(effect, random, enabledMask, context, 0, 0.0f, {});
+    playInto(effect, random, enabledMask, context, 0, 0.0f, origin);
 
     // `repeatDelay`: der Effekt wiederholt sich, OHNE dass der laufende
     // abgebrochen wird.
@@ -345,7 +361,7 @@ void System::play(const Effect& effect, unsigned seed,
             if (g == 0) continue;   // die steht schon
             sim::Random again(seedFor(g));
             playInto(effect, again, enabledMask, context, 0,
-                     -delay * static_cast<float>(g), {});
+                     -delay * static_cast<float>(g), origin);
         }
 
         // Die Dauer ist EINE Wiederholung.

@@ -352,7 +352,22 @@ public:
               const std::vector<bool>& enabledMask = {}, const Axis& axis = {},
               EffectLoader loader = {},
               const std::vector<sim::Plane>& planes = {},
-              bool buildUpRepeats = false);
+              bool buildUpRepeats = false,
+              const camera::Vec3& origin = {});
+
+    // Den Effekt ZUSAETZLICH ausloesen, ohne den Bestand wegzuwerfen.
+    //
+    // Fuer die Wiedergabe-Einstellungen des Originals: "Repeat for N
+    // seconds", "Respawn effect every frame" und der wandernde Startpunkt
+    // loesen den Effekt immer wieder neu aus — vorwaerts in der Zeit, an
+    // einem jeweils anderen Ort. Achse, Lader und Flaechen gelten wie beim
+    // letzten play().
+    void spawnMore(const Effect& effect, unsigned seed, const std::vector<bool>& enabledMask,
+                   float atMs, const camera::Vec3& origin);
+
+    // Alles vergessen, was vor `nowMs` gestorben ist. Beim fortlaufenden
+    // Nachlegen waechst der Bestand sonst ohne Grenze.
+    void forgetDeadBefore(float nowMs);
     // Anhalten, aber die Geometrie BEHALTEN.
     //
     // Damit bleibt die Zeitleiste bedienbar: nach dem Anhalten kann man den
@@ -463,6 +478,9 @@ private:
     // Die Flaechen aus play(), fuer Decals: CG_ImpactMark projiziert den
     // Abdruck auf die Flaeche, die hoechstens 20 Einheiten hinter ihm liegt.
     std::vector<sim::Plane> planes_;
+    // Lader und Achse aus play(), fuer spawnMore().
+    EffectLoader loader_;
+    Axis axis_;
     int startedEffects_ = 0;
     int missingEffects_ = 0;
 

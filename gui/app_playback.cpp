@@ -239,6 +239,10 @@ void App::startPlayback() {
     // Bild fuer Bild vergleichbar.
     if (fixedSeed_ != 0) doc().playbackSeed = fixedSeed_;
     doc().segmentEnabled.resize(doc().effect.primitives.size(), true);
+    // Der Ursprung aus "Set custom FX spawn origin" — vorher wurde er im
+    // Dialog eingestellt und angezeigt, aber nie benutzt.
+    scheduleBase_ = spawnOrigin_.resolve(roomSize_, settings_.worldScale);
+    scheduleActive_ = usesSpawnSchedule();
     doc().particles.play(doc().effect, doc().playbackSeed, doc().segmentEnabled,
                     particles::axisFor(settings_.orientation),
                     [this](const std::string& name) {
@@ -263,7 +267,8 @@ void App::startPlayback() {
                     // Effekt aus und faengt von vorn an, also gibt es auch
                     // keinen Bestand aus der Vergangenheit.
                     doc().clock.endMode() == timeline::EndMode::Repeat &&
-                        !settings_.legacyRepeat);
+                        !settings_.legacyRepeat && !scheduleActive_,
+                    playback_.originAt(0.0f, scheduleBase_));
     // Die Bilder des Effekts anfordern, bevor das erste Bild steht. Ohne das
     // sah der erste Durchlauf falsch aus und erst der zweite richtig.
     prefetchTextures(doc().effect);
@@ -297,6 +302,23 @@ void App::startPlayback() {
     } else {
         doc().clock.setDuration(doc().particles.durationMs());
     }
+    if (scheduleActive_) {
+        // Wie oft nachgelegt wird: die Rate aus Werkzeugleiste und Dialog,
+        // oder jedes Bild (bei 60 Bildern je Sekunde — die Simulation rechnet
+        // in Zeit, nicht in Bildern, damit Fotos und Tests vergleichbar
+        // bleiben).
+        spawnIntervalMs_ = playback_.respawnEveryFrame
+                               ? 1000.0f / 60.0f
+                               : std::max(1.0f, repeatRateSeconds() * 1000.0f);
+        nextSpawnMs_ = spawnIntervalMs_;
+        lastSpawnMs_ = 0.0f;
+        spawnCount_ = 0;
+        singleDurationMs_ = doc().particles.durationMs();
+        spawnLimitMs_ = playback_.mode == playback::RepeatMode::ForSeconds
+                            ? std::max(0.0f, playback_.repeatForSeconds) * 1000.0f
+                            : -1.0f;
+        doc().clock.setDuration(spawnScheduleDurationMs());
+    }
     // Die Geschwindigkeit NICHT ueberschreiben, wenn sie schon gesetzt ist:
     // wer sie in der Zeitleiste einstellt, verliert sie sonst bei jeder
     // Wiederholung, weil startPlayback sie aus der Werkzeugleiste zurueckholt.
@@ -320,6 +342,46 @@ void App::startPlayback() {
     // Beim Neustart alles Laufende abbrechen, sonst ueberlagern sich die
     // Klaenge des vorigen Durchlaufs mit denen des neuen.
     audio_.stopAll();
+}
+
+bool App::usesSpawnSchedule() const {
+    // Einmal abspielen braucht kein Nachlegen; "bis zum Anhalten" ohne
+    // Zusatz bleibt die nahtlose Schleife mit Vorlauf (repeatDelay).
+    if (playback_.mode == playback::RepeatMode::Once) return false;
+    return playback_.mode == playback::RepeatMode::ForSeconds || playback_.respawnEveryFrame ||
+           playback_.animateSpawnLocation;
+}
+
+float App::spawnScheduleDurationMs() const {
+    // Bis zum Anhalten: eine Stunde, danach faengt es von vorn an. Sonst:
+    // bis die letzte Ausloesung ausgelaufen ist.
+    constexpr float kOpenEndMs = 3600.0f * 1000.0f;
+    if (spawnLimitMs_ < 0.0f) return kOpenEndMs;
+    return std::max(doc().particles.durationMs(), spawnLimitMs_ + singleDurationMs_);
+}
+
+void App::advanceSpawnSchedule(float nowMs) {
+    if (!scheduleActive_ || !playing()) return;
+    // Play waehrend der Wiederholung: nichts mehr nachlegen, auslaufen
+    // lassen (wie im Original).
+    if (playOut_ && spawnLimitMs_ < 0.0f) spawnLimitMs_ = lastSpawnMs_;
+    // Hoechstens 64 je Bild: nach einem Sprung in der Zeitleiste holt es
+    // ueber mehrere Bilder auf, statt eines lang zu haengen.
+    int spawned = 0;
+    while (nextSpawnMs_ <= nowMs && spawned < 64) {
+        if (spawnLimitMs_ >= 0.0f && nextSpawnMs_ > spawnLimitMs_ + 0.5f) break;
+        ++spawnCount_;
+        const unsigned seed = (doc().playbackSeed ^ (spawnCount_ * 2654435761u)) | 1u;
+        doc().particles.spawnMore(doc().effect, seed, doc().segmentEnabled, nextSpawnMs_,
+                                  playback_.originAt(nextSpawnMs_ * 0.001f, scheduleBase_));
+        lastSpawnMs_ = nextSpawnMs_;
+        nextSpawnMs_ += spawnIntervalMs_;
+        ++spawned;
+    }
+    if (spawned > 0 && spawnCount_ % 32 < static_cast<unsigned>(spawned)) {
+        doc().particles.forgetDeadBefore(nowMs);
+    }
+    doc().clock.setDuration(spawnScheduleDurationMs());
 }
 
 void App::triggerSounds(float nowMs) {

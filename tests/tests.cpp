@@ -12888,6 +12888,38 @@ void testRenderCountRounding() {
 }
 
 // --- 11. Decal ----------------------------------------------------------------------
+void testSpawnSchedule() {
+    std::cout << "== Nachlegen: eigener Ursprung, spawnMore, Vergessen ==\n";
+    // Die Wiedergabe-Einstellungen des Originals loesen den Effekt immer
+    // wieder aus, an einem jeweils anderen Ort (Custom Fx Spawn Origin,
+    // Animate effect spawn location).
+    efx::Effect effect;
+    effect.primitives.push_back(efx::Primitive{});
+    efx::Primitive& p = effect.primitives.back();
+    p.type = efx::PrimitiveType::Particle;
+    p.life = efx::Range::single(500.0f);
+    p.shaders.push_back("gfx/misc/test");
+
+    efx::particles::System system;
+    system.play(effect, 7u, {}, {}, {}, {}, false, efx::camera::Vec3{10.0f, 0.0f, 20.0f});
+    check(system.live().size() == 1, "eine Ausloesung, ein Teilchen");
+    const auto at0 = system.live()[0].positionAt(0.0f);
+    check(std::fabs(at0.x - 10.0f) < 1e-3f && std::fabs(at0.z - 20.0f) < 1e-3f,
+          "play() legt den Effekt an den gewaehlten Ursprung");
+
+    system.spawnMore(effect, 9u, {}, 300.0f, efx::camera::Vec3{-5.0f, 0.0f, 0.0f});
+    check(system.live().size() == 2, "spawnMore legt dazu, statt wegzuwerfen");
+    const auto& second = system.live()[1];
+    check(std::fabs(second.spawnMs - 300.0f) < 1e-3f, "zum angegebenen Zeitpunkt");
+    check(std::fabs(second.positionAt(300.0f).x + 5.0f) < 1e-3f, "am angegebenen Ort");
+    check(system.durationMs() >= 800.0f - 1e-3f, "die Dauer waechst mit");
+    check(system.aliveAt(400.0f) == 2 && system.aliveAt(600.0f) == 1,
+          "beide leben nebeneinander, das erste stirbt zuerst");
+
+    system.forgetDeadBefore(600.0f);
+    check(system.live().size() == 1, "Vergessen raeumt nur das Gestorbene weg");
+}
+
 void testRenderDecal() {
     std::cout << "== Decal wie CG_ImpactMark ==\n";
     // FxScheduler.cpp ruft CG_ImpactMark mit den STARTwerten; cg_marks.cpp:
@@ -13206,6 +13238,7 @@ int main(int argc, char** argv) {
     testRenderShaderStages();
     testRenderCountRounding();
     testRenderDecal();
+    testSpawnSchedule();
     testRenderScreenFlash();
     testRenderOrg2FromTrace();
     testRenderLights();
