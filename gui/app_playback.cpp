@@ -9,6 +9,7 @@
 #include "app.h"
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include "efx/diag.h"
 #include "efx/i18n.h"
@@ -373,6 +374,16 @@ void App::advanceSpawnSchedule(float nowMs) {
     // Play waehrend der Wiederholung: nichts mehr nachlegen, auslaufen
     // lassen (wie im Original).
     if (playOut_ && spawnLimitMs_ < 0.0f) spawnLimitMs_ = lastSpawnMs_;
+    // Lange Pause (minimiert, Sprung in der Zeitleiste): Ausloesungen, die
+    // laengst ausgelaufen waeren, nicht einzeln nachholen, sondern
+    // ueberspringen. Sonst holt "jedes Bild neu" nach einer Minute 3600
+    // Ausloesungen nach.
+    const float stale = nowMs - singleDurationMs_ - spawnIntervalMs_;
+    if (nextSpawnMs_ < stale && spawnIntervalMs_ > 0.0f) {
+        const float skip = std::floor((stale - nextSpawnMs_) / spawnIntervalMs_);
+        nextSpawnMs_ += skip * spawnIntervalMs_;
+        spawnCount_ += static_cast<unsigned>(skip);
+    }
     // Hoechstens 64 je Bild: nach einem Sprung in der Zeitleiste holt es
     // ueber mehrere Bilder auf, statt eines lang zu haengen.
     int spawned = 0;

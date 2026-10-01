@@ -825,8 +825,25 @@ static bool runSession(efx::gui::App& app, efx::render::Backend preferred,
 
     // Im Selbsttest ohne Aktivieren: der Anwender arbeitet nebenher weiter,
     // und ein Fenster, das sich nach vorn draengt, nimmt ihm den Fokus.
+    // Wer minimiert startet (Verknuepfung "Ausfuehren: Minimiert", Start
+    // /min), bekommt ein minimiertes Fenster ohne Fokus. Vorher sprang efxed
+    // trotzdem maximiert nach vorn.
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    GetStartupInfoW(&startup);
+    const WORD asked = startup.wShowWindow;
+    const bool startMinimised = (startup.dwFlags & STARTF_USESHOWWINDOW) != 0 &&
+                                (asked == SW_SHOWMINIMIZED || asked == SW_MINIMIZE ||
+                                 asked == SW_SHOWMINNOACTIVE || asked == SW_FORCEMINIMIZE);
     if (efx::gui::selbsttestAktiv()) {
         ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+    } else if (startMinimised) {
+        WINDOWPLACEMENT wp{};
+        wp.length = sizeof(wp);
+        GetWindowPlacement(hwnd, &wp);
+        wp.showCmd = SW_SHOWMINNOACTIVE;
+        if (app.settings().window.maximized) wp.flags |= WPF_RESTORETOMAXIMIZED;
+        SetWindowPlacement(hwnd, &wp);
     } else {
         ShowWindow(hwnd, app.settings().window.maximized ? SW_SHOWMAXIMIZED : SW_SHOWDEFAULT);
     }
@@ -871,6 +888,15 @@ static bool runSession(efx::gui::App& app, efx::render::Backend preferred,
         if (g_closeRequested) {
             g_closeRequested = false;
             app.requestQuit();
+        }
+
+        // Minimiert: nichts zu sehen, also nichts zeichnen. Vorher lief die
+        // Schleife ungebremst weiter — Present kehrt bei einem verdeckten
+        // Fenster sofort zurueck, und efxed verbrauchte minimiert knapp einen
+        // halben Kern (gemessen: 2.3 s Rechenzeit in 5 s).
+        if (IsIconic(hwnd) && !efx::gui::selbsttestAktiv()) {
+            Sleep(50);
+            continue;
         }
 
         if (g_resized) {
