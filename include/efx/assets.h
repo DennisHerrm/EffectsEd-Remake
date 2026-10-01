@@ -94,6 +94,13 @@ struct Index {
     // Die Bildfolge zu einem Shadernamen, oder nullptr.
     const AnimatedShader* animOf(const std::string& shaderName) const;
 
+    // Die vollstaendigen Shaderbloecke, je Name der, den die Engine findet
+    // (das erste Vorkommen in Suchreihenfolge). Mit ALLEN Stufen: die
+    // Vorschau zeichnet jede einzelne (particles::DrawList::groups), nicht
+    // nur die erste.
+    std::vector<shader::Shader> shaderDefs;
+    const shader::Shader* shaderOf(const std::string& shaderName) const;
+
     // Wo die Archive liegen. Für das spätere Herausholen einzelner Dateien.
     //
     // In SUCHREIHENFOLGE: vorn steht, was gewinnt. Innerhalb eines Ordners
@@ -190,6 +197,10 @@ struct ResolvedTexture {
     // Datei, aber zeichenbar. readFile liefert dafuer ein weisses 8x8-TGA —
     // dasselbe, das R_CreateBuiltinImages als tr.whiteImage anlegt.
     bool white = false;
+    // Das Ersatzbild der Engine ("$default"): R_CreateDefaultImage legt ein
+    // graues 16x16-Kaestchen mit weissem Rand an — das zeigt das Spiel fuer
+    // einen Shader, zu dem es nichts findet. readFile liefert es als TGA.
+    bool defaultImage = false;
 };
 
 // Sucht die Bilddatei zu einem Shader- oder Texturnamen.
@@ -234,6 +245,16 @@ ResolvedTexture findSound(const Index& index, const std::string& basePath,
 
 ResolvedTexture findTexture(const Index& index, const std::string& basePath,
                             const std::string& name);
+
+// Vorsatz fuer einen Namen, der ein BILD meint und keinen Shader.
+//
+// Eine Shaderstufe nennt ihr Bild (`map gfx/misc/flame.tga`); die Engine
+// laedt es mit R_FindImageFile und fragt dabei keinen Shaderblock. In einer
+// .efx dagegen steht ein Shadername. findTexture bekommt beides als Text —
+// mit diesem Vorsatz wird der Shaderbestand uebersprungen. Ohne ihn fuehrte
+// die zweite Stufe eines Shaders, deren Bild zufaellig wie ein anderer
+// Shader heisst, zu dessen Bild.
+inline constexpr const char* kImagePrefix = "image:";
 
 // Sucht eine .efx-Datei zu einem Namen, wie er in einer anderen .efx-Datei
 // steht: ohne Ordnervorsatz und ohne Endung, etwa „explosions/big".

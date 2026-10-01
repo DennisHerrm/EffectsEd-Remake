@@ -141,10 +141,15 @@ TexCoord applyTexMods(const std::vector<TexMod>& mods, TexCoord in,
 // Die Engine schlägt in einer Tabelle mit 1024 Einträgen nach, wir rechnen
 // direkt. Der Unterschied ist eine Rundung auf ein Tausendstel der Periode.
 //
-// Ravens Tabellen sind nicht alle so, wie der Name vermuten lässt:
-// `triangle` läuft von 0 auf 1 und zurück auf 0, NICHT von -1 bis 1, und
-// `sawtooth` von 0 nach 1. Nur `sin` und `square` sind zweiseitig.
+// Die Tabellen aus R_Init (tr_init.cpp): `sin`, `square` und `triangle` sind
+// zweiseitig (-1 bis 1), `sawtooth` und `inversesawtooth` laufen 0..1.
+// `noise` und `random` nehmen das Rauschen aus tr_noise.cpp.
 float evaluateWave(const WaveForm& wave, float seconds);
+
+// Das Rauschen der Engine (tr_noise.cpp), fuer die Wellenarten `noise` und
+// `random`. noiseAt(t) ist R_NoiseGet4f(0,0,0,t), noiseTime(ms) GetNoiseTime.
+float noiseAt(float t);
+float noiseTime(int ms);
 
 struct Stage {
     // Bildquelle. Genau eine der drei ist gesetzt.
@@ -158,10 +163,16 @@ struct Stage {
     BlendFactor dstBlend = BlendFactor::Unset;
 
     ColorGen rgbGen = ColorGen::Identity;
+    // Stand `rgbGen` ausdruecklich in der Stufe? Ohne die Zeile entscheidet
+    // die Engine nach der Mischung (siehe effectiveColorGen) — der
+    // Unterschied zwischen "Identity, weil es dasteht" und "Identity, weil
+    // nichts dasteht" ist also nicht egal.
+    bool rgbGenSet = false;
     WaveForm rgbWave;
     float rgbConst[3]{1.0f, 1.0f, 1.0f};
 
     AlphaGen alphaGen = AlphaGen::Identity;
+    bool alphaGenSet = false;
     WaveForm alphaWave;
     float alphaConst = 1.0f;
 
@@ -244,6 +255,45 @@ struct Shader {
     // Das Bild, das die Vorschau zeigen soll.
     const std::string& previewImage() const;
 };
+
+// --- Was die Engine aus einer Stufe macht -----------------------------------
+//
+// Fundstellen: ParseStage und FinishShader in tr_shader.cpp, ComputeColors in
+// tr_shade.cpp.
+
+// Mischt die Stufe ueberhaupt? Kein blendFunc und `GL_ONE GL_ZERO` heissen
+// beide: nein — und dann schreibt sie Tiefe ("implicitly assume that a GL_ONE
+// GL_ZERO blend mask disables blending").
+bool stageBlends(const Stage& stage);
+// Schreibt die Stufe Tiefe? Ungemischt immer, gemischt nur mit `depthWrite`.
+bool stageWritesDepth(const Stage& stage);
+
+// Woher die Farbe kommt, wenn `rgbGen` fehlt: bei Quellfaktor GL_ONE oder
+// GL_SRC_ALPHA `identityLighting`, sonst `identity`. Beides heisst bei
+// r_overBrightBits 0 dasselbe: volles Weiss — die Farbe aus der .efx wirkt
+// dann NICHT. Erst `rgbGen vertex` faerbt das Bild nach der Primitive ein.
+ColorGen effectiveColorGen(const Stage& stage);
+
+// Woher das Alpha kommt. `rgbGen vertex` zieht `alphaGen vertex` nach, wenn
+// alphaGen bis dahin nicht gesetzt war (ParseStage); ohne Angabe gilt
+// `identity`, also 255.
+AlphaGen effectiveAlphaGen(const Stage& stage);
+
+// Die Sortierstufe der Engine (shaderSort_t aus tr_local.h) — wann ein Shader
+// gezeichnet wird. `sort` im Shader gilt vor allem anderen; sonst
+// polygonOffset -> SS_DECAL; sonst entscheidet die erste gemischte Stufe
+// (nur wenn schon Stufe 0 mischt): depthWrite -> SS_SEE_THROUGH, genau
+// GL_ONE GL_ONE -> SS_BLEND1 ("GL_ONE GL_ONE needs to come a bit later"),
+// jede andere Mischung -> SS_BLEND0; ungemischt -> SS_OPAQUE.
+enum : int {
+    kSortPortal = 1, kSortEnvironment = 2, kSortOpaque = 3, kSortDecal = 4,
+    kSortSeeThrough = 5, kSortBanner = 6, kSortInside = 7, kSortMidInside = 8,
+    kSortMiddle = 9, kSortMidOutside = 10, kSortOutside = 11, kSortFog = 12,
+    kSortUnderwater = 13, kSortBlend0 = 14, kSortBlend1 = 15, kSortBlend2 = 16,
+    kSortBlend3 = 17, kSortBlend6 = 18, kSortStencilShadow = 19,
+    kSortAlmostNearest = 20, kSortNearest = 21,
+};
+float sortValue(const Shader& shader);
 
 // Welches Bild einer Bildfolge zu einem Zeitpunkt gilt.
 //

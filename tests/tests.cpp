@@ -4103,10 +4103,14 @@ void testScheduling() {
     // Unsinnige Werte duerfen die Vorschau nicht aufhaengen.
     {
         Random random(1);
-        check(!schedule(makeEffect(0, 0, 0, false, false), random).empty(),
-              "count 0 wird zu 1 statt zu nichts");
-        check(!schedule(makeEffect(-5, 0, 0, false, false), random).empty(),
-              "negative Anzahl ebenso");
+        // count 0 heisst im Spiel: nichts. CFxRange::GetRoundedVal gibt bei
+        // mMin == mMax einfach mMin zurueck, ohne Untergrenze (FxScheduler.h).
+        // Hier stand "count 0 wird zu 1" — die Vorschau zeigte, was das Spiel
+        // nicht zeigt.
+        check(schedule(makeEffect(0, 0, 0, false, false), random).empty(),
+              "count 0 ergibt nichts, wie GetRoundedVal");
+        check(schedule(makeEffect(-5, 0, 0, false, false), random).empty(),
+              "eine negative Anzahl ebenso nichts");
         check(schedule(makeEffect(100000, 0, 0, false, false), random).size() <= 4096,
               "eine unsinnig grosse Anzahl wird gedeckelt");
         const auto negative = schedule(makeEffect(3, -100.0f, -50.0f, true, false),
@@ -4387,9 +4391,17 @@ void testParticles() {
     check([&] {
         efx::scene::Mesh mesh;
         addBillboard(mesh, {}, right, up, 0.0f, 0.0f, 0);
-        addBillboard(mesh, {}, right, up, -3.0f, 0.0f, 0);
         return mesh.vertices.empty();
-    }(), "Groesse null oder negativ ergibt kein Viereck");
+    }(), "Groesse null ergibt kein Viereck");
+    // Negativ dagegen schon: RB_SurfaceSprite skaliert die Achsen mit dem
+    // Radius, ein negativer ergibt dasselbe Viereck gespiegelt (eine
+    // Groessenwelle unter null). Hier stand "negativ ergibt kein Viereck".
+    check([&] {
+        efx::scene::Mesh mesh;
+        addBillboard(mesh, {}, right, up, -3.0f, 0.0f, 0);
+        return mesh.vertices.size() == 4 &&
+               std::fabs(std::fabs(mesh.vertices[0].pos[0]) - 3.0f) < 0.01f;
+    }(), "negative Groesse ergibt das gespiegelte Viereck mit |size|");
 
     // --- Lebenszyklus ---------------------------------------------------
     efx::Effect effect;
@@ -4501,22 +4513,29 @@ void testParticles() {
             return zero.vertices.size() == 4;
         }(), "eine Nullnormale faellt auf eine Ersatzrichtung zurueck");
 
-        // Zylinder: Mantel aus Segmenten, unten und oben verschieden dick.
+        // Zylinder wie RB_SurfaceCylinder: am Ursprung der eine Radius, am
+        // fernen Ende der andere; (segments + 1) * 2 Eckpunkte, der erste Ring
+        // am Ende noch einmal mit s = 1.
         efx::scene::Mesh tube;
         addCylinder(tube, {}, {0.0f, 0.0f, 1.0f}, 100.0f, 10.0f, 4.0f,
                     efx::scene::rgba(255, 255, 255), 16);
-        check(tube.vertices.size() == 16 * 4, "sechzehn Segmente");
+        check(tube.vertices.size() == 17 * 2, "sechzehn Segmente, Ring geschlossen");
         float lowest = 1e9f, highest = -1e9f, widestLow = 0.0f, widestHigh = 0.0f;
+        bool tAtBase = true;
         for (const auto& v : tube.vertices) {
             const float r = std::sqrt(v.pos[0] * v.pos[0] + v.pos[1] * v.pos[1]);
             if (v.pos[2] < lowest) lowest = v.pos[2];
             if (v.pos[2] > highest) highest = v.pos[2];
-            if (std::fabs(v.pos[2]) < 0.01f) widestLow = std::max(widestLow, r);
+            if (std::fabs(v.pos[2]) < 0.01f) {
+                widestLow = std::max(widestLow, r);
+                if (v.uv[1] != 1.0f) tAtBase = false;
+            }
             if (std::fabs(v.pos[2] - 100.0f) < 0.01f) widestHigh = std::max(widestHigh, r);
         }
         check(std::fabs(highest - lowest - 100.0f) < 0.01f, "hundert Einheiten hoch");
-        check(std::fabs(widestLow - 10.0f) < 0.01f, "unten Radius zehn");
-        check(std::fabs(widestHigh - 4.0f) < 0.01f, "oben Radius vier");
+        check(std::fabs(widestLow - 10.0f) < 0.01f, "am Ursprung Radius zehn");
+        check(std::fabs(widestHigh - 4.0f) < 0.01f, "am Ende Radius vier");
+        check(tAtBase, "t = 1 am Ursprung, wie in RB_SurfaceCylinder");
         check([&] {
             efx::scene::Mesh none;
             addCylinder(none, {}, {0, 0, 1}, 0.0f, 10.0f, 10.0f, 0, 16);
@@ -4524,61 +4543,69 @@ void testParticles() {
             addCylinder(none, {}, {0, 0, 1}, 100.0f, 10.0f, 10.0f, 0, 2);
             return none.vertices.empty();
         }(), "Laenge null, Radius null oder zwei Segmente ergeben nichts");
-
-        // Blitz: die Formel aus RB_SurfaceElectricity.
-        const efx::camera::Vec3 boltFrom{0, 0, 0}, boltTo{200, 0, 0};
-        efx::scene::LineSet bolt;
-        addLightning(bolt, boltFrom, boltTo, 1.0f, 12345u,
-                     efx::scene::rgba(200, 200, 255));
-        check(!bolt.vertices.empty(), "der Blitz hat Linien");
-        check(bolt.vertices.size() % 2 == 0, "paarweise");
-
-        // Beide Enden sitzen exakt — das ist der Trick an der Formel: die
-        // Abweichungen summieren sich frei, aber der Punkt wird auf die
-        // Gerade zurueckgezogen. Ravens Kommentar: "by nature, we always
-        // move from exactly start....to end".
-        const auto& first = bolt.vertices.front();
-        const auto& last = bolt.vertices.back();
-        check(std::fabs(first.pos[0]) < 0.01f && std::fabs(first.pos[1]) < 0.01f,
-              "der Blitz beginnt genau am Anfang");
-        check(std::fabs(last.pos[0] - 200.0f) < 0.5f &&
-                  std::fabs(last.pos[1]) < 0.5f,
-              "und endet genau am Ende");
-
-        // Dazwischen weicht er ab — sonst waere es eine gerade Linie.
-        float maxDeviation = 0.0f;
-        for (const auto& v : bolt.vertices) {
-            maxDeviation = std::max(maxDeviation,
-                                    std::sqrt(v.pos[1] * v.pos[1] +
-                                              v.pos[2] * v.pos[2]));
+        // Ein Ende duenner als 0.3: RB_SurfaceCone — ein Ring und eine Spitze.
+        {
+            efx::scene::Mesh cone;
+            addCylinder(cone, {}, {0, 0, 1}, 50.0f, 0.0f, 8.0f, 0, 16);
+            bool tipAtBase = false;
+            for (const auto& v : cone.vertices) {
+                if (std::fabs(v.pos[0]) + std::fabs(v.pos[1]) + std::fabs(v.pos[2]) < 0.01f) {
+                    tipAtBase = true;
+                }
+            }
+            check(cone.vertices.size() == 17 * 2 && cone.indices.size() == 16 * 3 && tipAtBase,
+                  "ein spitzes Ende wird ein Kegel wie RB_SurfaceCone");
         }
-        check(maxDeviation > 1.0f, "und weicht dazwischen ab");
-        std::printf("  Blitz ueber 200 Einheiten: %zu Segmente, "
-                    "groesste Abweichung %.1f\n",
-                    bolt.vertices.size() / 2, static_cast<double>(maxDeviation));
 
-        // Mehr Unruhe heisst mehr Abweichung SENKRECHT zur Geraden. Quer
-        // wirkt chaos, laengs nicht — \"chaos also does not affect this\"
-        // steht im Renderer.
-        //
-        // Gemessen wird der Abstand zur idealen Linie, nicht eine einzelne
-        // Koordinate: die Querachsen kommen aus MakeNormalVectors und liegen
-        // nicht auf den Weltachsen. Und der Anfangsversatz {10,10,10} steckt
-        // in jeder Messung drin, unabhaengig von chaos — deshalb der
-        // Vergleich gegen chaos 0 statt gegen einen kleinen Wert.
+        // Der Blitz: RB_SurfaceElectricity / DoBoltSeg / ApplyShape, als Baender.
+        const efx::camera::Vec3 boltFrom{0, 0, 0}, boltTo{200, 0, 0};
+        const efx::camera::Vec3 boltEye{100, -500, 0};
+        efx::particles::BoltShape boltShape;
+        boltShape.radius = 2.0f;
+        boltShape.chaos = 1.0f;
+        efx::scene::Mesh bolt;
+        addElectricity(bolt, boltFrom, boltTo, boltEye, boltShape, 12345, 7u,
+                       efx::scene::rgba(200, 200, 255));
+        check(!bolt.vertices.empty() && bolt.vertices.size() % 4 == 0,
+              "der Blitz besteht aus Baendern zu je vier Ecken");
+        // Zwei Stufen ApplyShape: neun Baender je 16-Einheiten-Schritt.
+        check(bolt.vertices.size() == (200 / 16) * 9 * 4,
+              "neun Feinzacken je Schritt von 16 Einheiten");
+
+        // Beide Enden sitzen exakt — "by nature, we always move from exactly
+        // start....to end". Die Bandmitte des ersten Stuecks liegt am Anfang,
+        // die des letzten am Ende (jedes Stueck laeuft von cur zurueck nach old).
+        auto bandMiddle = [](const efx::scene::Mesh& m, size_t quad, int end) {
+            const auto& a = m.vertices[quad * 4 + static_cast<size_t>(end) * 2];
+            const auto& b = m.vertices[quad * 4 + static_cast<size_t>(end) * 2 + 1];
+            return efx::camera::Vec3{(a.pos[0] + b.pos[0]) * 0.5f,
+                                     (a.pos[1] + b.pos[1]) * 0.5f,
+                                     (a.pos[2] + b.pos[2]) * 0.5f};
+        };
+        bool startsAtStart = false, endsAtEnd = false;
+        for (size_t q = 0; q < bolt.vertices.size() / 4; ++q) {
+            for (int e = 0; e < 2; ++e) {
+                const auto m = bandMiddle(bolt, q, e);
+                if (efx::camera::length(m - boltFrom) < 0.01f) startsAtStart = true;
+                if (efx::camera::length(m - boltTo) < 0.01f) endsAtEnd = true;
+            }
+        }
+        check(startsAtStart, "der Blitz beginnt genau am Anfang");
+        check(endsAtEnd, "und endet genau am Ende");
+
+        // Mehr Unruhe heisst mehr Abweichung SENKRECHT zur Geraden.
         auto deviationFor = [&](float chaos) {
-            efx::scene::LineSet set;
-            addLightning(set, boltFrom, boltTo, chaos, 999u, 0);
-            const efx::camera::Vec3 direction =
-                efx::camera::normalise(boltTo - boltFrom);
+            efx::particles::BoltShape shape = boltShape;
+            shape.chaos = chaos;
+            efx::scene::Mesh set;
+            addElectricity(set, boltFrom, boltTo, boltEye, shape, 999, 7u, 0);
+            const efx::camera::Vec3 direction = efx::camera::normalise(boltTo - boltFrom);
             float worst = 0.0f;
             for (const auto& v : set.vertices) {
                 const efx::camera::Vec3 point{v.pos[0], v.pos[1], v.pos[2]};
                 const efx::camera::Vec3 relative = point - boltFrom;
                 const float along = efx::camera::dot(relative, direction);
-                const float across =
-                    efx::camera::length(relative - direction * along);
-                worst = std::max(worst, across);
+                worst = std::max(worst, efx::camera::length(relative - direction * along));
             }
             return worst;
         };
@@ -4587,34 +4614,26 @@ void testParticles() {
         std::printf("  Abweichung quer: chaos 0 -> %.1f, chaos 3 -> %.1f\n",
                     deviationFor(0.0f), deviationFor(3.0f));
 
-        // Verschiedene Ausgangswerte, verschiedene Blitze — sonst zappeln
-        // zwei nebeneinander deckungsgleich.
-        efx::scene::LineSet other;
-        addLightning(other, boltFrom, boltTo, 1.0f, 54321u, 0);
+        // Verschiedene Ausgangswerte, verschiedene Blitze.
+        efx::scene::Mesh other;
+        addElectricity(other, boltFrom, boltTo, boltEye, boltShape, 54321, 7u, 0);
         bool differs = false;
-        for (size_t i = 0; i < std::min(bolt.vertices.size(), other.vertices.size());
-             ++i) {
+        for (size_t i = 0; i < std::min(bolt.vertices.size(), other.vertices.size()); ++i) {
             if (std::fabs(bolt.vertices[i].pos[1] - other.vertices[i].pos[1]) > 0.1f) {
                 differs = true;
             }
         }
         check(differs, "andere Ausgangswerte ergeben einen anderen Blitz");
 
-        // Randfaelle.
-        efx::scene::LineSet degenerate;
-        addLightning(degenerate, {5, 5, 5}, {5, 5, 5}, 1.0f, 1u, 0);
+        // Randfaelle. Kuerzer als ein Schritt von 16 Einheiten: die Schleife
+        // in DoBoltSeg (`for ( i = 16; i <= dis; i += 16 )`) laeuft gar nicht —
+        // im Spiel ist so ein Blitz unsichtbar.
+        efx::scene::Mesh degenerate;
+        addElectricity(degenerate, {5, 5, 5}, {5, 5, 5}, boltEye, boltShape, 1, 1u, 0);
         check(degenerate.vertices.empty(), "null Laenge ergibt keinen Blitz");
-        efx::scene::LineSet shortBolt;
-        addLightning(shortBolt, {0, 0, 0}, {5, 0, 0}, 1.0f, 1u, 0);
-        check(!shortBolt.vertices.empty(),
-              "auch kuerzer als ein Schritt ergibt eine Verbindung");
-        bool finite = true;
-        for (const auto& v : shortBolt.vertices) {
-            for (int k = 0; k < 3; ++k) {
-                if (!std::isfinite(v.pos[k])) finite = false;
-            }
-        }
-        check(finite, "und brauchbare Zahlen");
+        efx::scene::Mesh shortBolt;
+        addElectricity(shortBolt, {0, 0, 0}, {5, 0, 0}, boltEye, boltShape, 1, 1u, 0);
+        check(shortBolt.vertices.empty(), "kuerzer als 16 Einheiten zeichnet die Engine nichts");
     }
 
     // --- Ausrichtung ------------------------------------------------------
@@ -4785,12 +4804,14 @@ void testParticles() {
             const std::string name = std::string(efx::typeName(entry.type)) + " (" +
                                      entry.what + ")";
             check(list.drawn == 1, name + " wird gezeichnet");
+            // Linien, Blitze und Schweife sind seit RB_SurfaceLine /
+            // RB_SurfaceElectricity Baender aus Dreiecken — es gibt keine
+            // 1-Pixel-Linien mehr. `asLines` heisst jetzt: ein Band (Vielfaches
+            // von vier Ecken, Breite aus size).
+            check(!list.byTexture.empty() && !list.groups.empty(), name + ": als Flaechen");
             if (entry.asLines) {
-                check(!list.lines.vertices.empty(), name + ": als Linien");
-                check(list.byTexture.empty(), name + ": keine Flaechen");
-            } else {
-                check(!list.byTexture.empty(), name + ": als Flaechen");
-                check(list.lines.vertices.empty(), name + ": keine Linien");
+                check(list.byTexture.begin()->second.vertices.size() % 4 == 0,
+                      name + ": als Band aus Vierecken");
             }
         }
 
@@ -5179,15 +5200,33 @@ void testParticles() {
                 }
             }
 
-            // killOnImpact schaltet es beim natuerlichen Tod ab — dann
-            // gehoert der Effekt zum Aufschlag, nicht zum Ablauf der Zeit.
+            // killOnImpact: beim natuerlichen Tod LAEUFT deathfx trotzdem —
+            // FxUtil.cpp loescht das Flag vor FX_FreeMember ("this flag just
+            // has to be cleared otherwise death effects might not happen
+            // correctly"). Nur beim Tod durch Aufprall bleibt es gesetzt, und
+            // CParticle::Die startet nichts. Hier stand das Gegenteil.
             {
+                System natural;
+                natural.play(projectile(efx::kFlagDeathRunsFx |
+                                        efx::kFlagKillOnImpact),
+                             1, {}, {}, loader);
+                check(natural.startedEffects() == 1,
+                      "mit killOnImpact beim natuerlichen Tod trotzdem");
+
+                // Mit Boden, nach unten geschossen: Tod durch Aufprall.
+                efx::Effect falling = projectile(efx::kFlagDeathRunsFx |
+                                                 efx::kFlagKillOnImpact |
+                                                 efx::kFlagApplyPhysics);
+                falling.primitives[0].origin.set = true;
+                falling.primitives[0].origin.min = {50.0f, 0.0f, 0.0f};
+                falling.primitives[0].origin.max = falling.primitives[0].origin.min;
+                falling.primitives[0].velocity.min = {-400.0f, 0.0f, 0.0f};
+                falling.primitives[0].velocity.max = falling.primitives[0].velocity.min;
                 System impact;
-                impact.play(projectile(efx::kFlagDeathRunsFx |
-                                       efx::kFlagKillOnImpact),
-                            1, {}, {}, loader);
+                impact.play(falling, 1, {}, {}, loader,
+                            efx::sim::roomPlanes(500.0f, 500.0f, 500.0f));
                 check(impact.startedEffects() == 0,
-                      "mit killOnImpact nicht beim natuerlichen Tod");
+                      "aber nicht beim Tod durch Aufprall");
             }
 
             // Ein fehlender Todeseffekt wird gezaehlt, nicht verschluckt.
@@ -5362,8 +5401,9 @@ void testParticles() {
         System trailing;
         trailing.play(trail, 1);
         const DrawList list = trailing.build(100.0f, right, up);
-        check(list.lines.vertices.size() == 2, "der Tail ist eine Linie");
-        check(list.byTexture.empty(), "und kein Viereck");
+        // CTail ist ein RT_LINE: ein Band (DoLine) von der Spitze nach hinten.
+        const auto& band = list.byTexture.begin()->second.vertices;
+        check(list.byTexture.size() == 1 && band.size() == 4, "der Tail ist ein Band");
         // Die Laenge in drei Dimensionen messen, nicht nur entlang X.
         //
         // Frueher stand hier nur die X-Komponente — das ging, solange die
@@ -5372,10 +5412,10 @@ void testParticles() {
         //
         // Der Test war zu eng, nicht die Aenderung falsch: gemessen werden
         // sollte die Laenge, nicht eine Achse davon.
-        const efx::camera::Vec3 tail{
-            list.lines.vertices[1].pos[0] - list.lines.vertices[0].pos[0],
-            list.lines.vertices[1].pos[1] - list.lines.vertices[0].pos[1],
-            list.lines.vertices[1].pos[2] - list.lines.vertices[0].pos[2]};
+        // Ecke 0 liegt am Anfang, Ecke 2 auf derselben Seite am Ende.
+        const efx::camera::Vec3 tail{band[2].pos[0] - band[0].pos[0],
+                                     band[2].pos[1] - band[0].pos[1],
+                                     band[2].pos[2] - band[0].pos[2]};
         check(std::fabs(efx::camera::length(tail) - 30.0f) < 0.5f,
               "dreissig Einheiten lang");
         // Und entgegen der Flugrichtung — die jetzt nach oben zeigt.
@@ -9426,13 +9466,16 @@ void testRgbGenWave() {
         tri.func = "triangle";
         tri.base = 0.0f;
         tri.amplitude = 1.0f;
-        // triangleTable laeuft 0..1..0, NICHT -1..1. Wer ein gleichschenkliges
-        // Dreieck um null baut, bekommt die halbe Helligkeit.
+        // triangleTable (R_Init in tr_init.cpp) ist ZWEISEITIG: 0 -> 1 im
+        // ersten Viertel, zurueck auf 0 bei der Haelfte, -1 bei drei
+        // Vierteln. Hier stand "laeuft 0..1..0, NICHT -1..1" — umgekehrt
+        // richtig.
         check(std::fabs(evaluateWave(tri, 0.0f)) < 0.001f, "triangle bei null");
-        check(std::fabs(evaluateWave(tri, 0.5f) - 1.0f) < 0.001f,
-              "in der Mitte ganz oben");
-        check(evaluateWave(tri, 0.75f) > 0.0f,
-              "und faellt zurueck auf null, nicht ins Negative");
+        check(std::fabs(evaluateWave(tri, 0.25f) - 1.0f) < 0.001f,
+              "nach einem Viertel ganz oben");
+        check(std::fabs(evaluateWave(tri, 0.5f)) < 0.001f, "bei der Haelfte null");
+        check(std::fabs(evaluateWave(tri, 0.75f) + 1.0f) < 0.001f,
+              "nach drei Vierteln ganz unten, -1");
 
         efx::shader::WaveForm saw = tri;
         saw.func = "sawtooth";
@@ -9776,16 +9819,20 @@ void testTailAndCylinderGeometry() {
         system.play(effect, 7u);
         const auto early = system.build(50.0f, right, up);
         const auto late = system.build(1000.0f, right, up);
-        check(early.lines.vertices.size() >= 2 && late.lines.vertices.size() >= 2,
-              "der Schweif wird als Linie gezeichnet");
+        const auto bandOf = [](const efx::particles::DrawList& list)
+            -> const std::vector<efx::scene::Vertex>* {
+            if (list.byTexture.empty()) return nullptr;
+            const auto& v = list.byTexture.begin()->second.vertices;
+            return v.size() >= 4 ? &v : nullptr;
+        };
+        check(bandOf(early) && bandOf(late), "der Schweif wird als Band gezeichnet");
 
         // Frueh fliegt es fast waagerecht, spaet faellt es. Der Schweif zeigt
-        // beide Male nach HINTEN — spaet also staerker nach oben.
-        if (early.lines.vertices.size() >= 2 && late.lines.vertices.size() >= 2) {
-            const float earlyZ = early.lines.vertices[1].pos[2] -
-                                 early.lines.vertices[0].pos[2];
-            const float lateZ = late.lines.vertices[1].pos[2] -
-                                late.lines.vertices[0].pos[2];
+        // beide Male nach HINTEN — spaet also staerker nach oben. Ecke 0 am
+        // Anfang, Ecke 2 auf derselben Seite am Ende (DoLine).
+        if (bandOf(early) && bandOf(late)) {
+            const float earlyZ = (*bandOf(early))[2].pos[2] - (*bandOf(early))[0].pos[2];
+            const float lateZ = (*bandOf(late))[2].pos[2] - (*bandOf(late))[0].pos[2];
             check(earlyZ < lateZ,
                   "spaet zeigt der Schweif staerker nach oben als frueh");
             std::printf("  Schweifrichtung z: frueh %.2f, spaet %.2f\n",
@@ -10305,7 +10352,13 @@ void testSeamlessRepeat() {
         fewest = std::min(fewest, alive);
         most = std::max(most, alive);
     }
-    check(fewest * 2 >= most,
+    // Die Schwelle ist 40 Prozent, nicht 50: seit sim::Random seinen
+    // Ausgangswert verruehrt, sind die Generationen wirklich verschieden
+    // (vorher lieferten benachbarte Ausgangswerte fast dieselben ersten
+    // Zufallswerte, und alle Generationen sahen gleich aus). Mit sechs
+    // Teilchen von 500 bis 900 ms schwankt der Bestand dann natuerlich
+    // staerker — ein EINBRUCH waere weit darunter.
+    check(fewest * 5 >= most * 2,
           "der Bestand bricht ueber die Wiederholung nicht ein");
     std::printf("  ueber die Wiederholung: %d bis %d lebend\n", fewest, most);
 
@@ -11520,11 +11573,16 @@ void testUseAlpha() {
         return out;
     };
 
-    // Ohne das Flag: rgb traegt das Ausblenden, der Alphakanal bleibt voll.
+    // Ohne das Flag: rgb traegt das Ausblenden, und der Alphakanal bleibt,
+    // was er war — NULL. CEffect() setzt mRefEnt mit memset auf 0, und
+    // UpdateAlpha schreibt shaderRGBA[3] nur mit useAlpha. Ein alphagemischter
+    // Shader mit alphaGen vertex zeichnet ohne useAlpha also nichts — Ravens
+    // Abschnitt "If You Don't See Anything". Hier stand "der Alphakanal bleibt
+    // voll" (255).
     {
         const auto list = build(false);
         const auto v = readVertex(list);
-        check(v.a >= 250, "ohne useAlpha bleibt der Alphakanal voll");
+        check(v.a == 0, "ohne useAlpha bleibt der Alphakanal bei null (memset)");
         check(v.r < 200 && v.r > 50, "ohne useAlpha wird rgb heruntergezogen");
         std::printf("  ohne useAlpha: rgb %d %d %d, alpha %d\n", v.r, v.g, v.b, v.a);
         check(list.alphaShaders.empty(), "und der Shader gilt nicht als Alphabild");
@@ -12028,7 +12086,7 @@ void testMissingEndIsOne() {
     check(item.rgb[0].end == 1.0f && item.rgb[1].end == 1.0f && item.rgb[2].end == 1.0f,
           "rgb ohne end endet bei Weiss, nicht bei der Startfarbe");
     const float half = efx::curve::evaluate(item.size, item.spawnMs + 500.0f, item.spawnMs,
-                                            item.deathMs, item.sizeParm, item.randomSize);
+                                            item.deathMs, item.sizeParm, 1.0f);
     check(std::fabs(half - 5.5f) < 0.01f,
           "size { start 10 flags linear } ist bei halber Zeit 5.5 wie im Spiel");
     std::printf("  size bei 50 %%: %.2f (Engine 5.5)\n", static_cast<double>(half));
@@ -12451,6 +12509,574 @@ void testParserMatchesEngineLimits() {
           "das achte Flag-Wort liest die Engine nicht");
 }
 
+// ===========================================================================
+// Darstellung gegen die Engine (Render-Audit). Jede Pruefung nennt die
+// Fundstelle in OpenJK (SP code/cgame, code/rd-vanilla).
+// ===========================================================================
+
+// Ein Effekt aus Text, fuer kurze Pruefungen.
+efx::Effect effectFrom(const std::string& text) { return efx::read(text).effect; }
+
+// Eine Shaderbibliothek aus Text und der passende Rueckruf fuer build().
+struct ShaderBook {
+    efx::shader::Library library;
+    explicit ShaderBook(const std::string& text) { efx::shader::parseInto(library, text, "t"); }
+    efx::particles::System::ShaderLookup lookup() const {
+        return [this](const std::string& name) {
+            efx::particles::System::ShaderDraw draw;
+            draw.definition = library.find(name);
+            return draw;
+        };
+    }
+};
+
+const efx::particles::DrawGroup* groupOf(const efx::particles::DrawList& list,
+                                         const std::string& shader, int stage = 0) {
+    for (const auto& g : list.groups) {
+        if (g.shader == shader && g.stage == stage) return &g;
+    }
+    return nullptr;
+}
+
+// --- 1. Linie, Schweif, Blitz als Baender ------------------------------------
+void testRenderLinesAndBolts() {
+    std::cout << "== Linien, Schweife, Blitze als Baender ==\n";
+    using namespace efx::particles;
+    // RB_SurfaceLine: right = normalize(cross(start-eye, end-eye)); DoLine mit
+    // spanWidth = e->radius = size. Linie von (0,0,0) nach (0,0,100), Auge
+    // bei (100,0,50): Querrichtung y, Ecken bei y = +-4, t = 0 am Anfang.
+    efx::scene::Mesh band;
+    const efx::camera::Vec3 a{0, 0, 0}, b{0, 0, 100}, eye{100, 0, 50};
+    addLineQuad(band, a, b, lineSide(a, b, eye), 4.0f, 0);
+    bool ok = band.vertices.size() == 4;
+    for (const auto& v : band.vertices) ok = ok && std::fabs(v.pos[0]) < 1e-4f;
+    ok = ok && std::fabs(std::fabs(band.vertices[0].pos[1]) - 4.0f) < 1e-4f &&
+         band.vertices[0].uv[1] == 0.0f && band.vertices[2].uv[1] == 1.0f &&
+         std::fabs(band.vertices[2].pos[2] - 100.0f) < 1e-4f;
+    check(ok, "Line: Band quer zur Sichtlinie, halbe Breite = size, t von 0 nach 1");
+
+    // Ueber das System: eine Line mit size 4 ist 8 Einheiten breit, nicht ein Pixel.
+    const auto line = effectFrom(
+        "Line\n{\n\tlife\t1000\n\torigin2\t100 0 0\n\tsize\n\t{\n\t\tstart\t4\n\t}\n"
+        "\tshaders\n\t[\n\t\tgfx/beam\n\t]\n}\n");
+    System lines;
+    lines.play(line, 1u);
+    System::View view;
+    view.eye = {100.0f, 0.0f, 50.0f};
+    const auto built = lines.build(100.0f, {1, 0, 0}, {0, 1, 0}, {}, &view);
+    const auto* group = groupOf(built, "gfx/beam");
+    check(group && group->mesh.vertices.size() == 4,
+          "die Line kommt als texturiertes Band in die Zeichengruppen");
+
+    // Blitz: grobe Form fest fuer die Lebensdauer (mRefEnt.frame, einmal in
+    // CElectricity::Initialize), Feinzacken je Bild (CreateShape, Q_flrand).
+    // Die Enden jedes 16er-Schritts (cur, old) haengen nur an boltSeed.
+    BoltShape shape;
+    shape.radius = 2.0f;
+    shape.chaos = 1.0f;
+    efx::scene::Mesh one, two, other;
+    addElectricity(one, {0, 0, 0}, {160, 0, 0}, {80, -400, 0}, shape, 777, 1u, 0);
+    addElectricity(two, {0, 0, 0}, {160, 0, 0}, {80, -400, 0}, shape, 777, 99u, 0);
+    addElectricity(other, {0, 0, 0}, {160, 0, 0}, {80, -400, 0}, shape, 778, 1u, 0);
+    auto macro = [](const efx::scene::Mesh& m, size_t step) {
+        // Band 9*step beginnt bei `cur` dieses Schritts (ApplyShape(cur, old)).
+        const auto& v0 = m.vertices[step * 9 * 4];
+        const auto& v1 = m.vertices[step * 9 * 4 + 1];
+        return efx::camera::Vec3{(v0.pos[0] + v1.pos[0]) * 0.5f, (v0.pos[1] + v1.pos[1]) * 0.5f,
+                                 (v0.pos[2] + v1.pos[2]) * 0.5f};
+    };
+    bool sameMacro = one.vertices.size() == two.vertices.size();
+    bool microDiffers = false;
+    for (size_t s = 0; sameMacro && s < one.vertices.size() / 36; ++s) {
+        sameMacro = efx::camera::length(macro(one, s) - macro(two, s)) < 1e-3f;
+    }
+    for (size_t i = 0; i < std::min(one.vertices.size(), two.vertices.size()); ++i) {
+        if (std::fabs(one.vertices[i].pos[1] - two.vertices[i].pos[1]) > 1e-3f) microDiffers = true;
+    }
+    check(sameMacro, "Blitz: die grobe Form haengt nur an boltSeed — fest fuer die Lebensdauer");
+    check(microDiffers, "und die Feinzacken zittern von Bild zu Bild");
+    check(efx::camera::length(macro(one, 3) - macro(other, 3)) > 1e-3f,
+          "ein anderer boltSeed ist ein anderer Blitz");
+
+    // taper: radius * (1 - perc^2) — an der Spitze null.
+    shape.taper = true;
+    efx::scene::Mesh tapered;
+    addElectricity(tapered, {0, 0, 0}, {160, 0, 0}, {80, -400, 0}, shape, 777, 1u, 0);
+    // Erstes Band jedes Schritts: Ecken 0/1 bei cur mit newRadius.
+    const size_t lastStep = tapered.vertices.size() / 36 - 1;
+    const auto& tipA = tapered.vertices[lastStep * 36];
+    const auto& tipB = tapered.vertices[lastStep * 36 + 1];
+    const float tipWidth = std::sqrt((tipA.pos[0] - tipB.pos[0]) * (tipA.pos[0] - tipB.pos[0]) +
+                                     (tipA.pos[1] - tipB.pos[1]) * (tipA.pos[1] - tipB.pos[1]) +
+                                     (tipA.pos[2] - tipB.pos[2]) * (tipA.pos[2] - tipB.pos[2]));
+    check(tipWidth < 1e-3f, "taper: an der Spitze ist der Blitz null breit");
+
+    // grow: bei halber Lebensdauer reicht er bis zur Haelfte (RB_SurfaceElectricity).
+    shape.taper = false;
+    shape.growPerc = 0.5f;
+    efx::scene::Mesh half;
+    addElectricity(half, {0, 0, 0}, {320, 0, 0}, {160, -400, 0}, shape, 777, 1u, 0);
+    float farthest = 0.0f;
+    for (const auto& v : half.vertices) farthest = std::max(farthest, v.pos[0]);
+    check(farthest < 175.0f && farthest > 140.0f, "grow: bei 50 % reicht der Blitz bis zur Mitte");
+
+    // branch: bis zu drei Abzweige — mehr Baender als ohne.
+    shape.growPerc = 1.0f;
+    shape.branch = true;
+    int moreWithBranch = 0;
+    for (int seed = 1; seed <= 20; ++seed) {
+        efx::scene::Mesh plain, forked;
+        BoltShape noBranch = shape;
+        noBranch.branch = false;
+        addElectricity(plain, {0, 0, 0}, {600, 0, 0}, {300, -900, 0}, noBranch, seed, 1u, 0);
+        addElectricity(forked, {0, 0, 0}, {600, 0, 0}, {300, -900, 0}, shape, seed, 1u, 0);
+        if (forked.vertices.size() > plain.vertices.size()) ++moreWithBranch;
+    }
+    check(moreWithBranch > 0, "branch: der Blitz bekommt Abzweige");
+
+    // Unruhe ohne Angabe: 0 — mElasticity steht nicht im Erzeuger (FxTemplate.cpp).
+    System bolt;
+    bolt.play(effectFrom("Electricity\n{\n\tlife\t100\n\torigin2\t100 0 0\n}\n"), 1u);
+    check(!bolt.live().empty() && bolt.live()[0].chaos == 0.0f, "Electricity ohne bounce: chaos 0");
+}
+
+// --- 2. size ist ein Radius ---------------------------------------------------
+void testRenderSizeIsRadius() {
+    std::cout << "== size ist ein Radius ==\n";
+    // CParticle::UpdateSize: mRefEnt.radius = size; RB_SurfaceSprite spannt mit
+    // left = axis[1]*radius, up = axis[2]*radius auf. Size 10 -> Ecke 10*sqrt(2).
+    using namespace efx::particles;
+    System system;
+    system.play(effectFrom("Particle\n{\n\tlife\t1000\n\tsize\n\t{\n\t\tstart\t10\n\t}\n"
+                           "\tshaders\n\t[\n\t\tgfx/x\n\t]\n}\n"),
+                1u);
+    const auto list = system.build(100.0f, {1, 0, 0}, {0, 1, 0});
+    const auto& v = list.byTexture.begin()->second.vertices[0];
+    const float d = std::sqrt(v.pos[0] * v.pos[0] + v.pos[1] * v.pos[1] + v.pos[2] * v.pos[2]);
+    check(std::fabs(d - 10.0f * std::sqrt(2.0f)) < 0.01f, "Particle size 10: Ecke 10*sqrt(2) von der Mitte");
+
+    // OrientedParticle ebenso (RB_SurfaceOrientedQuad, radius).
+    System oriented;
+    oriented.play(effectFrom("OrientedParticle\n{\n\tlife\t1000\n\tsize\n\t{\n\t\tstart\t10\n\t}\n}\n"),
+                  1u);
+    const auto olist = oriented.build(100.0f, {1, 0, 0}, {0, 1, 0});
+    const auto& o = olist.byTexture.begin()->second.vertices[0];
+    const float od = std::sqrt(o.pos[0] * o.pos[0] + o.pos[1] * o.pos[1] + o.pos[2] * o.pos[2]);
+    check(std::fabs(od - 10.0f * std::sqrt(2.0f)) < 0.01f, "OrientedParticle size 10: ebenso");
+
+    // Ausrichtung: MakeNormalVectors. Normale (1,0,0): (0,0) liegt bei (0,-1,1)*r.
+    efx::scene::Mesh quad;
+    addOrientedQuad(quad, {}, {1, 0, 0}, 1.0f, 0.0f, 0);
+    bool found = false;
+    for (const auto& vertex : quad.vertices) {
+        if (vertex.uv[0] == 0.0f && vertex.uv[1] == 0.0f) {
+            found = std::fabs(vertex.pos[1] + 1.0f) < 1e-4f && std::fabs(vertex.pos[2] - 1.0f) < 1e-4f;
+        }
+    }
+    check(found, "OrientedQuad: Ecke (0,0) wie RB_AddQuadStamp mit MakeNormalVectors");
+}
+
+// --- 3. Zylinder ---------------------------------------------------------------
+void testRenderCylinderEnds() {
+    std::cout << "== Zylinder: Radien und Enden ==\n";
+    // CCylinder::Draw: oldorigin = origin + length*axis; RB_SurfaceCylinder:
+    // size2 (backlerp) am Ursprung, size (radius) am fernen Ende.
+    using namespace efx::particles;
+    System system;
+    system.play(effectFrom("Cylinder\n{\n\tlife\t1000\n\tsize\n\t{\n\t\tstart\t4\n\t}\n"
+                           "\tsize2\n\t{\n\t\tstart\t20\n\t}\n\tlength\n\t{\n\t\tstart\t50\n\t}\n}\n"),
+                1u);
+    const auto list = system.build(100.0f, {1, 0, 0}, {0, 1, 0});
+    float atOrigin = 0.0f, atEnd = 0.0f;
+    for (const auto& v : list.byTexture.begin()->second.vertices) {
+        const float r = std::sqrt(v.pos[0] * v.pos[0] + v.pos[1] * v.pos[1]);
+        if (std::fabs(v.pos[2]) < 0.01f) atOrigin = std::max(atOrigin, r);
+        if (std::fabs(v.pos[2] - 50.0f) < 0.01f) atEnd = std::max(atEnd, r);
+    }
+    check(std::fabs(atOrigin - 20.0f) < 0.01f && std::fabs(atEnd - 4.0f) < 0.01f,
+          "size2 20 am Ursprung, size 4 am Ende — volle Radien");
+    check(cylinderSegments(0.0f) == 40 && cylinderSegments(5000.0f) == 8,
+          "Segmente wie RB_SurfaceCylinder: 40 nah, 8 fern");
+}
+
+// --- 4. random je Bild -----------------------------------------------------------
+void testRenderRandomPerFrame() {
+    std::cout << "== random je Bild ==\n";
+    // UpdateAlpha: mischen, auf 0..1 schneiden, DANN `Q_flrand(0,1) * perc1`
+    // — in jedem Bild neu. alpha 0.5 -> 1 mit random (ohne linear): Wert ist
+    // start = 0.5, mal Zufall: Mittel 0.25, nicht 0.75.
+    using namespace efx::particles;
+    System system;
+    system.play(effectFrom("Particle\n{\n\tlife\t100000\n\tflags\tuseAlpha\n"
+                           "\talpha\n\t{\n\t\tstart\t0.5\n\t\tend\t1\n\t\tflags\trandom\n\t}\n"
+                           "\tshaders\n\t[\n\t\tgfx/x\n\t]\n}\n"),
+                1u);
+    double sum = 0.0, sumSq = 0.0;
+    const int frames = 400;
+    for (int f = 0; f < frames; ++f) {
+        const auto list = system.build(100.0f + f * 16.7f, {1, 0, 0}, {0, 1, 0});
+        const double a = static_cast<double>((list.byTexture.begin()->second.vertices[0].colour >> 24) & 0xFF) / 255.0;
+        sum += a;
+        sumSq += a * a;
+    }
+    const double mean = sum / frames;
+    const double stdev = std::sqrt(std::max(0.0, sumSq / frames - mean * mean));
+    check(std::fabs(mean - 0.25) < 0.04, "alpha random: Mittel 0.25 (Zufall nach dem Mischen)");
+    check(stdev > 0.08, "und es flackert von Bild zu Bild");
+    std::printf("  alpha 0.5 random: Mittel %.3f, Streuung %.3f\n", mean, stdev);
+    // Dasselbe Bild zweimal angefahren: derselbe Wert (Zurueckspulen).
+    const auto x = system.build(5000.0f, {1, 0, 0}, {0, 1, 0});
+    const auto y = system.build(5000.0f, {1, 0, 0}, {0, 1, 0});
+    check(x.byTexture.begin()->second.vertices[0].colour ==
+              y.byTexture.begin()->second.vertices[0].colour,
+          "derselbe Zeitpunkt ergibt denselben Wert");
+}
+
+// --- 5. absoluteVel / absoluteAccel ------------------------------------------
+void testRenderAbsoluteVelocity() {
+    std::cout << "== absoluteVel / absoluteAccel ==\n";
+    // FxScheduler.cpp: FX_VEL_IS_ABSOLUTE -> VectorSet( vel, mVelX, mVelY, mVelZ ).
+    using namespace efx::particles;
+    const auto effect = effectFrom(
+        "Particle\n{\n\tlife\t1000\n\tspawnFlags\tabsoluteVel absoluteAccel\n"
+        "\tvelocity\t0 0 100\n\tacceleration\t0 0 10\n}\n");
+    bool all = true;
+    for (int orientation = 0; orientation < 3; ++orientation) {
+        System system;
+        system.play(effect, 1u, {}, axisFor(orientation));
+        const auto& item = system.live()[0];
+        all = all && std::fabs(item.velocity.z - 100.0f) < 1e-3f &&
+              std::fabs(item.velocity.x) < 1e-3f && std::fabs(item.velocity.y) < 1e-3f &&
+              std::fabs(item.acceleration.z - 10.0f) < 1e-3f;
+    }
+    check(all, "absolute Geschwindigkeit und Beschleunigung in Weltkoordinaten, jede Ausrichtung");
+
+    // Nur Particle/OrientedParticle/Tail/Emitter bewegen sich (FxScheduler.cpp).
+    System still;
+    still.play(effectFrom("Line\n{\n\tlife\t1000\n\tvelocity\t100 0 0\n\torigin2\t0 0 50\n}\n"), 1u);
+    check(efx::camera::length(still.live()[0].positionAt(900.0f)) < 1e-3f,
+          "eine Line mit velocity bewegt sich nicht");
+}
+
+// --- 6. Bildfolge je Teilchen ---------------------------------------------------
+void testRenderAnimPerParticle() {
+    std::cout << "== Bildfolgen je Teilchen (setShaderTime) ==\n";
+    // tr_backend.cpp: shaderTime = floatTime - e.shaderTime; mit setShaderTime
+    // ist e.shaderTime der Entstehungszeitpunkt (CEffect::SetTimeStart).
+    using namespace efx::particles;
+    const ShaderBook book(
+        "gfx/boom\n{\n\t{\n\t\toneshotanimmap 6 f0.tga f1.tga f2.tga f3.tga f4.tga f5.tga f6.tga f7.tga\n"
+        "\t\tblendFunc GL_ONE GL_ONE\n\t}\n}\n");
+    const auto effect = effectFrom(
+        "Particle\n{\n\tlife\t5000\n\tflags\tsetShaderTime\n\tshaders\n\t[\n\t\tgfx/boom\n\t]\n}\n"
+        "Particle\n{\n\tlife\t5000\n\tdelay\t500\n\tflags\tsetShaderTime\n\tshaders\n\t[\n\t\tgfx/boom\n\t]\n}\n");
+    System system;
+    system.play(effect, 1u);
+    const auto list = system.build(600.0f, {1, 0, 0}, {0, 1, 0}, book.lookup());
+    bool frame3 = false, frame0 = false;
+    for (const auto& g : list.groups) {
+        if (g.image == std::string(efx::assets::kImagePrefix) + "f3.tga") frame3 = true;
+        if (g.image == std::string(efx::assets::kImagePrefix) + "f0.tga") frame0 = true;
+    }
+    check(frame3 && frame0, "bei 600 ms: das erste Teilchen zeigt Bild 3, das spaete Bild 0");
+}
+
+// --- 7./8./9. Shaderstufen, Mischung, Reihenfolge -----------------------------
+void testRenderShaderStages() {
+    std::cout << "== Shaderstufen, Faktoren, Reihenfolge ==\n";
+    using namespace efx::particles;
+    const ShaderBook book(
+        "a_add\n{\n\t{\n\t\tmap a.tga\n\t\tblendFunc GL_ONE GL_ONE\n\t}\n}\n"
+        "z_smoke\n{\n\t{\n\t\tmap z.tga\n\t\tblendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA\n"
+        "\t\trgbGen vertex\n\t\talphaGen vertex\n\t}\n}\n"
+        "dark\n{\n\t{\n\t\tmap d.tga\n\t\tblendFunc GL_ZERO GL_ONE_MINUS_SRC_COLOR\n\t}\n}\n"
+        "soft\n{\n\t{\n\t\tmap s.tga\n\t\tblendFunc GL_SRC_ALPHA GL_ONE\n\t\talphaFunc GE128\n\t}\n}\n"
+        "two\n{\n\t{\n\t\tmap t1.tga\n\t\tblendFunc GL_ONE GL_ONE\n\t}\n"
+        "\t{\n\t\tmap t2.tga\n\t\tblendFunc GL_ONE GL_ONE\n\t\trgbGen vertex\n\t}\n}\n"
+        "near\n{\n\tsort nearest\n\t{\n\t\tmap n.tga\n\t\tblendFunc GL_ONE GL_ONE\n\t}\n}\n");
+    std::string text;
+    for (const char* name : {"near", "a_add", "z_smoke", "dark", "soft", "two"}) {
+        text += std::string("Particle\n{\n\tlife\t1000\n\trgb\n\t{\n\t\tstart\t1 0 0\n\t}\n"
+                            "\tshaders\n\t[\n\t\t") + name + "\n\t]\n}\n";
+    }
+    text += "Particle\n{\n\tlife\t1000\n\tflags\tuseAlpha\n\tshaders\n\t[\n\t\tgfx/ohneblock\n\t]\n}\n";
+    System system;
+    system.play(effectFrom(text), 1u);
+    const auto list = system.build(100.0f, {1, 0, 0}, {0, 1, 0}, book.lookup());
+
+    // Faktoren eins zu eins.
+    const auto* dark = groupOf(list, "dark");
+    check(dark && dark->blended && dark->src == efx::shader::BlendFactor::Zero &&
+              dark->dst == efx::shader::BlendFactor::OneMinusSrcColor,
+          "GL_ZERO GL_ONE_MINUS_SRC_COLOR bleibt, wie es ist (dunkelt ab)");
+    const auto* soft = groupOf(list, "soft");
+    check(soft && soft->src == efx::shader::BlendFactor::SrcAlpha &&
+              soft->dst == efx::shader::BlendFactor::One && soft->alphaTest == 3,
+          "GL_SRC_ALPHA GL_ONE und alphaFunc GE128 kommen bei der Zeichnung an");
+
+    // Alle Stufen, und rgbGen ohne Angabe: identityLighting = Weiss — die rote
+    // Farbe der Primitive wirkt nicht (ParseStage, ComputeColors).
+    const auto* first = groupOf(list, "two", 0);
+    const auto* second = groupOf(list, "two", 1);
+    check(first && second, "ein Shader mit zwei Stufen ergibt zwei Zeichengruppen");
+    if (first && second) {
+        const uint32_t c0 = first->mesh.vertices[0].colour;
+        const uint32_t c1 = second->mesh.vertices[0].colour;
+        check((c0 & 0xFFFFFFu) == 0xFFFFFFu, "Stufe ohne rgbGen: Weiss statt Rot");
+        check((c1 & 0xFFu) == 255u && ((c1 >> 8) & 0xFFu) == 0u, "Stufe mit rgbGen vertex: Rot");
+    }
+
+    // Reihenfolge: SS_BLEND0 (z_smoke, dark, soft, Ersatzshader) vor SS_BLEND1
+    // (a_add, two), `sort nearest` zuletzt — nicht alphabetisch.
+    auto position = [&](const std::string& name) {
+        for (size_t i = 0; i < list.groups.size(); ++i) {
+            if (list.groups[i].shader == name) return static_cast<int>(i);
+        }
+        return -1;
+    };
+    check(position("z_smoke") < position("a_add"), "alphagemischter Rauch vor dem additiven Glimmen");
+    check(position("near") == static_cast<int>(list.groups.size()) - 1, "sort nearest zuletzt");
+
+    // Kein Shaderblock: Ersatzshader (R_FindShader, LIGHTMAP_2D) — Alphamischung
+    // ohne Tiefentest, Farbe und Alpha aus dem Eckpunkt.
+    const auto* plain = groupOf(list, "gfx/ohneblock");
+    check(plain && plain->blended && !plain->depthTest &&
+              plain->src == efx::shader::BlendFactor::SrcAlpha,
+          "Bild ohne Shaderblock: Alphamischung ohne Tiefentest");
+
+    // Weder Block noch Bild: das graue Kaestchen der Engine.
+    System missing;
+    missing.play(effectFrom("Particle\n{\n\tlife\t1000\n\tshaders\n\t[\n\t\tgibt/es/nicht\n\t]\n}\n"),
+                 1u);
+    const auto none = missing.build(100.0f, {1, 0, 0}, {0, 1, 0}, [](const std::string&) {
+        System::ShaderDraw draw;
+        draw.missing = true;
+        return draw;
+    });
+    check(!none.groups.empty() && none.groups[0].image == "$default" && !none.groups[0].blended,
+          "fehlender Shader: tr.defaultShader (undurchsichtiges graues Kaestchen)");
+}
+
+// --- 10. Anzahl -----------------------------------------------------------------
+void testRenderCountRounding() {
+    std::cout << "== count rundet wie GetRoundedVal ==\n";
+    // CFxRange::GetRoundedVal: (int)(flrand(min,max) + 0.5), ohne Untergrenze.
+    int zero = 0, total = 0;
+    const auto effect = effectFrom("Particle\n{\n\tcount\t0 2\n\tlife\t100\n}\n");
+    for (unsigned seed = 1; seed <= 2000; ++seed) {
+        efx::sim::Random random(seed);
+        const auto spawns = efx::sim::schedule(effect, random);
+        if (spawns.empty()) ++zero;
+        total += static_cast<int>(spawns.size());
+    }
+    check(zero > 400 && zero < 600, "count 0 2: in rund einem Viertel der Faelle gar nichts");
+    check(std::fabs(total / 2000.0 - 1.0) < 0.06, "und im Mittel 1.0");
+    std::printf("  count 0 2: %d von 2000 ohne Teilchen, Mittel %.3f\n", zero, total / 2000.0);
+    efx::sim::Random random(1u);
+    check(efx::sim::schedule(effectFrom("Particle\n{\n\tcount\t2.7\n}\n"), random).size() == 2,
+          "count 2.7 ohne Spanne: abgeschnitten auf 2");
+    // Der Ausgangswert wird verruehrt: aufeinanderfolgende Werte geben nicht
+    // fast denselben ersten Zufallswert.
+    float lowest = 1.0f, highest = 0.0f;
+    for (unsigned seed = 1; seed <= 400; ++seed) {
+        efx::sim::Random r(seed);
+        const float v = r.next();
+        lowest = std::min(lowest, v);
+        highest = std::max(highest, v);
+    }
+    check(lowest < 0.05f && highest > 0.95f, "Ausgangswerte 1..400 streuen ueber 0..1");
+}
+
+// --- 11. Decal ----------------------------------------------------------------------
+void testRenderDecal() {
+    std::cout << "== Decal wie CG_ImpactMark ==\n";
+    // FxScheduler.cpp ruft CG_ImpactMark mit den STARTwerten; cg_marks.cpp:
+    // MARK_TOTAL_TIME 10000, die letzte Sekunde blendet das Alpha aus.
+    using namespace efx::particles;
+    const auto effect = effectFrom(
+        "Decal\n{\n\tsize\n\t{\n\t\tstart\t8\n\t\tend\t30\n\t\tflags\tlinear\n\t}\n"
+        "\trgb\n\t{\n\t\tstart\t1 0 0\n\t\tend\t0 0 1\n\t\tflags\tlinear\n\t}\n"
+        "\talpha\n\t{\n\t\tstart\t0.5\n\t}\n\tshaders\n\t[\n\t\tgfx/scorch\n\t]\n}\n");
+    System decal;
+    decal.play(effect, 1u);
+    check(std::fabs(decal.live()[0].deathMs - 10000.0f) < 0.01f, "ein Abdruck lebt 10 s, ohne life");
+    const auto mid = decal.build(5000.0f, {1, 0, 0}, {0, 1, 0});
+    check(!mid.byTexture.empty(), "nach 5 s ist der Abdruck noch da");
+    if (mid.byTexture.empty()) return;
+    const auto& v = mid.byTexture.begin()->second.vertices;
+    const float half = std::sqrt(v[0].pos[0] * v[0].pos[0] + v[0].pos[1] * v[0].pos[1] +
+                                 v[0].pos[2] * v[0].pos[2]) / std::sqrt(2.0f);
+    check(std::fabs(half - 8.0f) < 0.01f, "Groesse = size start als Radius, keine Kurve");
+    check((v[0].colour & 0xFFu) == 255u && ((v[0].colour >> 16) & 0xFFu) == 0u &&
+              ((v[0].colour >> 24) & 0xFFu) == 127u,
+          "Farbe = rgb start, Alpha = alpha start");
+    const auto late = decal.build(9750.0f, {1, 0, 0}, {0, 1, 0});
+    const uint32_t fading = late.byTexture.empty()
+                                ? 0u
+                                : (late.byTexture.begin()->second.vertices[0].colour >> 24) & 0xFFu;
+    check(fading > 55 && fading < 70, "in der letzten Sekunde blendet das Alpha aus (255*t/1000)");
+    check(mid.marks == 1, "die Statuszeile zaehlt einen Abdruck");
+
+    // Mit Raum: auf die Flaeche, die hoechstens 20 Einheiten hinter ihm liegt.
+    System onFloor;
+    onFloor.play(effect, 1u, {}, {}, {}, efx::sim::roomPlanes(500.0f, 500.0f, 500.0f));
+    const auto floorList = onFloor.build(100.0f, {1, 0, 0}, {0, 1, 0});
+    bool flat = !floorList.byTexture.empty();
+    for (const auto& vertex : floorList.byTexture.begin()->second.vertices) {
+        flat = flat && std::fabs(vertex.pos[2]) < 1e-3f;
+    }
+    check(flat, "mit Raum liegt der Abdruck auf dem Boden");
+    const auto high = effectFrom("Decal\n{\n\torigin\t100 0 0\n\tsize\n\t{\n\t\tstart\t8\n\t}\n}\n");
+    System floating;
+    floating.play(high, 1u, {}, {}, {}, efx::sim::roomPlanes(500.0f, 500.0f, 500.0f));
+    check(floating.build(100.0f, {1, 0, 0}, {0, 1, 0}).drawn == 0,
+          "ohne Flaeche in 20 Einheiten kein Abdruck (CM_MarkFragments)");
+}
+
+// --- 12. ScreenFlash ----------------------------------------------------------------
+void testRenderScreenFlash() {
+    std::cout << "== ScreenFlash ==\n";
+    // CFlash::Draw: Sprite 8 Einheiten vor dem Auge, radius = 8*tan(fov_x/2);
+    // CFlash::Init: mod = dot * (1 - dis^2/600^2).
+    using namespace efx::particles;
+    System flash;
+    flash.play(effectFrom("Flash\n{\n\tlife\t500\n\trgb\n\t{\n\t\tstart\t1 0.5 0\n\t}\n"
+                          "\tshaders\n\t[\n\t\tgfx/flash\n\t]\n}\n"),
+               1u);
+    System::View view;
+    view.eye = {0.0f, 0.0f, 100.0f};
+    view.fovXDegrees = 90.0f;
+    // right x, up y — Blick entlang -z, also auf den Ursprung.
+    const auto list = flash.build(100.0f, {1, 0, 0}, {0, 1, 0}, {}, &view);
+    check(!list.byTexture.empty(), "der Flash wird gezeichnet");
+    if (!list.byTexture.empty()) {
+        const auto& v = list.byTexture.begin()->second.vertices;
+        const float expected = 1.0f - (100.0f * 100.0f) / (600.0f * 600.0f);
+        check(std::fabs(v[0].pos[2] - 92.0f) < 1e-3f, "8 Einheiten vor dem Auge");
+        check(std::fabs(std::fabs(v[0].pos[0]) - 8.0f) < 1e-3f, "so gross wie das Sichtfeld");
+        check(std::abs(static_cast<int>(v[0].colour & 0xFFu) - static_cast<int>(expected * 255.0f + 0.5f)) <= 1,
+              "Farbe nach CFlash::Init gedaempft (0.97 bei 100 Einheiten)");
+    }
+}
+
+// --- 13. org2FromTrace ----------------------------------------------------------------
+void testRenderOrg2FromTrace() {
+    std::cout << "== org2fromTrace ==\n";
+    // FxScheduler.cpp: Endpunkt = Treffer eines Strahls entlang ax[0];
+    // traceImpactFx startet den Einschlag dort.
+    using namespace efx::particles;
+    efx::Effect child = effectFrom("Particle\n{\n\tlife\t100\n}\n");
+    const auto effect = effectFrom(
+        "Line\n{\n\tlife\t500\n\tspawnFlags\torg2fromTrace traceImpactFx\n"
+        "\timpactfx\n\t[\n\t\tkind\n\t]\n}\n");
+    System system;
+    system.play(effect, 1u, {}, {},
+                [&](const std::string& name) -> const efx::Effect* {
+                    return name == "kind" ? &child : nullptr;
+                },
+                efx::sim::roomPlanes(200.0f, 200.0f, 300.0f));
+    const Live* line = nullptr;
+    for (const auto& item : system.live()) {
+        if (item.type == efx::PrimitiveType::Line) line = &item;
+    }
+    check(line && std::fabs(line->origin2.z - 300.0f) < 1e-2f,
+          "der Endpunkt liegt an der Decke, wo der Strahl auftrifft");
+    check(system.startedEffects() == 1, "und traceImpactFx startet dort den Einschlag");
+}
+
+// --- 14. Licht -------------------------------------------------------------------------
+void testRenderLights() {
+    std::cout << "== Lichter ==\n";
+    // CLight::Draw: AddLightToScene( origin, radius = size, r, g, b ).
+    using namespace efx::particles;
+    System system;
+    system.play(effectFrom("Light\n{\n\tlife\t1000\n\tsize\n\t{\n\t\tstart\t300\n\t}\n"
+                           "\trgb\n\t{\n\t\tstart\t1 0.5 0.25\n\t}\n}\n"),
+                1u);
+    const auto list = system.build(100.0f, {1, 0, 0}, {0, 1, 0});
+    check(list.lights.size() == 1 && std::fabs(list.lights[0].radius - 300.0f) < 1e-3f &&
+              std::fabs(list.lights[0].rgb[1] - 0.5f) < 1e-3f && list.drawn == 0,
+          "ein Light zeichnet nichts, kommt aber mit Radius und Farbe in die Lichterliste");
+}
+
+// --- 16. Wellen -----------------------------------------------------------------------
+void testRenderWaves() {
+    std::cout << "== noise und random ==\n";
+    // EvalWaveForm: GF_NOISE -> R_NoiseGet4f, GF_RAND -> GetNoiseTime <= frequency.
+    using efx::shader::evaluateWave;
+    efx::shader::WaveForm noise;
+    noise.func = "noise";
+    noise.amplitude = 1.0f;
+    noise.frequency = 1.0f;
+    bool inRange = true, smooth = true;
+    float previous = evaluateWave(noise, 0.0f);
+    for (int i = 1; i <= 400; ++i) {
+        const float v = evaluateWave(noise, i * 0.01f);
+        inRange = inRange && v >= -1.0f && v <= 1.0f;
+        smooth = smooth && std::fabs(v - previous) <= 0.021f;  // hoechstens 2*0.01 je Schritt
+        previous = v;
+    }
+    check(inRange && smooth, "noise: weich (linear zwischen ganzen Zeitschritten) und in -1..1");
+    efx::shader::WaveForm random;
+    random.func = "random";
+    random.base = 0.0f;
+    random.amplitude = 1.0f;
+    random.frequency = 1.0f;
+    int on = 0;
+    for (int ms = 0; ms < 256; ++ms) {
+        const float v = evaluateWave(random, ms * 0.001f);
+        if (v == 1.0f) ++on;
+        else if (v != 0.0f) on = -1000;
+    }
+    check(on > 50 && on < 206, "random: an (base+amplitude) oder aus (base), je nach Rauschtabelle");
+}
+
+// --- 17. Kleinigkeiten und Statuszeile -------------------------------------------------
+void testRenderSmallSimulationPoints() {
+    std::cout << "== Kleinigkeiten der Simulation ==\n";
+    using namespace efx::particles;
+    // alpha { start 0 } ohne Kurvenart: unsichtbar (kein "dann eben 1").
+    System zero;
+    zero.play(effectFrom("Particle\n{\n\tlife\t1000\n\tflags\tuseAlpha\n"
+                         "\talpha\n\t{\n\t\tstart\t0\n\t}\n\tshaders\n\t[\n\t\tgfx/x\n\t]\n}\n"),
+              1u);
+    const auto list = zero.build(100.0f, {1, 0, 0}, {0, 1, 0});
+    check(((list.byTexture.begin()->second.vertices[0].colour >> 24) & 0xFFu) == 0u,
+          "alpha start 0 bleibt 0 (UpdateAlpha)");
+
+    // Emitter zeichnen kein Sprite (CEmitter::Draw: nur ein Modell, mit useModel).
+    System emitter;
+    emitter.play(effectFrom("Emitter\n{\n\tlife\t1000\n\tshaders\n\t[\n\t\tgfx/x\n\t]\n}\n"), 1u);
+    check(emitter.build(100.0f, {1, 0, 0}, {0, 1, 0}).drawn == 0, "ein Emitter zeichnet kein Sprite");
+
+    // Statuszeile: noch wartende Ausloesungen.
+    System waiting;
+    waiting.play(effectFrom("Particle\n{\n\tcount\t3\n\tlife\t100\n\tdelay\t500\n}\n"
+                            "Particle\n{\n\tlife\t100\n}\n"),
+                 1u);
+    const auto early = waiting.build(10.0f, {1, 0, 0}, {0, 1, 0});
+    const auto later = waiting.build(600.0f, {1, 0, 0}, {0, 1, 0});
+    check(early.scheduled == 3 && later.scheduled == 0, "Scheduled zaehlt, was noch auf seine Verzoegerung wartet");
+
+    // FxRunner: das Kind bekommt die Achse der Primitive (`ax`), nicht die des
+    // Elternteils — hier mit axisFromSphere.
+    efx::Effect child = effectFrom("Particle\n{\n\tlife\t100\n\tvelocity\t10 0 0\n}\n");
+    System runner;
+    runner.play(effectFrom("FxRunner\n{\n\tspawnFlags\torgOnSphere axisFromSphere\n"
+                           "\tradius\t10\n\theight\t10\n\tplayfx\n\t[\n\t\tkind\n\t]\n}\n"),
+                3u, {}, {},
+                [&](const std::string& name) -> const efx::Effect* {
+                    return name == "kind" ? &child : nullptr;
+                });
+    bool radial = !runner.live().empty();
+    for (const auto& item : runner.live()) {
+        const auto out = efx::camera::normalise(item.origin);
+        const auto dir = efx::camera::normalise(item.velocity);
+        radial = radial && efx::camera::dot(out, dir) > 0.99f;
+    }
+    check(radial, "FxRunner mit axisFromSphere: das Kind fliegt radial nach aussen");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -12570,6 +13196,21 @@ int main(int argc, char** argv) {
     testWhiteImageShader();
     testScanAllCopiesAlphaWavesOnce();
     testParserMatchesEngineLimits();
+    // Darstellung gegen die Engine (Render-Audit).
+    testRenderLinesAndBolts();
+    testRenderSizeIsRadius();
+    testRenderCylinderEnds();
+    testRenderRandomPerFrame();
+    testRenderAbsoluteVelocity();
+    testRenderAnimPerParticle();
+    testRenderShaderStages();
+    testRenderCountRounding();
+    testRenderDecal();
+    testRenderScreenFlash();
+    testRenderOrg2FromTrace();
+    testRenderLights();
+    testRenderWaves();
+    testRenderSmallSimulationPoints();
 
     std::cout << "\n" << g_checks << " Pruefungen, " << g_failures << " Fehler";
     if (g_dataFiles > 0) {

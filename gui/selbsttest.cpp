@@ -598,6 +598,27 @@ public:
     }
     // Das ganze Fenster, in genau diesem Bild (siehe selbsttestNachZeichnen).
     static std::string fensterFotoName;
+    // Ein Bildpunkt des fertigen Fensters, gelesen nach dem Zeichnen.
+    static bool punktGewuenscht;
+    static ImVec2 punktOrt;
+    static int punktFarbe[3];
+    // Liest die Farbe des Bildpunkts in der oberen linken Ecke der Ansicht
+    // (ein Stueck nach innen, ausserhalb von Achsen und Effekt).
+    static Schritt leseAnsichtsEcke() {
+        return {"Ansichtsecke lesen", [](int b) {
+                    if (b == 0) {
+                        const Element* e = findeMarke("ansicht");
+                        if (!e) {
+                            punktFarbe[0] = punktFarbe[1] = punktFarbe[2] = -1;
+                            return true;
+                        }
+                        punktOrt = ImVec2(e->rect.Min.x + 6.0f, e->rect.Min.y + 6.0f);
+                        punktGewuenscht = true;
+                        return false;
+                    }
+                    return !punktGewuenscht || b > 3;
+                }};
+    }
     static Schritt fensterFoto(const std::string& name) {
         return {"Fensterfoto " + name, [=](int b) {
                     if (fotoOrdner.empty()) return true;
@@ -929,7 +950,17 @@ public:
             return e != nullptr && e->gesperrt;
         }));
         s.push_back(menuesZu());
+        s.push_back(warte(2));
+        s.push_back(leseAnsichtsEcke());
+        s.push_back(pruefSchritt("Overdraw: schwarzer Hintergrund, kein Raum (wie im Original)", [] {
+            return punktFarbe[0] == 0 && punktFarbe[1] == 0 && punktFarbe[2] == 0;
+        }));
         s.push_back(tu("Overdraw aus", [] { app->settings_.effectOverdraw = false; }));
+        s.push_back(warte(2));
+        s.push_back(leseAnsichtsEcke());
+        s.push_back(pruefSchritt("ohne Overdraw ist der Raum wieder da", [] {
+            return punktFarbe[0] > 0 || punktFarbe[1] > 0 || punktFarbe[2] > 0;
+        }));
         // Ausrichtung.
         const Str ausrichtung[] = {Str::EffectsOrientUp, Str::EffectsOrientSide,
                                    Str::EffectsOrientDown};
@@ -2373,6 +2404,9 @@ std::vector<std::string> Selbsttest::geoeffnetPerShell;
 std::string Selbsttest::aktuellerTeil = "vorlauf";
 size_t Selbsttest::einfuegeAn = 0;
 std::string Selbsttest::fensterFotoName;
+bool Selbsttest::punktGewuenscht = false;
+ImVec2 Selbsttest::punktOrt;
+int Selbsttest::punktFarbe[3] = {-1, -1, -1};
 std::string Selbsttest::bericht;
 
 // ===========================================================================
@@ -2407,7 +2441,19 @@ bool selbsttestVorbereiten() {
 bool selbsttestAktiv() { return g_an; }
 
 void selbsttestNachZeichnen(render::Renderer* renderer) {
-    if (!g_an || Selbsttest::fensterFotoName.empty() || renderer == nullptr) return;
+    if (!g_an || renderer == nullptr) return;
+    if (Selbsttest::punktGewuenscht) {
+        Selbsttest::punktGewuenscht = false;
+        std::vector<unsigned char> bild;
+        int bw = 0, bh = 0;
+        const int x = static_cast<int>(Selbsttest::punktOrt.x), y = static_cast<int>(Selbsttest::punktOrt.y);
+        if (renderer->readBackbuffer(bild, bw, bh) && x >= 0 && y >= 0 && x < bw && y < bh) {
+            for (int k = 0; k < 3; ++k) Selbsttest::punktFarbe[k] = bild[(static_cast<size_t>(y) * bw + x) * 4 + k];
+        } else {
+            for (int& k : Selbsttest::punktFarbe) k = -1;
+        }
+    }
+    if (Selbsttest::fensterFotoName.empty()) return;
     std::vector<unsigned char> rgba;
     int w = 0, h = 0;
     if (renderer->readBackbuffer(rgba, w, h)) {

@@ -1215,7 +1215,14 @@ void App::drawStatusBar() {
         ImGui::SameLine();
     }
 
-    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 320.0f);
+    // Rechtsbuendig, so breit wie der Text tatsaechlich ist (DPI, Sprache).
+    char counters[256];
+    std::snprintf(counters, sizeof(counters), "%s: %d   %s: %d   %s: %d   %s: %d   %.1f FPS",
+                  tr(Str::StatusActive), lastAlive_, tr(Str::StatusDrawn), lastDrawn_,
+                  tr(Str::StatusScheduled), lastScheduled_, tr(Str::StatusMarks), lastMarks_,
+                  static_cast<double>(ImGui::GetIO().Framerate));
+    ImGui::SameLine(std::max(0.0f, ImGui::GetContentRegionAvail().x -
+                                       ImGui::CalcTextSize(counters).x - ImGui::GetStyle().ItemSpacing.x));
     // Standen bis eben fest auf null — jetzt die tatsaechlichen Zahlen aus
     // der laufenden Vorschau. "Aktiv" ist, was lebt; "Gezeichnet" ist, was
     // davon ein Bild hat (ein Sound lebt, zeichnet aber nichts).
@@ -1227,9 +1234,7 @@ void App::drawStatusBar() {
             ImGui::SameLine();
         }
     }
-    ImGui::Text("%s: %d   %s: %d   %.1f FPS", tr(Str::StatusActive), lastAlive_,
-                tr(Str::StatusDrawn), lastDrawn_,
-                static_cast<double>(ImGui::GetIO().Framerate));
+    ImGui::TextUnformatted(counters);
 }
 
 

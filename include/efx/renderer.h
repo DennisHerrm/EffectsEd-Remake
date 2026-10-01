@@ -113,6 +113,42 @@ enum class Blend {
     Filter,      // GL_DST_COLOR GL_SRC_COLOR
 };
 
+// Die Mischfaktoren eines Shaders, eins zu eins wie in `blendFunc`.
+//
+// Die fuenf Arten von `Blend` reichen fuer Raum und Gitter, nicht fuer
+// Effekte: JKA-Shader schreiben `GL_SRC_ALPHA GL_ONE` (das Alpha der Textur
+// zaehlt), `GL_ONE GL_ONE_MINUS_SRC_ALPHA` (vormultipliziert), `GL_DST_COLOR
+// GL_ONE` (aufhellen nach Untergrund), `GL_ZERO GL_ONE_MINUS_SRC_COLOR`
+// (abdunkeln). Auf fuenf Voreinstellungen gerundet wurde aus dem
+// abdunkelnden Rauch ein aufhellender. Jede Kombination wird deshalb genau
+// so gesetzt, wie sie im Shader steht (GL_ONE GL_ZERO heisst: keine Mischung).
+enum class BlendFactor {
+    Zero,
+    One,
+    SrcColor,
+    OneMinusSrcColor,
+    DstColor,
+    OneMinusDstColor,
+    SrcAlpha,
+    OneMinusSrcAlpha,
+    DstAlpha,
+    OneMinusDstAlpha,
+    SrcAlphaSaturate,
+};
+
+// Ein dynamisches Licht auf den Flaechen des Testraums (Light-Primitive).
+//
+// Die Engine zeichnet dafuer einen zusaetzlichen Durchgang ueber die Welt,
+// `GL_DST_COLOR GL_ONE` mit der Dlight-Textur: Ziel += Ziel * Lichtfarbe *
+// Abfall. Hier im selben Durchgang: Farbe * (1 + Summe(Lichtfarbe *
+// max(0, 1 - Abstand / Radius))).
+struct Light {
+    float pos[3];
+    float radius;
+    float rgb[3];
+};
+constexpr int kMaxLights = 16;
+
 // Eine Texturkennung muss beides aufnehmen koennen:
 //
 //   OpenGL  gibt eine Nummer zurueck (GLuint, 32 Bit)
@@ -214,9 +250,22 @@ public:
     // die passende Matrix, statt dass jeder Renderer sie umrechnet.
     virtual bool wantsZeroToOneDepth() const = 0;
     virtual void setBlend(Blend mode) = 0;
+    // Genau das Faktorpaar eines Shaders (siehe BlendFactor). One/Zero heisst:
+    // keine Mischung.
+    virtual void setBlendFactors(BlendFactor src, BlendFactor dst) = 0;
     virtual void setCulling(Cull mode) = 0;
     virtual void setFill(Fill mode) = 0;
     virtual void setDepthWrite(bool enabled) = 0;
+    // Tiefentest an oder aus. Der Ersatzshader der Engine fuer ein Bild ohne
+    // Shaderblock zeichnet ohne (GLS_DEPTHTEST_DISABLE).
+    virtual void setDepthTest(bool enabled) = 0;
+    // alphaFunc der Shaderstufe: 0 keiner, 1 GT0, 2 LT128, 3 GE128, 4 GE192 —
+    // wie in GL_State: Bildpunkte, die den Test nicht bestehen, werden
+    // verworfen.
+    virtual void setAlphaTest(int mode) = 0;
+    // Die Lichter fuer die folgenden Zeichenaufrufe (hoechstens kMaxLights);
+    // count 0 schaltet sie ab. Gedacht fuer den Raum.
+    virtual void setLights(const Light* lights, int count) = 0;
     virtual void drawTriangles(const Vertex* vertices, int vertexCount,
                                const unsigned short* indices, int indexCount,
                                TextureId texture) = 0;

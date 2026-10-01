@@ -23,12 +23,24 @@ namespace efx::sim {
 // ergeben, und das tut sie nur mit bekanntem Ausgangswert.
 class Random {
 public:
-    explicit Random(unsigned seed = 1u) : state_(seed ? seed : 1u) {}
+    // Der Ausgangswert wird erst verruehrt (splitmix32). Ohne das ist der
+    // erste Wert eines LCG fast linear im Ausgangswert: die Ausgangswerte 1
+    // bis 400 gaben alle einen ersten Wert zwischen 0.24 und 0.39 — und die
+    // Vorschau bekommt ihre Ausgangswerte aus der Uhr, also aufeinander
+    // folgende. Ein Effekt mit `count 0 2` hatte damit nie null Teilchen.
+    explicit Random(unsigned seed = 1u) : state_(scramble(seed)) {}
     float next();                       // 0 bis 1
     float range(float low, float high);
     float pick(const Range& r);         // würfelt zwischen min und max, wenn ranged
 
 private:
+    static unsigned scramble(unsigned seed) {
+        unsigned z = seed + 0x9E3779B9u;
+        z = (z ^ (z >> 16)) * 0x85EBCA6Bu;
+        z = (z ^ (z >> 13)) * 0xC2B2AE35u;
+        z ^= z >> 16;
+        return z ? z : 1u;
+    }
     unsigned state_;
 };
 
@@ -93,6 +105,9 @@ Hit trace(const camera::Vec3& from, const camera::Vec3& to,
 
 // Der Testraum als sechs Ebenen, alle nach innen zeigend.
 std::vector<Plane> roomPlanes(float halfWidth, float halfDepth, float height);
+// Dasselbe mit Boden und Decke an beliebiger Hoehe (der Raum des Originals
+// hat den Boden bei -20).
+std::vector<Plane> roomPlanes(float halfWidth, float halfDepth, float floorZ, float ceilingZ);
 
 // Ein Abschnitt der Bahn: ab `startMs` gilt diese Geschwindigkeit ab diesem
 // Punkt.

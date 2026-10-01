@@ -495,19 +495,12 @@ std::vector<sim::Plane> App::collisionPlanes() const {
     if (style == scene::RoomStyle::None) return {};
 
     // Die Flaechen des Testraums (gemessen am Original, siehe RoomSize).
-    // Alle Normalen zeigen nach innen; normal * x = distance liegt darauf.
     const scene::RoomSize& r = roomSize_;
     const bool open = !settings_.drawRoom;
     const float hx = open ? r.groundHalfX : r.halfX;
     const float hy = open ? r.groundHalfY : r.halfY;
-    std::vector<sim::Plane> planes = {
-        {{0.0f, 0.0f, 1.0f}, r.floorZ},       // Boden
-        {{0.0f, 0.0f, -1.0f}, -r.ceilingZ},   // Decke
-        {{1.0f, 0.0f, 0.0f}, -hx},
-        {{-1.0f, 0.0f, 0.0f}, -hx},
-        {{0.0f, 1.0f, 0.0f}, -hy},
-        {{0.0f, -1.0f, 0.0f}, -hy},
-    };
+    // Boden zuerst — darauf verlassen sich die Kuerzungen unten.
+    std::vector<sim::Plane> planes = sim::roomPlanes(hx, hy, r.floorZ, r.ceilingZ);
     if (open) planes.resize(1);
     if (style == scene::RoomStyle::OpenSky) {
         // Draussen gibt es nur den Boden. Alles andere waere eine Wand, die
