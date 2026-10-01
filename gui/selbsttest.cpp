@@ -687,6 +687,19 @@ public:
             s.push_back(klick(tr(m), "##main"));
             s.push_back(allesZu());
         }
+        // Hilfezeile: Maus ueber "New" im Menue Datei -> Beschreibung unten links.
+        s.push_back(klick(tr(Str::MenuFile), "##main"));
+        s.push_back({"Maus ueber New", [](int b) {
+                         if (const Element* e = finde(tr(Str::FileNew), "##Menu")) {
+                             setzeMaus(e->rect.GetCenter());
+                         }
+                         return b >= 3;
+                     }});
+        s.push_back(pruefSchritt("Hilfezeile zeigt die Beschreibung von New", [] {
+            return app->statusHint_ != nullptr &&
+                   std::string(app->statusHint_) == tr(Str::HintFileNew);
+        }));
+        s.push_back(allesZu());
         return s;
     }
 

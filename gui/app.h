@@ -277,6 +277,12 @@ private:
     // internen Schnittstelle und kann sich zwischen Fassungen aendern.
     std::vector<bool> groupDisabledStack_;
     void drawStatusBar();
+    // Hilfezeile: ueber welchem Menuepunkt/Knopf die Maus gerade steht. Wie
+    // im Original steht die Beschreibung unten links statt "Ready".
+    const char* statusHint_ = nullptr;
+    void hint(i18n::Str text) {
+        if (ImGui::IsItemHovered()) statusHint_ = i18n::tr(text);
+    }
     void drawDialogs();
     void handleShortcuts();
     void drawGamePathDialog();
