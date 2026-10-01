@@ -659,13 +659,13 @@ void App::drawTimeline(float dpiScale) {
     // Doppelt vorhanden zu sein ist kein Fehler: die Werkzeugleiste ist weit
     // weg vom Bild, und wer die Zeitleiste bedient, will die Knoepfe dort.
     if (iconButton("##tlPlay", Icon::Play, tr(Str::ToolPlay),
-                   doc().clock.state() == timeline::State::Playing, iconSize)) {
+                   doc().clock.state() == timeline::State::Playing && !playOut_, iconSize)) {
         pressPlay();
     }
     ImGui::SameLine();
     if (iconButton("##tlPause", Icon::Pause, tr(Str::ToolPause),
                    doc().clock.state() == timeline::State::Paused, iconSize)) {
-        doc().clock.togglePause();
+        togglePause();   // derselbe Weg wie der Knopf der Werkzeugleiste
     }
     ImGui::SameLine();
     if (iconButton("##tlStop", Icon::Stop, tr(Str::ToolStop), false, iconSize)) {
