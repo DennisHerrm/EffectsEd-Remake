@@ -113,6 +113,8 @@ public:
 
     // Datei oeffnen, auch von aussen (Ziehen auf das Fenster, Aufrufparameter).
     bool openFile(const std::string& path);
+    // Eine aufs Fenster gezogene Datei: .efx als Effekt, .pk3 als Archiv.
+    void openDroppedFile(const std::string& path);
 
     // Vom Fensterrahmen gesetzt: oeffnet einen Windows-Dateidialog. Die
     // Oberflaeche kennt keine Win32-Aufrufe, deshalb ueber einen Rueckruf.

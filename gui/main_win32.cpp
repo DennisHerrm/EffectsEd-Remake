@@ -53,6 +53,8 @@ namespace {
 
 bool g_quit = false;
 bool g_closeRequested = false;
+// Auf das Fenster gezogene Dateien, bis die Hauptschleife sie oeffnet.
+std::vector<std::wstring> g_dropped;
 int g_width = 1280;
 int g_height = 860;
 bool g_resized = false;
@@ -71,6 +73,20 @@ LRESULT WINAPI wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_SYSCOMMAND:
             if ((wParam & 0xfff0) == SC_KEYMENU) return 0;  // Alt-Menue aus
             return DefWindowProcW(hwnd, msg, wParam, lParam);
+        case WM_DROPFILES: {
+            // Dateien aus dem Explorer aufs Fenster gezogen. Hier nur merken —
+            // geoeffnet wird zwischen zwei Bildern, nicht mitten in ImGui.
+            HDROP drop = reinterpret_cast<HDROP>(wParam);
+            const UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+            for (UINT i = 0; i < count; ++i) {
+                wchar_t path[MAX_PATH * 4] = {};
+                if (DragQueryFileW(drop, i, path, static_cast<UINT>(std::size(path)))) {
+                    g_dropped.emplace_back(path);
+                }
+            }
+            DragFinish(drop);
+            return 0;
+        }
         case WM_CLOSE:
             // Nicht gleich schliessen: die Oberflaeche fragt erst, ob
             // ungespeicherte Aenderungen gesichert werden sollen.
@@ -818,8 +834,17 @@ static bool runSession(efx::gui::App& app, efx::render::Backend preferred,
     efx::diag::info("Startup complete, showing window.");
 
     bool restart = false;
+    // Dateien per Ziehen annehmen (.efx oeffnen, .pk3 in die Bibliothek).
+    // Bisher stand nur im Kommentar von App::openFile, dass es das gibt.
+    DragAcceptFiles(hwnd, TRUE);
+
     std::string shownTitle;
     while (!g_quit && !app.wantsQuit()) {
+        if (!g_dropped.empty()) {
+            std::vector<std::wstring> dropped;
+            dropped.swap(g_dropped);
+            for (const std::wstring& path : dropped) app.openDroppedFile(toUtf8(path));
+        }
         if (const std::string title = app.windowTitle(); title != shownTitle) {
             shownTitle = title;
             SetWindowTextW(hwnd, toWide(title).c_str());

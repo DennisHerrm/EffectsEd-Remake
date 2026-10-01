@@ -13,6 +13,7 @@
 // Funktionen. Eine Wahrheit je Befehl.
 #include "app.h"
 
+#include <cctype>
 #include <cstdio>
 
 #include "efx/diag.h"
@@ -65,6 +66,21 @@ void App::cmdNew() {
     if (documentInUse(doc())) newDocument();
     doc().undo.reset(doc().effect);
     showEditor();
+}
+
+void App::openDroppedFile(const std::string& path) {
+    std::string extension;
+    const size_t dot = path.find_last_of('.');
+    if (dot != std::string::npos) extension = path.substr(dot + 1);
+    for (char& c : extension) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (extension == "pk3") {
+        if (openArchive(path)) {
+            startTabActive_ = true;
+            wantStartTab_ = true;
+        }
+        return;
+    }
+    openFile(path);
 }
 
 void App::cmdOpen() {
