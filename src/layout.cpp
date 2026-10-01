@@ -36,7 +36,12 @@ void Split::clampTo(float windowWidthPx, float windowHeightPx, float dpiScale) {
     const float minPanel = kMinPanelPx * dpiScale;
     const float minView = kMinViewPx * dpiScale;
 
-    if (windowWidthPx > minPanel + minView) {
+    const float minProperties = kMinPropertiesPx * dpiScale;
+    if (windowWidthPx > minProperties + minView) {
+        float lowest = minProperties / windowWidthPx;
+        float highest = 1.0f - minView / windowWidthPx;
+        propertiesFraction = std::clamp(propertiesFraction, lowest, highest);
+    } else if (windowWidthPx > minPanel + minView) {
         float lowest = minPanel / windowWidthPx;
         float highest = 1.0f - minView / windowWidthPx;
         propertiesFraction = std::clamp(propertiesFraction, lowest, highest);
