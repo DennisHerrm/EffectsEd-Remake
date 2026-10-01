@@ -138,7 +138,7 @@ das Original nur für Aufbau und Bedienung.
 | Effekte mit `repeatDelay` standen beim Wiederholen mit 16 überlagerten Generationen da | efxed falsch | behoben: Wiederholen legt wie das Original ab der ersten Auslösung nach; der Vorlauf ist ein Schalter („Eingeschwungen beginnen") |
 | Raumlicht hellte den ganzen Raum auf (`1 − d/r` über den vollen Radius) | efxed falsch | behoben: `ProjectDlightTexture` nachgebaut (Hauptachse, `dUse`, Ebenenabstand, Profil von `gfx/2d/dlight.tga`, Fläche × (1 + Licht)); nachgeprüft: der Raum wird nicht mehr weiß |
 | Achsen 1 px, blass, hinter dem Effekt | efxed anders | behoben: 3 px, obenauf, wie `glLineWidth(3)` im Original |
-| Emitter mit Modell (md3) zeichnen nichts | efxed falsch | in Arbeit (siehe `OFFEN.md`) |
+| Emitter mit Modell (md3) zeichnen nichts | efxed falsch | behoben: md3-Lader, Lage, Taumeln, Größe und Licht wie `CEmitter` |
 | ScreenFlash bei ~150 ms fast weiß | efxed richtig | das Original lädt `$whiteimage` nicht und zeigt ein undurchsichtiges Rechteck |
 | Bildfolgen (`oneshotanimmap`) bleiben auf dem letzten Bild | efxed richtig | das Original spielt weiter |
 | Zylinder- und Abdruckgröße | efxed richtig | das Original zeichnet etwa 0,6× zu klein |

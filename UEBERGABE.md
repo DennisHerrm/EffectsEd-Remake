@@ -2,8 +2,8 @@
 
 Alles, was nötig ist, um ohne die alten Gespräche weiterzuarbeiten.
 
-Stand: **1.18.0-rev77 plus Nachtrunde vom 1./2. Oktober 2026**. 4374 Kernprüfungen,
-732 Oberflächenprüfungen (Direct3D 11 und OpenGL), zwölf Prüfwerkzeuge still.
+Stand: **1.18.0-rev77 plus Nachtrunde vom 1./2. Oktober 2026**. 4415 Kernprüfungen,
+738 Oberflächenprüfungen (Direct3D 11 und OpenGL), zwölf Prüfwerkzeuge still.
 Die Abschnitte ab 1 stammen aus früheren Runden; wo Zahlen abweichen, gilt
 Abschnitt 0.
 
@@ -51,6 +51,14 @@ und Zeichenzeit).
   „Repeat for N seconds", „Respawn effect every frame", wandernder
   Startpunkt; „Repeat until stopped" ist voreingestellt und legt alle
   Repeat-Rate-Sekunden nach; alles übersteht den Neustart.
+- **Raum und Licht wie im Spiel** (nach einem Bildvergleich mit dem
+  Original, `ABGLEICH.md`): der Raum verdeckt, Raumlicht wie
+  `ProjectDlightTexture`, Achsen 3 px obenauf.
+- **md3-Modelle der Emitter** (Zweig `md3`, gemergt): Trümmer und Droidenteile
+  werden gezeichnet, Lage/Taumeln/Größe/Licht wie `CEmitter` und
+  `R_SetupEntityLighting`.
+- **Leerlauf:** ohne Wiedergabe und Eingabe wartet die Hauptschleife auf
+  Nachrichten; minimiert schläft sie; OpenGL setzt das Swap-Intervall.
 - **Bedienung wie im Original:** Spinner-Pfeile an jedem Zahlenfeld (Schritt
   je Feld, gerundet wie gemessen), zwanzig Farbfelder im Farbknopf,
   Alt+Rücktaste, Statuszeile mit Scheduled und Marks, Overdraw mit schwarzem
