@@ -9,6 +9,7 @@
 #include <wrl/client.h>
 
 #include <cstdint>
+#include <algorithm>
 #include <cstring>
 #include <cstdio>
 
@@ -499,7 +500,10 @@ public:
         context_->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
         context_->IASetIndexBuffer(indexBuffer_.Get(), DXGI_FORMAT_R16_UINT, 0);
         context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        context_->DrawIndexed(static_cast<UINT>(indexCount), 0, 0);
+        // Die Stellen im Ring: Indizes ab indexBase_, und jeder Index zaehlt
+        // ab vertexBase_ (BaseVertexLocation).
+        context_->DrawIndexed(static_cast<UINT>(indexCount), static_cast<UINT>(indexBase_),
+                              static_cast<INT>(vertexBase_));
     }
 
     void drawLines(const Vertex* vertices, int vertexCount, float) override {
@@ -519,7 +523,7 @@ public:
         ID3D11Buffer* vb = vertexBuffer_.Get();
         context_->IASetVertexBuffers(0, 1, &vb, &stride, &offset);
         context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
-        context_->Draw(static_cast<UINT>(vertexCount), 0);
+        context_->Draw(static_cast<UINT>(vertexCount), static_cast<UINT>(vertexBase_));
     }
 
     void endViewport() override {
@@ -790,44 +794,64 @@ private:
 
     // Die dynamischen Puffer wachsen bei Bedarf. Sie jedes Bild neu anzulegen
     // waere die haeufigste Ursache fuer Ruckler bei vielen Primitiven.
-    bool uploadVertices(const Vertex* data, int count) {
-        const UINT needed = static_cast<UINT>(count) * sizeof(Vertex);
-        if (needed > vertexCapacity_) {
-            vertexBuffer_.Reset();
-            vertexCapacity_ = needed + needed / 2;
-            D3D11_BUFFER_DESC bd{};
-            bd.ByteWidth = vertexCapacity_;
-            bd.Usage = D3D11_USAGE_DYNAMIC;
-            bd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-            bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-            if (FAILED(device_->CreateBuffer(&bd, nullptr, &vertexBuffer_))) return false;
+    // --- Ringpuffer fuer Eckpunkte und Indizes -----------------------------
+    //
+    // Vorher wurde vor JEDEM Zeichenaufruf der ganze Puffer mit
+    // WRITE_DISCARD verworfen. Das zwingt den Treiber, je Aufruf einen neuen
+    // Speicherbereich bereitzustellen ("renaming") — bei hundert Aufrufen je
+    // Bild hundertmal. Der Weg, den Microsoft fuer dynamische Daten empfiehlt
+    // (learn.microsoft.com, "How to: Use dynamic resources"), ist ein Ring:
+    // hinten anhaengen mit WRITE_NO_OVERWRITE — die Grafikkarte darf weiter
+    // aus dem vorderen Teil lesen — und nur beim Umlauf einmal verwerfen.
+    //
+    // Gibt die Stelle im Puffer zurueck (in Elementen), -1 bei Fehler.
+    template <typename T>
+    static bool ensureRing(ID3D11Device* device, ComPtr<ID3D11Buffer>& buffer, UINT& capacity,
+                           UINT needed, UINT bind) {
+        if (needed <= capacity && buffer) return true;
+        buffer.Reset();
+        // Mindestens 1 MB, und reichlich Luft: ein Ring, der zu klein ist,
+        // laeuft jedes Bild mehrmals um und verliert seinen Vorteil.
+        capacity = std::max<UINT>(needed * 2, 1u << 20);
+        capacity -= capacity % static_cast<UINT>(sizeof(T));
+        D3D11_BUFFER_DESC bd{};
+        bd.ByteWidth = capacity;
+        bd.Usage = D3D11_USAGE_DYNAMIC;
+        bd.BindFlags = bind;
+        bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        return SUCCEEDED(device->CreateBuffer(&bd, nullptr, &buffer));
+    }
+
+    template <typename T>
+    long long appendRing(ComPtr<ID3D11Buffer>& buffer, UINT& capacity, UINT& used,
+                         const T* data, int count, UINT bind) {
+        const UINT needed = static_cast<UINT>(count) * static_cast<UINT>(sizeof(T));
+        const UINT before = capacity;
+        if (!ensureRing<T>(device_.Get(), buffer, capacity, needed, bind)) return -1;
+        D3D11_MAP mode = D3D11_MAP_WRITE_NO_OVERWRITE;
+        if (capacity != before || used + needed > capacity) {
+            mode = D3D11_MAP_WRITE_DISCARD;  // neuer Puffer oder Umlauf
+            used = 0;
         }
         D3D11_MAPPED_SUBRESOURCE mapped{};
-        if (FAILED(context_->Map(vertexBuffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0,
-                                 &mapped))) return false;
-        std::memcpy(mapped.pData, data, needed);
-        context_->Unmap(vertexBuffer_.Get(), 0);
-        return true;
+        if (FAILED(context_->Map(buffer.Get(), 0, mode, 0, &mapped))) return -1;
+        std::memcpy(static_cast<unsigned char*>(mapped.pData) + used, data, needed);
+        context_->Unmap(buffer.Get(), 0);
+        const long long at = used / static_cast<UINT>(sizeof(T));
+        used += needed;
+        return at;
+    }
+
+    bool uploadVertices(const Vertex* data, int count) {
+        vertexBase_ = appendRing(vertexBuffer_, vertexCapacity_, vertexUsed_, data, count,
+                                 D3D11_BIND_VERTEX_BUFFER);
+        return vertexBase_ >= 0;
     }
 
     bool uploadIndices(const unsigned short* data, int count) {
-        const UINT needed = static_cast<UINT>(count) * sizeof(unsigned short);
-        if (needed > indexCapacity_) {
-            indexBuffer_.Reset();
-            indexCapacity_ = needed + needed / 2;
-            D3D11_BUFFER_DESC bd{};
-            bd.ByteWidth = indexCapacity_;
-            bd.Usage = D3D11_USAGE_DYNAMIC;
-            bd.BindFlags = D3D11_BIND_INDEX_BUFFER;
-            bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-            if (FAILED(device_->CreateBuffer(&bd, nullptr, &indexBuffer_))) return false;
-        }
-        D3D11_MAPPED_SUBRESOURCE mapped{};
-        if (FAILED(context_->Map(indexBuffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0,
-                                 &mapped))) return false;
-        std::memcpy(mapped.pData, data, needed);
-        context_->Unmap(indexBuffer_.Get(), 0);
-        return true;
+        indexBase_ = appendRing(indexBuffer_, indexCapacity_, indexUsed_, data, count,
+                                D3D11_BIND_INDEX_BUFFER);
+        return indexBase_ >= 0;
     }
 
     void createBackBufferView() {
@@ -863,6 +887,10 @@ private:
     ComPtr<ID3D11Buffer> indexBuffer_;
     UINT vertexCapacity_ = 0;
     UINT indexCapacity_ = 0;
+    UINT vertexUsed_ = 0;
+    UINT indexUsed_ = 0;
+    long long vertexBase_ = 0;
+    long long indexBase_ = 0;
     ComPtr<ID3D11ShaderResourceView> whiteSrv_;
     ComPtr<ID3D11SamplerState> sampler_;
     ComPtr<ID3D11BlendState> blendStates_[5];

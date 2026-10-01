@@ -217,6 +217,10 @@ public:
                                  const std::string& shaderName,
                                  float seconds = 0.0f);
     void clearTextures(render::Renderer* renderer);
+    // Ist das Bild dieses Shaders noch unterwegs (Arbeitsfaden)? Solange wird
+    // die Gruppe nicht gezeichnet — mit Ersatzbild UND ohne die Mischung, die
+    // erst das Bild verraet, erschien sonst ein weisses deckendes Rechteck.
+    bool textureStillLoading(const std::string& shaderName, float seconds) const;
 
     // Alle Grafikressourcen vergessen, OHNE sie freizugeben.
     //
@@ -592,6 +596,8 @@ private:
     float colourBackup_[3] = {};
     bool colourBackupOverridden_ = false;
     void startPlayback();
+    // Ungleich 0: jeder Start benutzt diesen Ausgangswert (Selbsttest).
+    unsigned fixedSeed_ = 0;
     // Die Zeitleiste zwischen Ansicht und Segmentliste.
     void drawTimeline(float dpiScale);
 
