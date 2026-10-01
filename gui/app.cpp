@@ -1175,6 +1175,7 @@ void App::handleShortcuts() {
     if (!ctrl && !shift && pressed(ImGuiKey_Space)) pressPlay();
     if (pressed(ImGuiKey_Insert)) showNewSegmentDialog_ = true;
     if (pressed(ImGuiKey_Delete)) cmdDeleteSegment();
+    if (pressed(ImGuiKey_F2)) startRename(doc().selectedPrimitive);
     // Shift+C wie im Original; Strg+Umschalt+C in die Zwischenablage.
     if (shift && !ctrl && pressed(ImGuiKey_C)) pendingScreenshot_ = 1;
     if (shift && ctrl && pressed(ImGuiKey_C)) pendingScreenshot_ = 2;

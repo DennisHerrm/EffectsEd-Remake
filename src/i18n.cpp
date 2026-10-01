@@ -493,6 +493,52 @@ const Entry kTable[] = {
     {"on Electricity these flags mean something else —%s. That is intended, not accidental.", "bei Electricity bedeuten diese Flags etwas anderes —%s. Das ist beabsichtigt, nicht versehentlich.", "在 Electricity 上这些标志含义不同 —%s。这是有意为之，而非误设。", "Electricity ではこれらのフラグは別の意味です —%s。意図的なもので、間違いではありません。"},  // VElectricityFlags
     {"field changed", "Feld geändert", "字段已更改", "フィールド変更"},  // UndoFieldChange
     {"segments sorted", "Segmente sortiert", "片段已排序", "セグメントを並べ替え"},  // UndoSortSegments
+    {"Delay (ms)", "Verzögerung (ms)", "延迟 (毫秒)", "遅延 (ms)"},  // FieldDelayMs
+    {"Life (ms)", "Lebensdauer (ms)", "生命周期 (毫秒)", "寿命 (ms)"},  // FieldLifeMs
+    {"Use distance culling", "Ab Entfernung ausblenden", "使用距离剔除", "距離で非表示にする"},  // GenUseCulling
+    {"Cull Distance", "Ausblendentfernung", "剔除距离", "非表示距離"},  // FieldCullDistance
+    {"Enable Death Effects", "Ende-Effekte einschalten", "启用消亡特效", "消滅エフェクトを有効にする"},  // DeathEnable
+    {"Enable special offset types", "Besondere Verteilung einschalten", "启用特殊偏移类型", "特殊オフセットを有効にする"},  // OriginEnableSpecial
+    {"Radius/Width", "Radius/Breite", "半径/宽度", "半径/幅"},  // FieldRadiusWidth
+    {"Size/Width", "Größe/Breite", "大小/宽度", "サイズ/幅"},  // GroupSizeWidth
+    {"Start Size", "Anfangsgröße", "起始大小", "開始サイズ"},  // FieldStartSize
+    {"End Size", "Endgröße", "结束大小", "終了サイズ"},  // FieldEndSize
+    {"Apply random factor", "Zufallsfaktor anwenden", "应用随机因子", "ランダム係数を適用"},  // CurveApplyRandom
+    {"Constant", "Konstant", "恒定", "一定"},  // TransConstant
+    {"Linear", "Linear", "线性", "線形"},  // TransLinear
+    {"Nonlinear", "Nichtlinear", "非线性", "非線形"},  // TransNonlinear
+    {"Nonlinear/Linear", "Nichtlinear/Linear", "非线性/线性", "非線形/線形"},  // TransNonlinearLinear
+    {"Wave", "Welle", "波形", "波"},  // TransWave
+    {"Wave/Linear", "Welle/Linear", "波形/线性", "波/線形"},  // TransWaveLinear
+    {"Clamp", "Klemmen", "钳制", "クランプ"},  // TransClamp
+    {"Clamp/Linear", "Klemmen/Linear", "钳制/线性", "クランプ/線形"},  // TransClampLinear
+    {"Start Length", "Anfangslänge", "起始长度", "開始長さ"},  // FieldStartLength
+    {"End Length", "Endlänge", "结束长度", "終了長さ"},  // FieldEndLength
+    {"Size2/Width2", "Größe 2/Breite 2", "大小2/宽度2", "サイズ2/幅2"},  // GroupSize2Width2
+    {"Start Size2", "Anfangsgröße 2", "起始大小2", "開始サイズ2"},  // FieldStartSize2
+    {"End Size2", "Endgröße 2", "结束大小2", "終了サイズ2"},  // FieldEndSize2
+    {"RGB Color", "RGB-Farbe", "RGB 颜色", "RGB カラー"},  // GroupRgbColor
+    {"Start Color", "Anfangsfarbe", "起始颜色", "開始色"},  // FieldStartColor
+    {"End Color", "Endfarbe", "结束颜色", "終了色"},  // FieldEndColor
+    {"Pick start/end in color cube", "Anfang/Ende im Farbwürfel wählen", "在颜色立方体中选取起止颜色", "カラーキューブで開始/終了を選ぶ"},  // ColorPickCube
+    {"Alpha Transparency", "Alpha-Transparenz", "透明度", "アルファ透明度"},  // GroupAlphaTransparency
+    {"Start Alpha", "Anfangs-Alpha", "起始透明度", "開始アルファ"},  // FieldStartAlpha
+    {"End Alpha", "End-Alpha", "结束透明度", "終了アルファ"},  // FieldEndAlpha
+    {"Enable Physics", "Physik einschalten", "启用物理", "物理を有効にする"},  // PhysicsEnable
+    {"Enable physics bounding box", "Begrenzungsbox einschalten", "启用物理包围盒", "物理バウンディングボックスを有効にする"},  // PhysicsEnableBBox
+    {"Bounce", "Rückprall", "弹跳", "跳ね返り"},  // FieldBounceOnly
+    {"Endpoint", "Endpunkt", "终点", "終点"},  // LineEndpoint
+    {"Percentage", "Anteil", "百分比", "割合"},  // MotionPercentage
+    {"( generally 1 to 100 )", "( üblich 1 bis 100 )", "( 通常 1 到 100 )", "( 通常 1〜100 )"},  // MotionPercentHint
+    {"Angle", "Winkel", "角度", "角度"},  // GroupAngle
+    {"Angle Delta", "Winkeländerung", "角度增量", "角度変化"},  // GroupAngleDelta
+    {"Spawned Effects", "Gestartete Effekte", "生成的特效", "生成エフェクト"},  // GroupSpawnedEffects
+    {"Advanced: all flags", "Erweitert: alle Flags", "高级：全部标志", "詳細：すべてのフラグ"},  // PropAdvancedFlags
+    {"Grey values are engine defaults and are not written to the file", "Graue Werte sind Vorgaben der Engine und stehen nicht in der Datei", "灰色数值是引擎默认值，不会写入文件", "灰色の値はエンジンの既定値で、ファイルには書き込まれません"},  // PropDefaultHint
+    {"Rename", "Umbenennen", "重命名", "名前を変更"},  // ListRename
+    {"X", "X", "X", "X"},  // BoxX
+    {"Y", "Y", "Y", "Y"},  // BoxY
+    {"Z", "Z", "Z", "Z"},  // BoxZ
     {"Save Changes", "Änderungen speichern", "保存更改", "変更を保存"},  // SaveChangesTitle
     {"Save changes to %s?", "Änderungen an %s speichern?", "是否保存对 %s 的更改？", "%s への変更を保存しますか？"},  // SaveChangesText
     {"Save", "Speichern", "保存", "保存"},  // SaveChangesYes

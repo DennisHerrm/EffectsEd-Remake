@@ -157,70 +157,6 @@ void App::endGroup() {
     ImGui::Dummy(ImVec2(0.0f, 4.0f));
 }
 
-bool App::editColorChannel(ColorChannel& channel) {
-    ImGui::PushID("rgb");
-    testmarke::Bereich bereich("rgb");
-    bool changed = false;
-
-    bool present = channel.present;
-    if (beginGroup("grp", tr(Str::FieldRgb), &present)) {
-        // Zusaetzlich ein Farbfeld: eine Farbe als drei Zahlen zu lesen ist
-        // moeglich, aber niemand tut es gern.
-        auto colourRow = [&](const char* id, const char* label, Vec3Range& value) {
-            ImGui::PushID(id);
-            testmarke::Bereich zeile(id);
-
-            // ZWEI Farbfelder, wenn eine Spanne eingestellt ist — eines fuer
-            // den kleinsten, eines fuer den groessten Wert.
-            //
-            // Das Original zeigt genau das: unter "Start Color" stehen zwei
-            // Farbknoepfe nebeneinander, unter "End Color" ebenso. Wir hatten
-            // nur einen, naemlich fuer den kleinsten Wert — bei einer Spanne
-            // von Weiss nach Gelb sah man das Gelb nirgends und musste es aus
-            // drei Zahlen zusammenreimen.
-            auto swatch = [&](const char* which, Vec3& target) {
-                ImGui::PushID(which);
-                float colour[3] = {target[0], target[1], target[2]};
-                const bool swatchChanged = ImGui::ColorEdit3(
-                    "##swatch", colour,
-                    ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
-                testmarke::marke(which);
-                if (swatchChanged) {
-                    for (int i = 0; i < 3; ++i) target[i] = colour[i];
-                    value.set = true;
-                    changed = true;
-                }
-                ImGui::PopID();
-            };
-
-            swatch("min", value.min);
-            if (value.ranged) {
-                ImGui::SameLine(0.0f, 2.0f);
-                swatch("max", value.max);
-            } else {
-                // Ohne Spanne bleiben beide gleich, sonst schreibt die Datei
-                // spaeter zwei verschiedene Werte, von denen man einen nie
-                // gesehen hat.
-                value.max = value.min;
-            }
-            ImGui::SameLine();
-            ImGui::PopID();
-            return editVec3Range("wert", label, value, 0.01f);
-        };
-        changed |= colourRow("start", tr(Str::FieldStart), channel.start);
-        changed |= colourRow("end", tr(Str::FieldEnd), channel.end);
-        changed |= editRange("parm", tr(Str::FieldParm), channel.parm, 1.0f);
-        changed |= editCurveFlags(channel.curveFlags, channel.curveWords);
-    }
-    endGroup();
-    if (present != channel.present) {
-        channel.present = present;
-        changed = true;
-    }
-    ImGui::PopID();
-    return changed;
-}
-
 bool App::editFlags(Primitive& p) {
     bool changed = false;
 
@@ -416,25 +352,32 @@ bool App::editStringList(const char* id, const char* label,
     }
     // Auswahl aus dem Materialbestand — im Original der Ordnerknopf neben der
     // Liste. Die Liste selbst fuellt erst der Materialsuchlauf.
-    if (std::string(id) == "shaders" || std::string(id) == "models" ||
-        std::string(id) == "sounds") {
+    const std::string listId = id;
+    const bool effectList = listId == "deathfx" || listId == "impactfx" ||
+                            listId == "emitfx" || listId == "playfx";
+    if (listId == "shaders" || listId == "models" || listId == "sounds" || effectList) {
         ImGui::SameLine();
         const bool chooseClicked = ImGui::SmallButton("...");
         testmarke::marke("waehlen");
         if (chooseClicked) {
             pickerTarget_ = &list;
-            pickerKind_ = std::string(id) == "models"  ? PickerKind::Models
-                          : std::string(id) == "sounds" ? PickerKind::Sounds
-                                                        : PickerKind::Shaders;
+            // Auch fuer Effektlisten: das Original hat dort einen
+            // Ordner-Knopf, der eine .efx aus dem Spielordner waehlt.
+            pickerKind_ = listId == "models"   ? PickerKind::Models
+                          : listId == "sounds" ? PickerKind::Sounds
+                          : effectList         ? PickerKind::Effects
+                                               : PickerKind::Shaders;
             showPicker_ = true;
         }
     }
     if (list.empty()) {
-        ImGui::SameLine();
         // Eine leere Liste ist der Absturzfall des alten Editors und laesst
         // die Primitive im Spiel unsichtbar. Deshalb steht es hier und nicht
-        // erst in der Pruefliste.
-        ImGui::TextDisabled("%s", tr(Str::FieldEmptyList));
+        // erst in der Pruefliste. Unter den Knoepfen und umgebrochen: in der
+        // schmalen Spalte lief der Satz sonst rechts aus dem Bild.
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped("%s", tr(Str::FieldEmptyList));
+        ImGui::PopStyleColor();
     }
 
     ImGui::Unindent();

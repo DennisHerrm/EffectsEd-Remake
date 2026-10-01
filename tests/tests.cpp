@@ -857,6 +857,8 @@ void testLanguages() {
                                 "Direct3D 11", "OpenGL 3.3", "Min", "Max",
                                 "Name", "Segment", "Emitter", "Alpha",
                                 "Position", "Linear",
+                                // Achsennamen der Begrenzungsbox (Physics).
+                                "X", "Y", "Z",
                                 // Schluesselwort des Dateiformats, kein Wort.
                                 //
                                 // In der .efx steht `CameraShake`, und die
