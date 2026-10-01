@@ -45,6 +45,7 @@
 
 #include "app.h"
 #include "efx/diag.h"
+#include "efx/fields.h"
 #include "efx/i18n.h"
 #include "efx/image.h"
 #include "efx/io.h"
@@ -73,6 +74,9 @@ struct Element {
     ImRect clip;
     std::string fenster;  // oberstes Fenster
     std::string innen;    // Fenster, in dem es steht
+    bool gesperrt = false;  // BeginDisabled: ein Klick darf nichts tun
+    bool ankreuz = false;   // ein Haekchen (Checkbox)
+    bool ohneLage = false;  // Beschriftung kam vor dem Rechteck (Reiter)
 };
 
 std::vector<Element> g_elemente;
@@ -95,11 +99,26 @@ std::string sichtbarerText(const std::string& label) {
 
 }  // namespace
 
-void selbsttestMerkeElement(ImGuiContext* ctx, ImGuiID id, const ImRect& bb) {
+void selbsttestMerkeElement(ImGuiContext* ctx, ImGuiID id, const ImRect& bb,
+                            const ImGuiLastItemData* data = nullptr) {
     if (ctx->CurrentWindow == nullptr) return;
+    // Reiter (TabItemEx) melden ihre Beschriftung VOR der Lage. Dann steht
+    // das Element schon da, nur mit falschem Rechteck — hier nachtragen.
+    for (auto it = g_elemente.rbegin(); it != g_elemente.rend() && it - g_elemente.rbegin() < 4;
+         ++it) {
+        if (it->id == id && it->ohneLage) {
+            it->rect = bb;
+            it->clip = ctx->CurrentWindow->ClipRect;
+            it->ohneLage = false;
+            it->gesperrt =
+                ((data ? data->ItemFlags : ctx->CurrentItemFlags) & ImGuiItemFlags_Disabled) != 0;
+            return;
+        }
+    }
     Element e;
     e.id = id;
     e.rect = bb;
+    e.gesperrt = ((data ? data->ItemFlags : ctx->CurrentItemFlags) & ImGuiItemFlags_Disabled) != 0;
     e.clip = ctx->CurrentWindow->ClipRect;
     e.fenster = ctx->CurrentWindow->RootWindow ? ctx->CurrentWindow->RootWindow->Name
                                                : ctx->CurrentWindow->Name;
@@ -107,16 +126,23 @@ void selbsttestMerkeElement(ImGuiContext* ctx, ImGuiID id, const ImRect& bb) {
     g_elemente.push_back(std::move(e));
 }
 
-void selbsttestMerkeText(ImGuiContext* ctx, ImGuiID id, const char* label) {
+void selbsttestMerkeText(ImGuiContext* ctx, ImGuiID id, const char* label,
+                         ImGuiItemStatusFlags flags) {
     if (label == nullptr) return;
+    const bool ankreuz = (flags & ImGuiItemStatusFlags_Checkable) != 0;
     for (auto it = g_elemente.rbegin(); it != g_elemente.rend(); ++it) {
         if (it->id == id) {
             it->label = label;
+            it->ankreuz = ankreuz;
             return;
         }
     }
     selbsttestMerkeElement(ctx, id, ctx->LastItemData.Rect);
-    if (!g_elemente.empty()) g_elemente.back().label = label;
+    if (!g_elemente.empty()) {
+        g_elemente.back().label = label;
+        g_elemente.back().ankreuz = ankreuz;
+        g_elemente.back().ohneLage = true;
+    }
 }
 
 // --- Testmarken (testmarke.h) ---------------------------------------------
@@ -282,13 +308,39 @@ public:
                             std::function<const Element*()> suche, int taste = 0,
                             bool doppelt = false, bool sichtbarPruefen = true) {
         auto kennung = std::make_shared<ImGuiID>(0);
-        return {was, [=](int b) {
+        // Bilder, die das Hinrollen gekostet hat — danach beginnt der Klick neu.
+        auto versatz = std::make_shared<int>(0);
+        auto lage = std::make_shared<ImRect>();
+        auto unruhig = std::make_shared<int>(0);
+        return {was, [=](int bildImSchritt) {
                     ImGuiIO& io = ImGui::GetIO();
+                    if (bildImSchritt == 0) {
+                        *versatz = 0;
+                        *unruhig = 0;
+                    }
+                    const int b = bildImSchritt - *versatz;
+                    if (b < 0) return false;
                     if (b == 0) {
                         const Element* e = suche();
                         if (e == nullptr) {
                             meldeFehler(was + ": nicht gefunden");
                             return true;
+                        }
+                        // Liegt es ausserhalb des sichtbaren Bereichs eines
+                        // rollbaren Fensters, erst hinrollen — wie ein Mensch
+                        // es mit dem Mausrad tut. Hoechstens dreimal.
+                        if (!ganzSichtbar(*e) && *versatz < 9) {
+                            if (ImGuiWindow* w = ImGui::FindWindowByName(e->innen.c_str());
+                                w != nullptr && w->ScrollMax.y > 0.0f) {
+                                const float oben = w->InnerClipRect.Min.y;
+                                const float unten = w->InnerClipRect.Max.y;
+                                float ziel = w->Scroll.y;
+                                if (e->rect.Min.y < oben) ziel -= (oben - e->rect.Min.y) + 8.0f;
+                                if (e->rect.Max.y > unten) ziel += (e->rect.Max.y - unten) + 8.0f;
+                                ImGui::SetScrollY(w, std::clamp(ziel, 0.0f, w->ScrollMax.y));
+                                *versatz += 3;
+                                return false;
+                            }
                         }
                         if (sichtbarPruefen && !ganzSichtbar(*e)) {
                             char z[200];
@@ -302,11 +354,32 @@ public:
                             meldeFehler(was + z);
                         }
                         *kennung = e->id;
+                        *lage = e->rect;
                         setzeMaus(ImVec2(e->rect.Min.x + std::min(e->rect.GetWidth() * 0.5f, 40.0f),
                                          e->rect.GetCenter().y));
                         return false;
                     }
                     if (b == 1) {
+                        // Steht das Ziel noch da, wo es eben war? Reiter einer
+                        // zu schmalen Leiste rueckten im ersten Bild nach einer
+                        // Aenderung — der Klick traf dann den Nachbarn.
+                        const Element* jetzt = suche();
+                        if (jetzt != nullptr && *versatz < 30 &&
+                            (std::fabs(jetzt->rect.Min.x - lage->Min.x) > 0.5f ||
+                             std::fabs(jetzt->rect.Min.y - lage->Min.y) > 0.5f)) {
+                            ++*unruhig;
+                            *lage = jetzt->rect;
+                            *kennung = jetzt->id;
+                            setzeMaus(ImVec2(jetzt->rect.Min.x +
+                                                 std::min(jetzt->rect.GetWidth() * 0.5f, 40.0f),
+                                             jetzt->rect.GetCenter().y));
+                            *versatz += 1;
+                            return false;
+                        }
+                        if (*unruhig > 0) {
+                            diag::info("Selbsttest: " + was + ": Ziel rueckte " +
+                                       std::to_string(*unruhig) + "x vor dem Klick");
+                        }
                         io.AddMouseButtonEvent(taste, true);
                         return false;
                     }
@@ -318,7 +391,21 @@ public:
                                                       g.HoveredIdPreviousFrame == *kennung)
                                                    : g.HoveredIdPreviousFrame == *kennung;
                         if (!getroffen && *kennung != 0) {
-                            meldeFehler(was + ": Klick kam nicht an (" + wasImGuiSieht() + ")");
+                            char z[160];
+                            std::snprintf(z, sizeof(z), "; Maus %.0f/%.0f, Ziel %.0f..%.0f/%.0f..%.0f",
+                                          double(g_maus.x), double(g_maus.y), double(lage->Min.x),
+                                          double(lage->Max.x), double(lage->Min.y),
+                                          double(lage->Max.y));
+                            meldeFehler(was + ": Klick kam nicht an (" + wasImGuiSieht() + ")" + z);
+                            for (const Element& x : g_elemente) {
+                                if (x.innen == GImGui->HoveredWindow->Name && !x.label.empty()) {
+                                    std::snprintf(z, sizeof(z), "  Element \"%s\" %.0f..%.0f/%.0f..%.0f",
+                                                  x.label.c_str(), double(x.rect.Min.x),
+                                                  double(x.rect.Max.x), double(x.rect.Min.y),
+                                                  double(x.rect.Max.y));
+                                    diag::info(z);
+                                }
+                            }
                         }
                         io.AddMouseButtonEvent(taste, false);
                         return false;
@@ -858,6 +945,204 @@ public:
         return s;
     }
 
+    // --- Jedes Feld jedes Typs -------------------------------------------
+    //
+    // Fuer jeden der dreizehn Typen: Segment anlegen, jeden Reiter oeffnen,
+    // und dort JEDES Bedienelement benutzen — Zahlen eintippen, Haekchen
+    // klicken, Listeneintraege anlegen, Kurvenart waehlen. Nach jedem Schritt
+    // muss sich der Dateitext geaendert haben: ein Feld, das nichts in die
+    // Datei schreibt, ist entweder Schmuck oder kaputt. Am Ende speichern,
+    // neu laden und vergleichen.
+    //
+    // Welche Elemente es gibt, steht erst fest, wenn der Reiter gezeichnet
+    // ist. Deshalb schaut ein Schritt nach und haengt die Schritte fuer genau
+    // diese Elemente hinter sich ein.
+    static size_t einfuegeAn;
+    static void einfuegen(std::vector<Schritt> neu) {
+        schritte.insert(schritte.begin() + static_cast<std::ptrdiff_t>(einfuegeAn),
+                        std::make_move_iterator(neu.begin()), std::make_move_iterator(neu.end()));
+        einfuegeAn += neu.size();
+    }
+
+    static bool imReiter(const Element& e) {
+        return e.innen.find("tabbody") != std::string::npos && !e.gesperrt;
+    }
+
+    // Ein Schritt, der den Text vorher merkt, `aktion` ausfuehrt (als
+    // Teilschritte) und danach eine Aenderung verlangt.
+    static void mitAenderung(std::vector<Schritt>& s, const std::string& was,
+                             std::vector<Schritt> aktion, bool pflicht = true) {
+        auto vorher = std::make_shared<std::string>();
+        s.push_back(tu("merken: " + was, [=] { *vorher = text(); }));
+        for (auto& a : aktion) s.push_back(std::move(a));
+        s.push_back(warte(2));
+        s.push_back({"Pruefe Aenderung: " + was, [=](int) {
+                         const bool anders = text() != *vorher;
+                         if (anders) {
+                             meldeOk(was + " aendert die Datei");
+                         } else if (pflicht) {
+                             meldeFehler(was + " aendert die Datei NICHT");
+                         } else {
+                             diag::info("Selbsttest HINWEIS: [" + aktuellerTeil + "] " + was +
+                                        " aendert die Datei nicht");
+                         }
+                         return true;
+                     }});
+    }
+
+    static std::string zahl(int i) {
+        // Unterschiedliche, gueltige Werte; keine Null (die ist oft Vorgabe).
+        const int ganz = 2 + (i * 7) % 23;
+        return std::to_string(ganz) + ".5";
+    }
+
+    static Schritt reiterScan(const std::string& reiter) {
+        return {"Felder im Reiter " + reiter + " suchen", [=](int b) {
+                    if (b < 2) return false;  // zwei Bilder, bis alles steht
+                    std::vector<Schritt> neu;
+                    int nummer = 0;
+                    // 1. Zahlenfelder (Testmarken .../min, .../max)
+                    std::vector<std::string> felder;
+                    for (const Element& e : g_elemente) {
+                        if (!imReiter(e) || e.marke.empty()) continue;
+                        const auto ende = e.marke.substr(e.marke.find_last_of('/') + 1);
+                        if (ende != "min" && ende != "max") continue;
+                        if (std::find(felder.begin(), felder.end(), e.marke) == felder.end()) {
+                            felder.push_back(e.marke);
+                        }
+                    }
+                    for (const std::string& m : felder) {
+                        const Element* e = findeMarke(m);
+                        const int teile = e ? static_cast<int>(innerhalb(*e).size()) : 0;
+                        if (teile >= 3) {
+                            for (int k = 0; k < 3; ++k) {
+                                std::vector<Schritt> a;
+                                feld(a, m, zahl(++nummer), k);
+                                mitAenderung(neu, reiter + ": " + m + "[" + std::to_string(k) + "]",
+                                             std::move(a));
+                            }
+                        } else {
+                            std::vector<Schritt> a;
+                            feld(a, m, zahl(++nummer));
+                            mitAenderung(neu, reiter + ": " + m, std::move(a));
+                        }
+                    }
+                    // 2. Kurvenart: jede Klappliste einmal auf "wave".
+                    for (const Element& e : g_elemente) {
+                        if (!imReiter(e) || e.marke.empty()) continue;
+                        if (e.marke.size() < 5 || e.marke.substr(e.marke.size() - 5) != "kurve") continue;
+                        const std::string m = e.marke;
+                        std::vector<Schritt> a;
+                        a.push_back(klickMarke(m));
+                        a.push_back(klick("wave", "##Combo"));
+                        mitAenderung(neu, reiter + ": " + m + " = wave", std::move(a));
+                    }
+                    // 3. Listen: einen Eintrag anlegen und beschriften.
+                    for (const Element& e : g_elemente) {
+                        if (!imReiter(e) || e.marke.empty()) continue;
+                        if (e.marke.size() < 5 || e.marke.substr(e.marke.size() - 5) != "/dazu") continue;
+                        const std::string liste = e.marke.substr(0, e.marke.size() - 5);
+                        std::vector<Schritt> a;
+                        a.push_back(klickMarke(e.marke));
+                        a.push_back(warte(2));
+                        mitAenderung(neu, reiter + ": " + liste + " Eintrag dazu", std::move(a));
+                        std::vector<Schritt> b2;
+                        auto zielNummer = std::make_shared<int>(0);
+                        b2.push_back(klickAuf("Klick letzter Eintrag " + liste, [=]() -> const Element* {
+                            const Element* letzter = nullptr;
+                            for (int k = 0; k < 64; ++k) {
+                                const Element* x = findeMarke(liste + "/eintrag" + std::to_string(k));
+                                if (!x) break;
+                                letzter = x;
+                            }
+                            return letzter;
+                        }));
+                        b2.push_back(taste(ImGuiKey_A, true));
+                        b2.push_back(tippe("selbsttest/eintrag"));
+                        b2.push_back(taste(ImGuiKey_Enter));
+                        mitAenderung(neu, reiter + ": " + liste + " Eintrag beschriften", std::move(b2));
+                    }
+                    // 4. Haekchen — zuletzt, weil manche andere Felder sperren.
+                    std::vector<std::pair<std::string, std::string>> haken;  // Label, Marke
+                    for (const Element& e : g_elemente) {
+                        if (!imReiter(e) || !e.ankreuz) continue;
+                        haken.emplace_back(e.label, e.marke);
+                    }
+                    // Gruppenschalter (".../an") ganz ans Ende: sie blenden
+                    // ihre Felder aus, und die kaemen danach nicht mehr dran.
+                    std::stable_partition(haken.begin(), haken.end(), [](const auto& h) {
+                        const std::string& m = h.second;
+                        return !(m.size() >= 3 && m.substr(m.size() - 3) == "/an");
+                    });
+                    for (const auto& [label, marke] : haken) {
+                        // "~" macht aus einem Wert eine Spanne: aendert die Datei
+                        // erst, wenn das zweite Feld etwas anderes sagt.
+                        const bool spanne = sichtbarerText(label) == "~";
+                        std::vector<Schritt> a;
+                        if (!marke.empty()) {
+                            a.push_back(klickMarke(marke));
+                        } else {
+                            const std::string l = label;
+                            a.push_back(klickAuf("Klick Haekchen \"" + sichtbarerText(l) + "\"",
+                                                 [=] { return finde(l, "tabbody"); }));
+                        }
+                        mitAenderung(neu, reiter + ": Haekchen " + (marke.empty() ? sichtbarerText(label) : marke),
+                                     std::move(a), !spanne);
+                    }
+                    diag::info("Selbsttest: Reiter " + reiter + ": " + std::to_string(felder.size()) +
+                               " Zahlenfelder, " + std::to_string(haken.size()) + " Haekchen");
+                    einfuegen(std::move(neu));
+                    return true;
+                }};
+    }
+
+    static std::vector<Schritt> teilFelder() {
+        std::vector<Schritt> s;
+        s.push_back(teil("felder"));
+        const PrimitiveType typen[] = {
+            PrimitiveType::Particle, PrimitiveType::Line, PrimitiveType::Tail,
+            PrimitiveType::Cylinder, PrimitiveType::Emitter, PrimitiveType::Sound,
+            PrimitiveType::Decal, PrimitiveType::OrientedParticle, PrimitiveType::Electricity,
+            PrimitiveType::FxRunner, PrimitiveType::Light, PrimitiveType::CameraShake,
+            PrimitiveType::ScreenFlash,
+        };
+        for (PrimitiveType typ : typen) {
+            const std::string name = typeName(typ);
+            s.push_back(teil(std::string("felder ") + name));
+            frischesDokument(s);
+            neuesSegment(s, typ);
+            for (fields::Tab reiter : fields::tabsFor(typ)) {
+                const std::string label = tr(fields::tabLabel(reiter));
+                s.push_back(klick(label, "properties"));
+                s.push_back(warteBis("Reiter " + label + " offen",
+                                     [reiter] { return app->propertyTab_ == reiter; }, 30));
+                s.push_back(reiterScan(name + "/" + label));
+            }
+            const std::string pfad = arbeitsOrdner + "/felder_" + name + ".efx";
+            s.push_back(dateiAntwort(pfad));
+            menue(s, Str::MenuFile, Str::FileSaveAs);
+            auto gespeichert = std::make_shared<std::string>();
+            s.push_back(tu("Text merken", [=] { *gespeichert = text(); }));
+            s.push_back(pruefSchritt(name + ": gespeicherte Datei = Effekt",
+                                     [=] { return leseDatei(pfad) == *gespeichert; }));
+            s.push_back(pruefSchritt(name + ": gespeicherte Datei laesst sich fehlerfrei lesen", [=] {
+                const ReadResult r = read(leseDatei(pfad));
+                for (const auto& d : r.diagnostics) {
+                    if (d.severity == Severity::Error) {
+                        diag::info("  Lesefehler Zeile " + std::to_string(d.line) + ": " + d.message);
+                    }
+                }
+                return !r.hasErrors();
+            }));
+            frischesDokument(s);
+            s.push_back(dateiAntwort(pfad));
+            menue(s, Str::MenuFile, Str::FileOpen);
+            s.push_back(pruefSchritt(name + ": wieder geoeffnet = gespeichert",
+                                     [=] { return text() == *gespeichert; }));
+        }
+        return s;
+    }
+
     static std::vector<Schritt> ende() {
         std::vector<Schritt> s;
         s.push_back(teil("ende"));
@@ -885,6 +1170,7 @@ public:
             {"ansicht", &teilAnsicht},
             {"wiedergabe", &teilWiedergabe},
             {"eigenschaften", &teilEigenschaften},
+            {"felder", &teilFelder},
         };
         std::vector<Schritt> s;
         for (const Teil& t : teile) {
@@ -913,6 +1199,7 @@ std::string Selbsttest::fotoOrdner;
 std::deque<std::string> Selbsttest::dateiAntworten;
 std::vector<std::string> Selbsttest::geoeffnetPerShell;
 std::string Selbsttest::aktuellerTeil = "vorlauf";
+size_t Selbsttest::einfuegeAn = 0;
 
 // ===========================================================================
 // Einstieg
@@ -996,6 +1283,7 @@ void selbsttestNachBild(App& app, render::Renderer* renderer) {
         if (T::imSchritt == 0) diag::info("Selbsttest Schritt: " + T::schritte[T::schritt].text);
         // Kopie: ein Schritt darf weitere einfuegen, dabei zieht der Vektor um.
         const std::function<bool(int)> tun = T::schritte[T::schritt].tun;
+        T::einfuegeAn = T::schritt + 1;
         if (tun(T::imSchritt)) {
             ++T::schritt;
             T::imSchritt = 0;
@@ -1015,13 +1303,13 @@ void selbsttestNachBild(App& app, render::Renderer* renderer) {
 // Namensraum, so deklariert sie imgui_internal.h.
 // ===========================================================================
 void ImGuiTestEngineHook_ItemAdd(ImGuiContext* ctx, ImGuiID id, const ImRect& bb,
-                                 const ImGuiLastItemData*) {
-    efx::gui::selbsttestMerkeElement(ctx, id, bb);
+                                 const ImGuiLastItemData* data) {
+    efx::gui::selbsttestMerkeElement(ctx, id, bb, data);
 }
 
 void ImGuiTestEngineHook_ItemInfo(ImGuiContext* ctx, ImGuiID id, const char* label,
-                                  ImGuiItemStatusFlags) {
-    efx::gui::selbsttestMerkeText(ctx, id, label);
+                                  ImGuiItemStatusFlags flags) {
+    efx::gui::selbsttestMerkeText(ctx, id, label, flags);
 }
 
 void ImGuiTestEngineHook_Log(ImGuiContext*, const char*, ...) {}

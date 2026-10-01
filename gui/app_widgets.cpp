@@ -86,7 +86,18 @@ bool editCurveFlags(int& flags, std::vector<std::string>& words) {
         words.clear();
         changed = true;
     }
-    ImGui::SameLine();
+    // "random" nur dann in dieselbe Zeile, wenn es ganz hineinpasst. Bei
+    // schmaler Eigenschaftsseite ragte es sonst rechts hinaus und war nicht
+    // mehr anzuklicken (Selbsttest, alle Typen mit Size-Kurve).
+    {
+        const ImGuiStyle& style = ImGui::GetStyle();
+        const float need = style.ItemSpacing.x + ImGui::GetFrameHeight() +
+                           style.ItemInnerSpacing.x + ImGui::CalcTextSize(tr(Str::CurveRandom)).x;
+        const float right = ImGui::GetItemRectMax().x;
+        if (right + need <= ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x) {
+            ImGui::SameLine();
+        }
+    }
     bool random = (flags & efx::kCurveRandom) != 0 &&
                   (flags & efx::kCurveClamp) != efx::kCurveClamp;
     const bool randomGeklickt = ImGui::Checkbox(tr(Str::CurveRandom), &random);

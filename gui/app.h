@@ -232,6 +232,8 @@ private:
     void drawSegmentList(float width, float height);
     void drawProperties(float width, float height);
     void drawTab(fields::Tab tab, Primitive& primitive);
+    // Welcher Reiter der Eigenschaftsseite zuletzt gezeichnet wurde.
+    fields::Tab propertyTab_ = fields::Tab::Generation;
 
     // Bausteine fuer die Eigenschaftenblaetter. Alle melden, ob sich etwas
     // geaendert hat, damit der Aufrufer die Datei als geaendert markieren kann.
