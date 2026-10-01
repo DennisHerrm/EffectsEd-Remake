@@ -1614,6 +1614,12 @@ public:
         }));
         s.push_back(pruefSchritt("Gespeicherte pk3-Datei laesst sich fehlerfrei lesen",
                                  [pfad] { return !read(leseDatei(pfad)).hasErrors(); }));
+        // Datei aufs Fenster ziehen (der Win32-Teil sammelt nur die Pfade).
+        s.push_back(tu("gezogene .efx", [pfad] { app->openDroppedFile(pfad); }));
+        s.push_back(warte(3));
+        s.push_back(pruefSchritt("Gezogene .efx wird geoeffnet und gezeigt", [pfad] {
+            return doc().filePath == pfad && !app->startTabActive_;
+        }));
         return s;
     }
 
