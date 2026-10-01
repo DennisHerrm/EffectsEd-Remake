@@ -1767,6 +1767,25 @@ public:
         s.push_back(taste(ImGuiKey_Z, true));
         s.push_back(pruefSchritt("Auswahl ist rueckgaengig machbar",
                                  [] { return gewaehlt() && gewaehlt()->shaders.empty(); }));
+        // Farbknopf: die zwanzig Felder des Originals, Rot waehlen. Erst
+        // "RGB Color" anhaken — ohne Haken sind die Knoepfe gesperrt.
+        s.push_back(klickMarke("rgb/an"));
+        s.push_back(pruefSchritt("RGB Color angehakt", [] { return gewaehlt() && gewaehlt()->rgb.present; }));
+        s.push_back(klickMarke("rgb/start/farbe_min"));
+        s.push_back(warte(2));
+        s.push_back(fensterFoto("farbwahl_palette"));
+        s.push_back(klickMarke("rgb/start/palette13"));
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("Farbfeld Rot (255,0,0) setzt die Startfarbe und schliesst", [] {
+            const auto& c = gewaehlt()->rgb.start;
+            return gewaehlt() && c.set && c.min[0] == 1.0f && c.min[1] == 0.0f && c.min[2] == 0.0f &&
+                   !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
+        }));
+        s.push_back(taste(ImGuiKey_Z, true));
+        s.push_back(pruefSchritt("Farbwahl ist rueckgaengig machbar",
+                                 [] { return gewaehlt() && !gewaehlt()->rgb.start.set; }));
+        s.push_back(taste(ImGuiKey_Z, true));
+        s.push_back(pruefSchritt("und der Haken auch", [] { return gewaehlt() && !gewaehlt()->rgb.present; }));
         // Teure Physik: Rueckfrage, Nein laesst es aus, Ja schaltet ein.
         s.push_back(klick(tr(Str::TabPhysics), "properties"));
         s.push_back(warteBis("Reiter Physics", [] { return app->propertyTab_ == fields::Tab::Physics; }, 30));
