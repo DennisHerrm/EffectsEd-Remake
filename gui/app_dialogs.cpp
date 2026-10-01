@@ -7,6 +7,8 @@
 //
 // Teil der Klasse App aus app.h.
 #include "app.h"
+#include <algorithm>
+#include <cctype>
 
 #include "efx/help.h"
 #include "app_shared.h"
@@ -610,21 +612,28 @@ void App::drawWindDialog() {
 }
 
 void App::drawPickerDialog() {
+    // Auswahl aus dem Bestand: Shader, Modelle, Klaenge, Effekte.
+    //
+    // Wie "Choose Shaders" im Original (Dialog 184): Mehrfachauswahl (Strg-
+    // und Umschalt-Klick), "Textures..." waehlt ein Bild direkt aus gfx/, und
+    // "Preview" zeigt das Bild des gewaehlten Shaders. Beide Knoepfe waren
+    // bei uns vorher nur gesperrte Attrappen. Doppelklick uebernimmt einen
+    // Eintrag sofort.
     if (showPicker_) {
         ImGui::OpenPopup("###picker");
         showPicker_ = false;
-        pickerSelected_ = -1;
+        pickerChosen_.clear();
+        pickerAnchor_ = -1;
+        pickerPreview_ = false;
     }
 
     const Str title = pickerKind_ == PickerKind::Shaders ? Str::DialogChooseShaders
                                                          : Str::FieldAddEntry;
-    ImGui::SetNextWindowSize(ImVec2(560, 460), ImGuiCond_Appearing);
-    // Untergrenze setzen. Ohne sie laesst sich das Fenster auf Briefmarken-
-    // groesse ziehen, und dann ist die Liste nicht mehr zu bedienen.
-    ImGui::SetNextWindowSizeConstraints(ImVec2(420.0f, 320.0f),
-                                        ImVec2(FLT_MAX, FLT_MAX));
-    if (!ImGui::BeginPopupModal((std::string(tr(title)) + "###picker").c_str(),
-                                nullptr, ImGuiWindowFlags_None)) {
+    const float em = ImGui::GetFontSize();
+    ImGui::SetNextWindowSize(ImVec2(em * 40.0f, em * 30.0f), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(em * 26.0f, em * 18.0f), ImVec2(FLT_MAX, FLT_MAX));
+    if (!ImGui::BeginPopupModal((std::string(tr(title)) + "###picker").c_str(), nullptr,
+                                ImGuiWindowFlags_None)) {
         return;
     }
     if (!pickerTarget_) {
@@ -633,79 +642,153 @@ void App::drawPickerDialog() {
         return;
     }
 
-    // Die Quelle. Der Materialsuchlauf fehlt noch, deshalb ist die Liste
-    // vorerst leer — genau wie im Original, solange kein Spielpfad gesetzt ist.
     const std::vector<std::string>& entries =
-        pickerKind_ == PickerKind::Models   ? assets_.models
-        : pickerKind_ == PickerKind::Sounds ? assets_.sounds
+        pickerKind_ == PickerKind::Models    ? assets_.models
+        : pickerKind_ == PickerKind::Sounds  ? assets_.sounds
         : pickerKind_ == PickerKind::Effects ? assets_.effects
                                              : assets_.shaders;
-    if (settings_.gamePath.empty()) {
-        ImGui::TextDisabled("%s", tr(Str::ChooseNoGamePath));
-    }
+    if (settings_.gamePath.empty()) ImGui::TextDisabled("%s", tr(Str::ChooseNoGamePath));
 
-    // Ein Filterfeld statt einer reinen Liste. Bei knapp zweitausend Shadern
-    // ist Blaettern keine Bedienung mehr — das Original hat nur die Liste.
     ImGui::SetNextItemWidth(-1.0f);
-    ImGui::InputTextWithHint("##filter", tr(Str::ChooseFilter), pickerFilter_,
-                             sizeof(pickerFilter_));
+    if (ImGui::InputTextWithHint("##filter", tr(Str::ChooseFilter), pickerFilter_,
+                                 sizeof(pickerFilter_))) {
+        pickerChosen_.clear();
+        pickerAnchor_ = -1;
+    }
 
+    // Suche ohne Gross-/Kleinschreibung: Shadernamen sind in der Engine
+    // unabhaengig davon (R_FindShader vergleicht ohne).
+    const auto lower = [](std::string s) {
+        for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return s;
+    };
+    const std::string needle = lower(pickerFilter_);
     std::vector<const std::string*> shown;
-    const std::string needle = pickerFilter_;
     for (const auto& entry : entries) {
-        if (needle.empty() || entry.find(needle) != std::string::npos) {
-            shown.push_back(&entry);
-        }
-        // Bei zweitausend Shadern reicht die erste Bildschirmseite; wer mehr
-        // sucht, tippt weiter. Ohne Grenze wird das Fenster bei jedem
-        // Tastendruck traege.
-        if (shown.size() >= 500) break;
+        if (needle.empty() || lower(entry).find(needle) != std::string::npos) shown.push_back(&entry);
+        if (shown.size() >= 5000) break;
     }
 
-    ImGui::BeginChild("pickerlist", ImVec2(-140.0f, -40.0f),
+    const auto take = [this](const std::string& name) {
+        // Doppelte vermeiden: zweimal derselbe Shader verdoppelt nur die
+        // Wahrscheinlichkeit, mit der die Engine ihn waehlt.
+        if (std::find(pickerTarget_->begin(), pickerTarget_->end(), name) == pickerTarget_->end()) {
+            pickerTarget_->push_back(name);
+        }
+    };
+    bool close = false;
+    bool added = false;
+
+    const float sideWidth = em * 9.0f;
+    ImGui::BeginChild("pickerlist", ImVec2(-sideWidth, -ImGui::GetFrameHeightWithSpacing() * 1.2f),
                       ImGuiChildFlags_Borders);
-    for (int i = 0; i < static_cast<int>(shown.size()); ++i) {
-        if (ImGui::Selectable(shown[i]->c_str(), pickerSelected_ == i)) {
-            pickerSelected_ = i;
+    ImGuiListClipper clipper;
+    clipper.Begin(static_cast<int>(shown.size()));
+    while (clipper.Step()) {
+        for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
+            const bool chosen = pickerChosen_.count(i) != 0;
+            ImGui::PushID(i);
+            if (ImGui::Selectable(shown[static_cast<size_t>(i)]->c_str(), chosen,
+                                  ImGuiSelectableFlags_AllowDoubleClick)) {
+                const ImGuiIO& io = ImGui::GetIO();
+                if (io.KeyShift && pickerAnchor_ >= 0) {
+                    pickerChosen_.clear();
+                    for (int k = std::min(pickerAnchor_, i); k <= std::max(pickerAnchor_, i); ++k) {
+                        pickerChosen_.insert(k);
+                    }
+                } else if (io.KeyCtrl) {
+                    if (chosen) pickerChosen_.erase(i); else pickerChosen_.insert(i);
+                    pickerAnchor_ = i;
+                } else {
+                    pickerChosen_.clear();
+                    pickerChosen_.insert(i);
+                    pickerAnchor_ = i;
+                }
+                if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                    take(*shown[static_cast<size_t>(i)]);
+                    added = true;
+                    close = true;
+                }
+            }
+            ImGui::PopID();
         }
     }
-    if (shown.empty() && !settings_.gamePath.empty()) {
-        ImGui::TextDisabled("%s", tr(Str::ChooseNoneFound));
-    }
+    if (shown.empty() && !settings_.gamePath.empty()) ImGui::TextDisabled("%s", tr(Str::ChooseNoneFound));
     ImGui::EndChild();
 
     ImGui::SameLine();
     ImGui::BeginGroup();
-    const bool hasSelection = pickerSelected_ >= 0 &&
-                              pickerSelected_ < static_cast<int>(shown.size());
-    ImGui::BeginDisabled(!hasSelection);
-    if (ImGui::Button(tr(Str::MsgOk), ImVec2(120, 0))) {
-        pickerTarget_->push_back(*shown[pickerSelected_]);
+    const float buttonWidth = sideWidth - ImGui::GetStyle().ItemSpacing.x;
+    ImGui::BeginDisabled(pickerChosen_.empty());
+    if (ImGui::Button(tr(Str::MsgOk), ImVec2(buttonWidth, 0))) {
+        // In der Reihenfolge der Liste, wie das Original (alphabetisch).
+        for (int i : pickerChosen_) {
+            if (i >= 0 && i < static_cast<int>(shown.size())) take(*shown[static_cast<size_t>(i)]);
+        }
+        added = true;
+        close = true;
+    }
+    ImGui::EndDisabled();
+    if (ImGui::Button(tr(Str::MsgCancel), ImVec2(buttonWidth, 0))) close = true;
+
+    if (pickerKind_ == PickerKind::Shaders) {
+        ImGui::Spacing();
+        // Ein Bild direkt statt eines Shaders: die Engine nimmt auch einen
+        // Bildpfad als Shadernamen (R_FindShader baut dann einen Ersatz-
+        // shader daraus).
+        if (ImGui::Button(tr(Str::ChooseTextures), ImVec2(buttonWidth, 0)) && fileDialog_) {
+            const std::string start = settings_.gamePath.empty() ? std::string()
+                                                                 : settings_.gamePath + "/gfx";
+            const std::string picked = fileDialog_(
+                false, "Image Files (*.tga; *.png; *.jpg)\0*.tga;*.png;*.jpg;*.jpeg\0All files\0*.*\0",
+                start.c_str());
+            if (!picked.empty()) {
+                std::string relative = toGameRelative(picked);
+                if (relative.empty()) {
+                    // Ausserhalb des Spielpfads findet die Engine das Bild nie
+                    // (das Original speicherte dann einen absoluten Pfad).
+                    diag::warn("texture outside game path: " + picked);
+                } else {
+                    const size_t dot = relative.find_last_of('.');
+                    if (dot != std::string::npos && relative.find('/', dot) == std::string::npos) {
+                        relative.resize(dot);
+                    }
+                    take(relative);
+                    added = true;
+                    close = true;
+                }
+            }
+        }
+        const bool canPreview = !pickerChosen_.empty();
+        ImGui::BeginDisabled(!canPreview);
+        if (ImGui::Button(tr(Str::ChoosePreview), ImVec2(buttonWidth, 0))) pickerPreview_ = !pickerPreview_;
+        ImGui::EndDisabled();
+        if (pickerPreview_ && canPreview && renderer_) {
+            const int first = *pickerChosen_.begin();
+            if (first < static_cast<int>(shown.size())) {
+                const render::TextureId texture =
+                    textureFor(renderer_, *shown[static_cast<size_t>(first)], 0.0f);
+                if (texture != render::kNoTexture) {
+                    ImGui::Image(toImTexture(texture), ImVec2(buttonWidth, buttonWidth));
+                }
+            }
+        }
+    }
+    ImGui::EndGroup();
+
+    ImGui::TextDisabled(tr(Str::ChooseCount), static_cast<int>(shown.size()),
+                        static_cast<int>(entries.size()));
+
+    if (added) {
         doc().dirty = true;
         refreshDiagnostics();
         fieldEditOpen_ = true;
         previewDirty_ = true;
+    }
+    if (close) {
+        pickerTarget_ = nullptr;
         ImGui::CloseCurrentPopup();
     }
-    ImGui::EndDisabled();
-    if (ImGui::Button(tr(Str::MsgCancel), ImVec2(120, 0))) ImGui::CloseCurrentPopup();
-
-    if (pickerKind_ == PickerKind::Shaders) {
-        ImGui::Spacing();
-        // "Textures..." im Original: ein gewoehnlicher Dateidialog mit dem
-        // Filter *.tga; *.png; *.jpg; *.pcx; *.bmp. Er traegt den Pfad direkt
-        // in die Shaderliste ein — die Engine baut daraus einen Ersatzshader
-        // aus der Bilddatei.
-        ImGui::BeginDisabled(true);
-        ImGui::Button(tr(Str::ChooseTextures), ImVec2(120, 0));
-        ImGui::Button(tr(Str::ChoosePreview), ImVec2(120, 0));
-        ImGui::EndDisabled();
-    }
-    ImGui::EndGroup();
-
-    ImGui::Separator();
-    ImGui::TextDisabled(tr(Str::ChooseCount), static_cast<int>(shown.size()),
-                        static_cast<int>(entries.size()));
     ImGui::EndPopup();
 }
 
@@ -836,6 +919,7 @@ void App::drawDriverInfoDialog() {
 
 void App::drawDialogs() {
     drawSaveChangesDialog();
+    drawConfirmDialog();
 
     drawDriverInfoDialog();
     drawSunDialog();

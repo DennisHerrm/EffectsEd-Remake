@@ -1485,6 +1485,138 @@ public:
         return s;
     }
 
+    // --- Auswahldialog und Rueckfrage ------------------------------------------
+    static std::vector<Schritt> teilAuswahl() {
+        std::vector<Schritt> s;
+        s.push_back(teil("auswahl"));
+        frischesDokument(s);
+        s.push_back(tu("Spielpfad", [] {
+            app->settings_.gamePath = spielpfad();
+            app->settings_.extraGamePaths.clear();
+            app->rescanAssets();
+        }));
+        neuesSegment(s, PrimitiveType::Particle);
+        s.push_back(klick(tr(Str::TabColor), "properties"));
+        s.push_back(warteBis("Reiter Color", [] { return app->propertyTab_ == fields::Tab::Color; }, 30));
+        s.push_back(klickMarke("shaders/waehlen"));
+        s.push_back(warteBis("Shaderauswahl offen", [] { return dialogOffen("###picker"); }, 30));
+        s.push_back(klick("##filter", "###picker"));
+        s.push_back(tippe("gfx/effects/sabers"));
+        s.push_back(warte(3));
+        s.push_back(fensterFoto("dialog_shaderauswahl"));
+        // Zwei Eintraege: der erste per Klick, der zweite per Strg+Klick.
+        auto namen = std::make_shared<std::vector<std::string>>();
+        const auto eintrag = [](int nte) {
+            return [nte]() -> const Element* {
+                int gesehen = 0;
+                for (const Element& e : g_elemente) {
+                    if (e.innen.find("pickerlist") == std::string::npos || e.label.empty()) continue;
+                    // Das Kindfenster selbst meldet sich auch (mit seinem Namen).
+                    if (e.label.find("pickerlist") != std::string::npos) continue;
+                    if (gesehen++ == nte) return &e;
+                }
+                return static_cast<const Element*>(nullptr);
+            };
+        };
+        s.push_back(tu("Namen merken", [=] {
+            namen->clear();
+            for (int k = 0; k < 2; ++k) {
+                if (const Element* e = eintrag(k)()) namen->push_back(sichtbarerText(e->label));
+            }
+        }));
+        s.push_back(klickAuf("Klick erster Shader", eintrag(0)));
+        s.push_back({"Strg halten", [](int b) {
+                         if (b == 0) ImGui::GetIO().AddKeyEvent(ImGuiMod_Ctrl, true);
+                         return b >= 1;
+                     }});
+        s.push_back(klickAuf("Strg+Klick zweiter Shader", eintrag(1)));
+        s.push_back({"Strg los", [](int b) {
+                         if (b == 0) ImGui::GetIO().AddKeyEvent(ImGuiMod_Ctrl, false);
+                         return b >= 1;
+                     }});
+        s.push_back(klick(tr(Str::ChoosePreview), "###picker"));
+        s.push_back(warte(30));
+        s.push_back(fensterFoto("dialog_shaderauswahl_vorschau"));
+        s.push_back(klick(tr(Str::MsgOk), "###picker"));
+        s.push_back(pruefSchritt("Mehrfachauswahl uebernimmt beide Shader", [=] {
+            return gewaehlt() && namen->size() == 2 && gewaehlt()->shaders.size() == 2 &&
+                   gewaehlt()->shaders[0] == (*namen)[0] && gewaehlt()->shaders[1] == (*namen)[1];
+        }));
+        s.push_back(taste(ImGuiKey_Z, true));
+        s.push_back(pruefSchritt("Auswahl ist rueckgaengig machbar",
+                                 [] { return gewaehlt() && gewaehlt()->shaders.empty(); }));
+        // Teure Physik: Rueckfrage, Nein laesst es aus, Ja schaltet ein.
+        s.push_back(klick(tr(Str::TabPhysics), "properties"));
+        s.push_back(warteBis("Reiter Physics", [] { return app->propertyTab_ == fields::Tab::Physics; }, 30));
+        s.push_back(klickMarke("physik/an"));
+        s.push_back(klickMarke("physik/teuer"));
+        s.push_back(warteBis("Rueckfrage teure Physik", [] { return dialogOffen("###confirm"); }, 30));
+        s.push_back(fensterFoto("dialog_teure_physik"));
+        s.push_back(klick(tr(Str::MsgNo), "###confirm"));
+        s.push_back(pruefSchritt("Nein: teure Physik bleibt aus", [] {
+            return gewaehlt() && (gewaehlt()->flags & kFlagExpensivePhysics) == 0;
+        }));
+        s.push_back(klickMarke("physik/teuer"));
+        s.push_back(warteBis("Rueckfrage erneut", [] { return dialogOffen("###confirm"); }, 30));
+        s.push_back(klick(tr(Str::MsgYes), "###confirm"));
+        s.push_back(pruefSchritt("Ja: teure Physik ist an", [] {
+            return gewaehlt() && (gewaehlt()->flags & kFlagExpensivePhysics) != 0;
+        }));
+        s.push_back(pruefSchritt("... und steht in der Datei", [] {
+            return text().find("expensivePhysics") != std::string::npos;
+        }));
+        return s;
+    }
+
+    // --- Mehrere Dokumente --------------------------------------------------------
+    static std::vector<Schritt> teilDokumente() {
+        std::vector<Schritt> s;
+        s.push_back(teil("dokumente"));
+        frischesDokument(s);
+        neuesSegment(s, PrimitiveType::Particle);
+        s.push_back(taste(ImGuiKey_T, true));
+        s.push_back(pruefSchritt("Strg+T: zweiter Reiter", [] { return app->documents_.size() == 2; }));
+        neuesSegment(s, PrimitiveType::Sound);
+        neuesSegment(s, PrimitiveType::Light);
+        s.push_back(pruefSchritt("Reiter 2 hat zwei Segmente, Reiter 1 eines", [] {
+            return app->documents_[1].effect.primitives.size() == 2 &&
+                   app->documents_[0].effect.primitives.size() == 1;
+        }));
+        s.push_back(taste(ImGuiKey_Tab, true));
+        s.push_back(pruefSchritt("Strg+Tab: Reiter 1 aktiv", [] { return app->activeDocument_ == 0; }));
+        s.push_back(taste(ImGuiKey_Z, true));
+        s.push_back(pruefSchritt("Strg+Z wirkt nur auf Reiter 1", [] {
+            return app->documents_[0].effect.primitives.empty() &&
+                   app->documents_[1].effect.primitives.size() == 2;
+        }));
+        s.push_back(taste(ImGuiKey_Y, true));
+        s.push_back(pruefSchritt("Strg+Y stellt Reiter 1 wieder her",
+                                 [] { return app->documents_[0].effect.primitives.size() == 1; }));
+        // Ein Effekt aus einer pk3 hat keinen Dateipfad: Speichern fragt nach dem Ziel.
+        s.push_back(tu("Spielpfad", [] {
+            app->settings_.gamePath = spielpfad();
+            app->rescanAssets();
+        }));
+        s.push_back(tu("Effekt aus pk3 oeffnen", [] {
+            App::BrowserEntry e;
+            e.name = app->assets_.effects.empty() ? std::string() : app->assets_.effects.front();
+            app->openBrowserEntry(e);
+        }));
+        s.push_back(warte(3));
+        s.push_back(pruefSchritt("Effekt aus pk3: kein Dateipfad, Editor vorn", [] {
+            return doc().filePath.empty() && !app->startTabActive_ && anzahlSegmente() > 0;
+        }));
+        const std::string pfad = arbeitsOrdner + "/aus_pk3.efx";
+        s.push_back(dateiAntwort(pfad));
+        s.push_back(taste(ImGuiKey_S, true));
+        s.push_back(pruefSchritt("Strg+S bei pk3-Effekt fragt nach dem Ziel und speichert", [pfad] {
+            return fs::exists(pfad) && doc().filePath == pfad && !doc().dirty;
+        }));
+        s.push_back(pruefSchritt("Gespeicherte pk3-Datei laesst sich fehlerfrei lesen",
+                                 [pfad] { return !read(leseDatei(pfad)).hasErrors(); }));
+        return s;
+    }
+
     // --- Dialoge -----------------------------------------------------------
     //
     // Jeder Dialog geht auf, zeigt sich ganz, und schliesst mit Ok wie mit
@@ -1981,6 +2113,8 @@ public:
             {"bedienung", &teilBedienung},
             {"beenden", &teilBeenden},
             {"bibliothek", &teilBibliothek},
+            {"auswahl", &teilAuswahl},
+            {"dokumente", &teilDokumente},
             {"felder", &teilFelder},
         };
         // Nicht in "alles": dauert mit allen Effekten mehrere Minuten.

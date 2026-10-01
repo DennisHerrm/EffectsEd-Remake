@@ -745,8 +745,28 @@ void App::drawTab(fields::Tab tab, Primitive& p) {
             }
             ImGui::BeginDisabled(!physics);
             ImGui::Indent();
-            changed |= flagBox(tr(Str::PhysicsExpensive), p.flags, kFlagExpensivePhysics, false,
-                               "physik/teuer");
+            {
+                // Wie im Original eine Rueckfrage beim Einschalten (Dialog-
+                // text aus der Ressource): diese Physik kostet viel.
+                bool expensive = (p.flags & kFlagExpensivePhysics) != 0;
+                if (ImGui::Checkbox(tr(Str::PhysicsExpensive), &expensive)) {
+                    if (!expensive) {
+                        p.flags &= ~kFlagExpensivePhysics;
+                        changed = true;
+                    } else {
+                        askConfirm(tr(Str::PhysicsExpensiveWarning), [this]() {
+                            if (!hasSelection()) return;
+                            doc().effect.primitives[static_cast<size_t>(doc().selectedPrimitive)].flags |=
+                                kFlagExpensivePhysics;
+                            doc().dirty = true;
+                            refreshDiagnostics();
+                            fieldEditOpen_ = true;
+                            previewDirty_ = true;
+                        });
+                    }
+                }
+                testmarke::marke("physik/teuer");
+            }
             ImGui::Unindent();
             changed |= rowRange("bounce", tr(Str::FieldBounceOnly), p.elasticity, 0.0f, 0.05f);
             {

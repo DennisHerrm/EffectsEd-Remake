@@ -180,6 +180,39 @@ void App::drawSaveChangesDialog() {
     ImGui::EndPopup();
 }
 
+// --- Ja/Nein ---------------------------------------------------------------
+
+void App::askConfirm(std::string text, std::function<void()> yes) {
+    confirmText_ = std::move(text);
+    confirmYes_ = std::move(yes);
+    showConfirm_ = true;
+}
+
+void App::drawConfirmDialog() {
+    if (showConfirm_) {
+        ImGui::OpenPopup("###confirm");
+        showConfirm_ = false;
+    }
+    ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 28.0f, 0.0f), ImGuiCond_Always);
+    if (!ImGui::BeginPopupModal((std::string(tr(Str::AppTitle)) + "###confirm").c_str(), nullptr,
+                                ImGuiWindowFlags_NoResize)) {
+        return;
+    }
+    ImGui::TextWrapped("%s", confirmText_.c_str());
+    ImGui::Separator();
+    if (ImGui::Button(tr(Str::MsgYes), ImVec2(120, 0))) {
+        if (confirmYes_) confirmYes_();
+        confirmYes_ = nullptr;
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(tr(Str::MsgNo), ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        confirmYes_ = nullptr;
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
 // --- Segmente ---------------------------------------------------------------
 
 void App::cmdAddSegment(PrimitiveType type) {
