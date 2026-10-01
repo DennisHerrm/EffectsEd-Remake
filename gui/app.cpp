@@ -1247,7 +1247,8 @@ void App::handleShortcuts() {
     // Was folgt, betrifft den Effekt — auf der Startseite gibt es keinen.
     if (startTabActive_) return;
 
-    if (ctrl && pressed(ImGuiKey_Z)) applyUndo();
+    // Alt+Ruecktaste steht in der Accelerator-Tabelle des Originals (Undo).
+    if ((ctrl && pressed(ImGuiKey_Z)) || (io.KeyAlt && pressed(ImGuiKey_Backspace))) applyUndo();
     if (ctrl && pressed(ImGuiKey_Y)) applyRedo();
     // Klonen: Strg+C und Strg+Einfg wie im Original (Accelerator-Tabelle
     // 128), Strg+D zusaetzlich.
