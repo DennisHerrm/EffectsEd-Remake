@@ -31,6 +31,8 @@ void App::drawGamePathDialog() {
     if (showGamePathDialog_) {
         ImGui::OpenPopup("###gamepath");
         showGamePathDialog_ = false;
+        // Fuer Abbrechen: Zusatzpfade werden im Dialog direkt bearbeitet.
+        extraPathsBackup_ = settings_.extraGamePaths;
     }
 
     // Dieselbe Falle wie beim Wiedergabefenster: automatische Breite plus
@@ -277,7 +279,10 @@ void App::drawGamePathDialog() {
         ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
-    if (ImGui::Button(tr(Str::MsgCancel), ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+    if (ImGui::Button(tr(Str::MsgCancel), ImVec2(120, 0))) {
+        settings_.extraGamePaths = extraPathsBackup_;
+        ImGui::CloseCurrentPopup();
+    }
 
     ImGui::EndPopup();
 }

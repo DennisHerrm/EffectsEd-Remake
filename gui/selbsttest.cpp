@@ -1323,6 +1323,104 @@ public:
         return s;
     }
 
+    // --- Startseite, Bibliothek, Spielpfad -----------------------------------
+    static std::string spielpfad() {
+        const char* pfad = std::getenv("EFXED_SPIELPFAD");
+        return pfad && pfad[0] ? pfad
+                               : "C:/Program Files (x86)/Steam/steamapps/common/Jedi Academy/"
+                                 "GameData Movie Duels/base";
+    }
+
+    static std::vector<Schritt> teilBibliothek() {
+        std::vector<Schritt> s;
+        s.push_back(teil("bibliothek"));
+        frischesDokument(s);
+        s.push_back(tu("ohne Spielpfad beginnen", [] {
+            app->settings_.gamePath.clear();
+            app->settings_.extraGamePaths.clear();
+            app->rescanAssets();
+        }));
+        // Startseite ueber Strg+B.
+        s.push_back(taste(ImGuiKey_B, true));
+        s.push_back(warte(3));
+        s.push_back(pruefSchritt("Strg+B zeigt die Startseite", [] { return app->startTabActive_; }));
+        s.push_back(fensterFoto("startseite_ohne_pfad"));
+        // "Neuer leerer Effekt" auf der Startseite.
+        s.push_back(klick(tr(Str::StartNewEffect), "startPage"));
+        s.push_back(warte(3));
+        s.push_back(pruefSchritt("Startseite 'Neuer leerer Effekt': Editor ist vorn",
+                                 [] { return !app->startTabActive_; }));
+        // Spielpfad ueber den Dialog: Durchsuchen (Ordnerauswahl) + Ok.
+        s.push_back(taste(ImGuiKey_B, true));
+        s.push_back(warte(3));
+        s.push_back(klick(tr(Str::StartSetPath), "startPage"));
+        s.push_back(warteBis("Spielpfad-Dialog offen", [] { return dialogOffen("###gamepath"); }, 30));
+        s.push_back(dateiAntwort(spielpfad()));
+        s.push_back(klick(tr(Str::PathsBrowse), "###gamepath"));
+        s.push_back(warte(2));
+        s.push_back(fensterFoto("dialog_spielpfad"));
+        s.push_back(klick(tr(Str::MsgOk), "###gamepath"));
+        s.push_back(warteBis("Bestand gelesen", [] { return app->assetsScanned_; }, 300));
+        s.push_back(pruefSchritt("Spielpfad gesetzt und Effekte gefunden", [] {
+            return !app->settings_.gamePath.empty() && !app->assets_.effects.empty();
+        }));
+        // Bibliothek: Kacheln erscheinen.
+        s.push_back(tu("Bibliothek zeigen", [] {
+            app->startTabActive_ = true;
+            app->wantStartTab_ = true;
+            if (app->browserEntries_.empty()) app->refreshBrowser();
+        }));
+        s.push_back(warteBis("Kacheln da", [] {
+            for (const Element& e : g_elemente) {
+                if (e.marke.rfind("kachel:", 0) == 0) return true;
+            }
+            return false;
+        }, 300));
+        s.push_back(warte(30));
+        s.push_back(fensterFoto("bibliothek"));
+        // Filtern.
+        s.push_back(klick("##browserFilter", "startPage"));
+        s.push_back(tippe("saber"));
+        s.push_back(warte(4));
+        s.push_back(pruefSchritt("Filter 'saber' zeigt nur passende Kacheln", [] {
+            int passend = 0, andere = 0;
+            for (const Element& e : g_elemente) {
+                if (e.marke.rfind("kachel:", 0) != 0) continue;
+                (e.marke.find("saber") != std::string::npos ? passend : andere)++;
+            }
+            return passend > 0 && andere == 0;
+        }));
+        s.push_back(fensterFoto("bibliothek_gefiltert"));
+        // Doppelklick auf die erste sichtbare Kachel oeffnet den Effekt.
+        auto name = std::make_shared<std::string>();
+        s.push_back(klickAuf("Doppelklick erste Kachel", [=]() -> const Element* {
+            for (const Element& e : g_elemente) {
+                if (e.marke.rfind("kachel:", 0) == 0) {
+                    *name = e.marke.substr(7);
+                    return &e;
+                }
+            }
+            return nullptr;
+        }, 0, true));
+        s.push_back(warte(3));
+        s.push_back(pruefSchritt("Doppelklick auf eine Kachel oeffnet den Effekt im Editor", [=] {
+            return !app->startTabActive_ && anzahlSegmente() > 0;
+        }));
+        s.push_back(fensterFoto("bibliothek_geoeffnet"));
+        // Spielpfad-Dialog: Abbrechen laesst Zusatzpfade, wie sie waren.
+        menue(s, Str::MenuEdit, Str::EditGamePath);
+        s.push_back(warteBis("Spielpfad-Dialog offen", [] { return dialogOffen("###gamepath"); }, 30));
+        s.push_back(dateiAntwort("C:/Windows"));
+        s.push_back(klick(tr(Str::PathsAdd), "###gamepath"));
+        s.push_back(pruefSchritt("Hinzufuegen traegt einen Zusatzpfad ein",
+                                 [] { return app->settings_.extraGamePaths.size() == 1; }));
+        s.push_back(klick(tr(Str::MsgCancel), "###gamepath"));
+        s.push_back(pruefSchritt("Abbrechen nimmt den Zusatzpfad wieder heraus",
+                                 [] { return app->settings_.extraGamePaths.empty(); }));
+        s.push_back(allesZu());
+        return s;
+    }
+
     // --- Dialoge -----------------------------------------------------------
     //
     // Jeder Dialog geht auf, zeigt sich ganz, und schliesst mit Ok wie mit
@@ -1809,6 +1907,7 @@ public:
             {"liste", &teilListe},
             {"bedienung", &teilBedienung},
             {"beenden", &teilBeenden},
+            {"bibliothek", &teilBibliothek},
             {"felder", &teilFelder},
         };
         // Nicht in "alles": dauert mit allen Effekten mehrere Minuten.

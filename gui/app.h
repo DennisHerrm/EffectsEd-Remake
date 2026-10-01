@@ -596,6 +596,7 @@ private:
     playback::Settings playbackDraft_;
     playback::Origin spawnOriginDraft_;
     float colourBackup_[3] = {};
+    std::vector<std::string> extraPathsBackup_;
     bool colourBackupOverridden_ = false;
     void startPlayback();
     // Ungleich 0: jeder Start benutzt diesen Ausgangswert (Selbsttest).
