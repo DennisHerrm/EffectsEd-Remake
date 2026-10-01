@@ -66,6 +66,8 @@ bool App::openArchive(const std::string& path) {
     for (const auto& entry : index.shaderBlends) {
         assets_.shaderBlends.push_back(entry);
     }
+    // Die ganzen Shaderbloecke — daraus zeichnet die Vorschau alle Stufen.
+    for (const auto& entry : index.shaderDefs) assets_.shaderDefs.push_back(entry);
     auto merge = [](std::vector<std::string>& into,
                     const std::vector<std::string>& from) {
         into.insert(into.end(), from.begin(), from.end());
@@ -596,6 +598,7 @@ void App::renderBrowserTiles(render::Renderer* renderer, float dpiScale) {
     std::vector<camera::Matrix> projections(browserSlots_.size());
     std::vector<camera::Vec3> rights(browserSlots_.size());
     std::vector<camera::Vec3> ups(browserSlots_.size());
+    std::vector<camera::Vec3> eyes(browserSlots_.size());
 
     for (size_t i : due) {
         camera::Orbit view;
@@ -604,6 +607,7 @@ void App::renderBrowserTiles(render::Renderer* renderer, float dpiScale) {
         // Leicht von der Seite und von oben, damit Tiefe erkennbar ist. Bei
         // reiner Frontsicht sieht jede Kugelwolke gleich aus.
         view.orbit(30.0f, 20.0f);
+        eyes[i] = view.position();
         views[i] = view.viewMatrix();
         projections[i] = view.projectionMatrix(1.0f,
                                                renderer->wantsZeroToOneDepth());
@@ -628,13 +632,14 @@ void App::renderBrowserTiles(render::Renderer* renderer, float dpiScale) {
             // Das ist Absicht und nicht Geschmack: eine Aufgabe, die nichts
             // schreibt, kann sich mit keiner anderen ins Gehege kommen, egal
             // wie die Kacheln spaeter verteilt werden.
-            lists[i] = entry.system.build(
-                entry.clock.timeMs(), rights[i], ups[i],
-                [this](const std::string& name)
-                    -> particles::System::ShaderDraw {
-                    return {&assets_.texModsOf(name), assets_.rgbWaveOf(name),
-                            assets_.alphaWaveOf(name)};
-                });
+            // Dieselbe Shaderabfrage und dieselben Zeichengruppen wie im
+            // Editor (particleShaderLookup, drawParticleGroups) — die Kachel
+            // soll aussehen wie die Vorschau.
+            particles::System::View eye;
+            eye.eye = eyes[i];
+            eye.fovXDegrees = 60.0f;
+            lists[i] = entry.system.build(entry.clock.timeMs(), rights[i], ups[i],
+                                          particleShaderLookup(), &eye);
         }
     });
 
@@ -685,54 +690,10 @@ void App::renderBrowserTiles(render::Renderer* renderer, float dpiScale) {
         // ihre Achsen braucht.
         renderer->setCamera(views[i].data(), projections[i].data());
 
-        // Undurchsichtige Flaechen zuerst.
-        //
-        // Bis eben stand hier fest "additiv" fuer alles — dieselbe Abkuerzung,
-        // die in der Hauptansicht schon einmal falsch war: ein alphagemischter
-        // Rauch sieht damit voellig anders aus als im Spiel.
-        //
-        // Additive Mischung ist kommutativ, die Reihenfolge also egal. Bei
-        // Alphamischung nicht: was zuerst gezeichnet wird, liegt hinten.
-        std::vector<std::pair<const std::string*, const scene::Mesh*>> order;
-        order.reserve(lists[i].byTexture.size());
-        for (const auto& group : lists[i].byTexture) {
-            if (!group.second.vertices.empty()) {
-                order.emplace_back(&group.first, &group.second);
-            }
-        }
-        std::stable_sort(order.begin(), order.end(),
-                         [&](const auto& a, const auto& b) {
-                             const bool aOpaque = blendFor(*a.first, lists[i]) ==
-                                                  shader::BlendMode::Opaque;
-                             const bool bOpaque = blendFor(*b.first, lists[i]) ==
-                                                  shader::BlendMode::Opaque;
-                             return aOpaque && !bOpaque;
-                         });
-
-        for (const auto& entry : order) {
-            const shader::BlendMode blend = blendFor(*entry.first, lists[i]);
-            renderer->setBlend(static_cast<render::Blend>(blend));
-            // Nur Undurchsichtiges schreibt in den Tiefenpuffer — sonst
-            // verdecken sich durchsichtige Teilchen gegenseitig, und man sieht
-            // Loecher statt Rauch.
-            renderer->setDepthWrite(blend == shader::BlendMode::Opaque);
-            const scene::Mesh& mesh = *entry.second;
-            ++browserDrawCalls_;
-            renderer->drawTriangles(
-                reinterpret_cast<const render::Vertex*>(mesh.vertices.data()),
-                static_cast<int>(mesh.vertices.size()), mesh.indices.data(),
-                static_cast<int>(mesh.indices.size()),
-                textureFor(renderer, *entry.first,
-                           browserSlots_[i].entry->clock.timeMs() * 0.001f));
-        }
-        if (!lists[i].lines.vertices.empty()) {
-            renderer->setBlend(render::Blend::Additive);
-            renderer->setDepthWrite(false);
-            ++browserDrawCalls_;
-            renderer->drawLines(
-                reinterpret_cast<const render::Vertex*>(lists[i].lines.vertices.data()),
-                static_cast<int>(lists[i].lines.vertices.size()), 1.0f);
-        }
+        // Die Zeichengruppen wie im Editor: je Shaderstufe Bild, Faktorpaar,
+        // Tiefe und Reihenfolge der Engine (drawParticleGroups).
+        browserDrawCalls_ += drawParticleGroups(
+            renderer, lists[i], browserSlots_[i].entry->clock.timeMs() * 0.001f, 0);
     }
 
     renderer->setViewportRect(0, 0, 0, 0);

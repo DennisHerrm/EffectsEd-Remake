@@ -224,6 +224,17 @@ public:
     // erst das Bild verraet, erschien sonst ein weisses deckendes Rechteck.
     bool textureStillLoading(const std::string& shaderName, float seconds) const;
 
+    // Was der Kern ueber einen Shader wissen muss (particles::System::build):
+    // der ganze Shaderblock, oder dass es weder Block noch Bild gibt. Liest
+    // `assets_` nur — darf also auf Arbeitsfaeden laufen (Browser).
+    particles::System::ShaderLookup particleShaderLookup() const;
+    // Die Zeichengruppen eines Bildes zeichnen, wie die Engine: je Shader-
+    // stufe Bild, Faktorpaar, Tiefe und Alphatest (particles::DrawGroup).
+    // `renderMode`: 0 texturiert, 1 Drahtgitter, 2 Ueberzeichnung.
+    // Gibt die Zahl der Zeichenaufrufe zurueck.
+    int drawParticleGroups(render::Renderer* renderer, const particles::DrawList& list,
+                           float seconds, int renderMode);
+
     // Alle Grafikressourcen vergessen, OHNE sie freizugeben.
     //
     // Beim Wechsel der Grafikschnittstelle wird das Fenster neu gebaut, das
@@ -585,6 +596,8 @@ private:
     // Die laufende Vorschau.
     int lastDrawn_ = 0;
     int lastAlive_ = 0;
+    int lastScheduled_ = 0;
+    int lastMarks_ = 0;
 
     // Spielordner aus der Windows-Registrierung. Leer auf anderen Systemen.
     std::vector<std::pair<std::string, std::string>> registryGamePaths() const;

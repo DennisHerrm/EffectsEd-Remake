@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <algorithm>
 #include <cstring>
+#include <map>
 #include <unordered_set>
 #include <cstdio>
 
@@ -317,7 +318,7 @@ public:
         context_->IASetInputLayout(layout_.Get());
         context_->VSSetShader(vertexShader_.Get(), nullptr, 0);
         context_->PSSetShader(pixelShader_.Get(), nullptr, 0);
-        context_->OMSetDepthStencilState(depthWriteState_.Get(), 0);
+        resetPerViewState();
         setBlend(Blend::Opaque);
         setCulling(Cull::None);
         setFill(Fill::Solid);
@@ -337,7 +338,7 @@ public:
         context_->IASetInputLayout(layout_.Get());
         context_->VSSetShader(vertexShader_.Get(), nullptr, 0);
         context_->PSSetShader(pixelShader_.Get(), nullptr, 0);
-        context_->OMSetDepthStencilState(depthWriteState_.Get(), 0);
+        resetPerViewState();
         setBlend(Blend::Opaque);
         setCulling(Cull::None);
         setFill(Fill::Solid);
@@ -477,8 +478,60 @@ public:
     bool wantsZeroToOneDepth() const override { return true; }
 
     void setDepthWrite(bool enabled) override {
-        context_->OMSetDepthStencilState(
-            enabled ? depthWriteState_.Get() : depthReadState_.Get(), 0);
+        depthWrite_ = enabled;
+        applyDepthState();
+    }
+
+    void setDepthTest(bool enabled) override {
+        depthTest_ = enabled;
+        applyDepthState();
+    }
+
+    void setBlendFactors(BlendFactor src, BlendFactor dst) override {
+        const int key = static_cast<int>(src) * 16 + static_cast<int>(dst);
+        auto found = factorBlends_.find(key);
+        if (found == factorBlends_.end()) {
+            // Je Faktorpaar ein Zustand, beim ersten Gebrauch angelegt und
+            // behalten — hoechstens elf mal elf.
+            D3D11_BLEND_DESC bd{};
+            auto& target = bd.RenderTarget[0];
+            target.BlendEnable = !(src == BlendFactor::One && dst == BlendFactor::Zero);
+            target.SrcBlend = d3dFactor(src);
+            target.DestBlend = d3dFactor(dst);
+            target.BlendOp = D3D11_BLEND_OP_ADD;
+            // Der Alphakanal des Ziels wird wie bisher einfach ueberschrieben.
+            target.SrcBlendAlpha = D3D11_BLEND_ONE;
+            target.DestBlendAlpha = D3D11_BLEND_ZERO;
+            target.BlendOpAlpha = D3D11_BLEND_OP_ADD;
+            target.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+            ComPtr<ID3D11BlendState> state;
+            if (FAILED(device_->CreateBlendState(&bd, &state))) return;
+            found = factorBlends_.emplace(key, state).first;
+        }
+        const float factor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        context_->OMSetBlendState(found->second.Get(), factor, 0xFFFFFFFF);
+    }
+
+    void setAlphaTest(int mode) override {
+        if (pixelConstants_.alphaTest == mode) return;
+        pixelConstants_.alphaTest = mode;
+        uploadPixelConstants();
+    }
+
+    void setLights(const Light* lights, int count) override {
+        if (count > kMaxLights) count = kMaxLights;
+        if (!lights || count < 0) count = 0;
+        if (count == 0 && pixelConstants_.lightCount == 0) return;
+        pixelConstants_.lightCount = count;
+        for (int i = 0; i < count; ++i) {
+            for (int k = 0; k < 3; ++k) {
+                pixelConstants_.lightPos[i][k] = lights[i].pos[k];
+                pixelConstants_.lightColour[i][k] = lights[i].rgb[k];
+            }
+            pixelConstants_.lightPos[i][3] = lights[i].radius;
+            pixelConstants_.lightColour[i][3] = 0.0f;
+        }
+        uploadPixelConstants();
     }
 
     void drawTriangles(const Vertex* vertices, int vertexCount,
@@ -658,27 +711,89 @@ public:
     }
 
 private:
-    // Ein einziges Shaderpaar fuer alles: Farbe aus dem Eckpunkt mal Textur.
-    // Mehr braucht die Vorschau nicht — Beleuchtung gibt es im Spiel bei
-    // Effekten auch nicht.
+    static D3D11_BLEND d3dFactor(BlendFactor f) {
+        switch (f) {
+            case BlendFactor::Zero: return D3D11_BLEND_ZERO;
+            case BlendFactor::One: return D3D11_BLEND_ONE;
+            case BlendFactor::SrcColor: return D3D11_BLEND_SRC_COLOR;
+            case BlendFactor::OneMinusSrcColor: return D3D11_BLEND_INV_SRC_COLOR;
+            case BlendFactor::DstColor: return D3D11_BLEND_DEST_COLOR;
+            case BlendFactor::OneMinusDstColor: return D3D11_BLEND_INV_DEST_COLOR;
+            case BlendFactor::SrcAlpha: return D3D11_BLEND_SRC_ALPHA;
+            case BlendFactor::OneMinusSrcAlpha: return D3D11_BLEND_INV_SRC_ALPHA;
+            case BlendFactor::DstAlpha: return D3D11_BLEND_DEST_ALPHA;
+            case BlendFactor::OneMinusDstAlpha: return D3D11_BLEND_INV_DEST_ALPHA;
+            case BlendFactor::SrcAlphaSaturate: return D3D11_BLEND_SRC_ALPHA_SAT;
+        }
+        return D3D11_BLEND_ONE;
+    }
+
+    void applyDepthState() {
+        ID3D11DepthStencilState* state = !depthTest_ ? depthOffState_.Get()
+                                         : depthWrite_ ? depthWriteState_.Get()
+                                                       : depthReadState_.Get();
+        context_->OMSetDepthStencilState(state, 0);
+    }
+
+    // Zu Beginn jeder Ansicht: Tiefe an, Alphatest und Lichter aus.
+    void resetPerViewState() {
+        depthTest_ = true;
+        depthWrite_ = true;
+        applyDepthState();
+        pixelConstants_.alphaTest = 0;
+        pixelConstants_.lightCount = 0;
+        uploadPixelConstants();
+        ID3D11Buffer* buffer = pixelConstantBuffer_.Get();
+        context_->PSSetConstantBuffers(1, 1, &buffer);
+    }
+
+    void uploadPixelConstants() {
+        if (!pixelConstantBuffer_) return;
+        D3D11_MAPPED_SUBRESOURCE mapped{};
+        if (SUCCEEDED(context_->Map(pixelConstantBuffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD,
+                                    0, &mapped))) {
+            std::memcpy(mapped.pData, &pixelConstants_, sizeof(pixelConstants_));
+            context_->Unmap(pixelConstantBuffer_.Get(), 0);
+        }
+    }
+
+    // Ein einziges Shaderpaar fuer alles: Farbe aus dem Eckpunkt mal Textur,
+    // dazu der Alphatest der Shaderstufe (alphaFunc) und die Lichter fuer den
+    // Raum (siehe renderer.h). Dasselbe steht in renderer_gl3.cpp.
     static const char* shaderSource() {
         return
             "cbuffer Constants : register(b0) { float4x4 mvp; };\n"
+            "cbuffer PixelConstants : register(b1) {\n"
+            "    int alphaTest; int lightCount; int pad0; int pad1;\n"
+            "    float4 lightPos[16]; float4 lightColour[16]; };\n"
             "struct VSIn  { float3 pos : POSITION; float2 uv : TEXCOORD0;"
             "               float4 col : COLOR0; };\n"
             "struct VSOut { float4 pos : SV_POSITION; float2 uv : TEXCOORD0;"
-            "               float4 col : COLOR0; };\n"
+            "               float4 col : COLOR0; float3 world : TEXCOORD1; };\n"
             "VSOut VSMain(VSIn input) {\n"
             "    VSOut output;\n"
             "    output.pos = mul(mvp, float4(input.pos, 1.0));\n"
             "    output.uv = input.uv;\n"
             "    output.col = input.col;\n"
+            "    output.world = input.pos;\n"
             "    return output;\n"
             "}\n"
             "Texture2D tex : register(t0);\n"
             "SamplerState smp : register(s0);\n"
             "float4 PSMain(VSOut input) : SV_Target {\n"
-            "    return input.col * tex.Sample(smp, input.uv);\n"
+            "    float4 c = input.col * tex.Sample(smp, input.uv);\n"
+            "    if (alphaTest == 1 && c.a <= 0.0) discard;\n"
+            "    if (alphaTest == 2 && c.a >= 0.5) discard;\n"
+            "    if (alphaTest == 3 && c.a < 0.5) discard;\n"
+            "    if (alphaTest == 4 && c.a < 0.75) discard;\n"
+            "    float3 lit = float3(0.0, 0.0, 0.0);\n"
+            "    for (int i = 0; i < lightCount; ++i) {\n"
+            "        float d = length(input.world - lightPos[i].xyz);\n"
+            "        float f = lightPos[i].w > 0.0 ? max(0.0, 1.0 - d / lightPos[i].w) : 0.0;\n"
+            "        lit += lightColour[i].rgb * f;\n"
+            "    }\n"
+            "    c.rgb += c.rgb * lit;\n"
+            "    return c;\n"
             "}\n";
     }
 
@@ -728,6 +843,8 @@ private:
         cb.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
         cb.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
         if (FAILED(device_->CreateBuffer(&cb, nullptr, &constants_))) return false;
+        cb.ByteWidth = sizeof(PixelConstants);
+        if (FAILED(device_->CreateBuffer(&cb, nullptr, &pixelConstantBuffer_))) return false;
 
         // Ein weisses Bildpunktfeld als Ersatztextur. Damit braucht der Shader
         // keinen zweiten Zweig fuer Flaechen ohne Textur.
@@ -783,6 +900,8 @@ private:
         if (FAILED(device_->CreateDepthStencilState(&dsd, &depthWriteState_))) return false;
         dsd.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
         if (FAILED(device_->CreateDepthStencilState(&dsd, &depthReadState_))) return false;
+        dsd.DepthEnable = FALSE;
+        if (FAILED(device_->CreateDepthStencilState(&dsd, &depthOffState_))) return false;
 
         // Zwei Rasterzustaende statt eines.
         //
@@ -918,8 +1037,26 @@ private:
     ComPtr<ID3D11SamplerState> clampSampler_;
     std::unordered_set<ID3D11ShaderResourceView*> clampTextures_;
     ComPtr<ID3D11BlendState> blendStates_[5];
+    std::map<int, ComPtr<ID3D11BlendState>> factorBlends_;
     ComPtr<ID3D11DepthStencilState> depthWriteState_;
     ComPtr<ID3D11DepthStencilState> depthReadState_;
+    ComPtr<ID3D11DepthStencilState> depthOffState_;
+    bool depthTest_ = true;
+    bool depthWrite_ = true;
+
+    // Konstanten des Bildpunktshaders (b1), genau in der Anordnung des HLSL-
+    // cbuffer: vier int, dann je 16 float4.
+    struct PixelConstants {
+        int alphaTest = 0;
+        int lightCount = 0;
+        int pad0 = 0;
+        int pad1 = 0;
+        float lightPos[kMaxLights][4]{};
+        float lightColour[kMaxLights][4]{};
+    };
+    static_assert(sizeof(PixelConstants) % 16 == 0, "cbuffer muss ein Vielfaches von 16 Byte sein");
+    PixelConstants pixelConstants_;
+    ComPtr<ID3D11Buffer> pixelConstantBuffer_;
     ComPtr<ID3D11RasterizerState> rasterStates_[4];
     Cull cull_ = Cull::None;
     Fill fill_ = Fill::Solid;

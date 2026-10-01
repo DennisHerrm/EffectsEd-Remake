@@ -67,6 +67,7 @@ namespace gl {
     X(GLint,  GetUniformLocation,(GLuint, const char*)) \
     X(void,   UniformMatrix4fv,(GLint, GLsizei, GLboolean, const GLfloat*)) \
     X(void,   Uniform1i,       (GLint, GLint)) \
+    X(void,   Uniform4fv,      (GLint, GLsizei, const GLfloat*)) \
     X(void,   GenFramebuffers, (GLsizei, GLuint*)) \
     X(void,   DeleteFramebuffers,(GLsizei, const GLuint*)) \
     X(void,   BindFramebuffer, (GLenum, GLuint)) \
@@ -293,6 +294,8 @@ public:
         gl::BindVertexArray(vao_);
         gl::Uniform1i(textureLocation_, 0);
         setBlend(Blend::Opaque);
+        setAlphaTest(0);
+        setLights(nullptr, 0);
     }
 
     void beginViewportPreserving() override {
@@ -312,6 +315,8 @@ public:
         gl::BindVertexArray(vao_);
         gl::Uniform1i(textureLocation_, 0);
         setBlend(Blend::Opaque);
+        setAlphaTest(0);
+        setLights(nullptr, 0);
     }
 
     void clearViewportRect(float r, float g, float b, float a) override {
@@ -371,6 +376,43 @@ public:
             glEnable(GL_BLEND);
             gl::BlendEquation(GL_FUNC_ADD);
             glBlendFunc(setups[index].src, setups[index].dst);
+        }
+    }
+
+    void setBlendFactors(BlendFactor src, BlendFactor dst) override {
+        // GL_ONE GL_ZERO heisst: keine Mischung (ParseStage tut dasselbe).
+        if (src == BlendFactor::One && dst == BlendFactor::Zero) {
+            glDisable(GL_BLEND);
+            return;
+        }
+        glEnable(GL_BLEND);
+        gl::BlendEquation(GL_FUNC_ADD);
+        glBlendFunc(factor(src), factor(dst));
+    }
+
+    void setDepthTest(bool enabled) override {
+        if (enabled) glEnable(GL_DEPTH_TEST);
+        else glDisable(GL_DEPTH_TEST);
+    }
+
+    void setAlphaTest(int mode) override { gl::Uniform1i(alphaTestLocation_, mode); }
+
+    void setLights(const Light* lights, int count) override {
+        if (count > kMaxLights) count = kMaxLights;
+        if (!lights || count < 0) count = 0;
+        float positions[kMaxLights * 4] = {};
+        float colours[kMaxLights * 4] = {};
+        for (int i = 0; i < count; ++i) {
+            for (int k = 0; k < 3; ++k) {
+                positions[i * 4 + k] = lights[i].pos[k];
+                colours[i * 4 + k] = lights[i].rgb[k];
+            }
+            positions[i * 4 + 3] = lights[i].radius;
+        }
+        gl::Uniform1i(lightCountLocation_, count);
+        if (count > 0) {
+            gl::Uniform4fv(lightPosLocation_, count, positions);
+            gl::Uniform4fv(lightColourLocation_, count, colours);
         }
     }
 
@@ -525,6 +567,23 @@ public:
     }
 
 private:
+    static GLenum factor(BlendFactor f) {
+        switch (f) {
+            case BlendFactor::Zero: return GL_ZERO;
+            case BlendFactor::One: return GL_ONE;
+            case BlendFactor::SrcColor: return GL_SRC_COLOR;
+            case BlendFactor::OneMinusSrcColor: return GL_ONE_MINUS_SRC_COLOR;
+            case BlendFactor::DstColor: return GL_DST_COLOR;
+            case BlendFactor::OneMinusDstColor: return GL_ONE_MINUS_DST_COLOR;
+            case BlendFactor::SrcAlpha: return GL_SRC_ALPHA;
+            case BlendFactor::OneMinusSrcAlpha: return GL_ONE_MINUS_SRC_ALPHA;
+            case BlendFactor::DstAlpha: return GL_DST_ALPHA;
+            case BlendFactor::OneMinusDstAlpha: return GL_ONE_MINUS_DST_ALPHA;
+            case BlendFactor::SrcAlphaSaturate: return GL_SRC_ALPHA_SATURATE;
+        }
+        return GL_ONE;
+    }
+
     void bindVertices(const Vertex* data, int count) {
         gl::BindBuffer(GL_ARRAY_BUFFER, vbo_);
         gl::BufferData(GL_ARRAY_BUFFER,
@@ -561,19 +620,40 @@ private:
             "uniform mat4 uMVP;\n"
             "out vec2 vUV;\n"
             "out vec4 vCol;\n"
+            "out vec3 vWorld;\n"
             "void main() {\n"
             "    vUV = aUV;\n"
             "    vCol = aCol;\n"
+            "    vWorld = aPos;\n"
             "    gl_Position = uMVP * vec4(aPos, 1.0);\n"
             "}\n";
+        // Lichter und Alphatest: siehe Light und setAlphaTest in renderer.h.
+        // Gleich im Direct3D-Renderer.
         const char* fragmentSource =
             "#version 330 core\n"
             "in vec2 vUV;\n"
             "in vec4 vCol;\n"
+            "in vec3 vWorld;\n"
             "uniform sampler2D uTexture;\n"
+            "uniform int uAlphaTest;\n"
+            "uniform int uLightCount;\n"
+            "uniform vec4 uLightPos[16];\n"
+            "uniform vec4 uLightColour[16];\n"
             "out vec4 fragColor;\n"
             "void main() {\n"
-            "    fragColor = vCol * texture(uTexture, vUV);\n"
+            "    vec4 c = vCol * texture(uTexture, vUV);\n"
+            "    if (uAlphaTest == 1 && c.a <= 0.0) discard;\n"
+            "    if (uAlphaTest == 2 && c.a >= 0.5) discard;\n"
+            "    if (uAlphaTest == 3 && c.a < 0.5) discard;\n"
+            "    if (uAlphaTest == 4 && c.a < 0.75) discard;\n"
+            "    vec3 lit = vec3(0.0);\n"
+            "    for (int i = 0; i < uLightCount; ++i) {\n"
+            "        float d = length(vWorld - uLightPos[i].xyz);\n"
+            "        float f = uLightPos[i].w > 0.0 ? max(0.0, 1.0 - d / uLightPos[i].w) : 0.0;\n"
+            "        lit += uLightColour[i].rgb * f;\n"
+            "    }\n"
+            "    c.rgb += c.rgb * lit;\n"
+            "    fragColor = c;\n"
             "}\n";
 
         const GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexSource);
@@ -598,6 +678,10 @@ private:
 
         mvpLocation_ = gl::GetUniformLocation(program_, "uMVP");
         textureLocation_ = gl::GetUniformLocation(program_, "uTexture");
+        alphaTestLocation_ = gl::GetUniformLocation(program_, "uAlphaTest");
+        lightCountLocation_ = gl::GetUniformLocation(program_, "uLightCount");
+        lightPosLocation_ = gl::GetUniformLocation(program_, "uLightPos");
+        lightColourLocation_ = gl::GetUniformLocation(program_, "uLightColour");
 
         gl::GenVertexArrays(1, &vao_);
         gl::GenBuffers(1, &vbo_);
@@ -654,6 +738,10 @@ private:
     GLuint ibo_ = 0;
     GLint mvpLocation_ = -1;
     GLint textureLocation_ = -1;
+    GLint alphaTestLocation_ = -1;
+    GLint lightCountLocation_ = -1;
+    GLint lightPosLocation_ = -1;
+    GLint lightColourLocation_ = -1;
     GLuint whiteTexture_ = 0;
 };
 

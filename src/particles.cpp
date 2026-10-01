@@ -1,7 +1,11 @@
 #include "efx/particles.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <tuple>
+
+#include "efx/assets.h"
 
 namespace efx::particles {
 namespace {
@@ -252,6 +256,7 @@ void System::play(const Effect& effect, unsigned seed,
     // Beim Anwender sah das so aus, als haette das Feuer die zehnfache
     // Dichte des Originals — und genau das war es auch.
     clear();
+    planes_ = planes;
     sim::Random random(seed);
     const PlayContext context{&loader, &planes, axis};
     playInto(effect, random, enabledMask, context, 0, 0.0f, {});
@@ -443,13 +448,24 @@ void System::playInto(const Effect& effect, sim::Random& random,
         item.type = p.type;
         item.primitiveIndex = spawn.primitiveIndex;
         item.useAlpha = (p.flags & kFlagUseAlpha) != 0;
+        item.flags = flags;
         item.spawnMs = spawn.timeMs;
 
-        // Lebensdauer. Ohne Angabe eine Zehntelsekunde — die Engine hat dort
-        // 50 ms stehen; ohne irgendeinen Wert waere die Primitive sofort
-        // wieder weg und man saehe nie etwas.
+        // Lebensdauer. Ohne Angabe 50 ms — mLife im Erzeuger von
+        // CPrimitiveTemplate.
         const float life = p.life.set ? random.pick(p.life) : 50.0f;
         item.deathMs = item.spawnMs + std::max(life, 1.0f);
+
+        // Ein Decal lebt nicht nach `life`, sondern als Abdruck: FxScheduler
+        // ruft CG_ImpactMark, und cg_marks.cpp haelt jeden Abdruck
+        // MARK_TOTAL_TIME = 10000 ms (CG_AddMarks). 38 von 41 Decals der
+        // ausgelieferten Dateien haben gar kein `life` — bei uns blitzten sie
+        // 50 ms auf, im Spiel bleibt die Brandspur zehn Sekunden.
+        constexpr float kMarkTotalMs = 10000.0f;
+        if (p.type == PrimitiveType::Decal) item.deathMs = item.spawnMs + kMarkTotalMs;
+
+        // CElectricity::Initialize: mRefEnt.frame = Q_flrand(0,1) * 1265536.
+        item.boltSeed = static_cast<int>(random.next() * 1265536.0f);
 
         // Die Achsen dieses Teilchens. Sie koennen von denen des Effekts
         // abweichen — `randRotAroundFwd` dreht sie, `axisFromSphere`
@@ -530,9 +546,65 @@ void System::playInto(const Effect& effect, sim::Random& random,
         item.origin2 = (p.spawnFlags & kSpawnCheapOrg2Calc) != 0
                            ? raw2
                            : alongOwn(raw2) + atPosition;
-        item.velocity = alongOwn(pickVec3(p.velocity, random));
-        item.acceleration = alongOwn(pickVec3(p.acceleration, random));
-        item.gravity = p.gravity.set ? random.pick(p.gravity) : 0.0f;
+
+        // `org2fromTrace` (nur Line und Electricity): der Endpunkt ist, wo ein
+        // Strahl vom Ursprung entlang der Vorwaertsachse auftrifft.
+        // FxScheduler.cpp, "Line type primitives work with an origin2":
+        //
+        //     VectorMA( org, FX_MAX_TRACE_DIST, ax[0], temp );
+        //     if ( FX_ORG2_IS_OFFSET ) temp += org2 (roh oder ueber die Achsen);
+        //     Trace( &tr, org, ..., temp, ... );
+        //     org2 = tr.startsolid ? org : tr.endpos;
+        //     if ( FX_TRACE_IMPACT_FX ) PlayEffect( impactFx, org2, tr.plane.normal );
+        //
+        // Getroffen werden hier die Waende des Testraums. Das Flag stand nur in
+        // der Eigenschaftsseite; der Endpunkt war das rohe origin2 — meist
+        // null, also eine Linie der Laenge null (33 Primitive im Grundspiel).
+        bool traceHit = false;
+        camera::Vec3 traceNormal{0.0f, 0.0f, 1.0f};
+        if ((p.type == PrimitiveType::Line || p.type == PrimitiveType::Electricity) &&
+            (p.spawnFlags & kSpawnOrg2FromTrace) != 0) {
+            // FX_MAX_TRACE_DIST = WORLD_SIZE = 2 * 64 * 1024 (q_shared.h).
+            constexpr float kMaxTraceDist = 131072.0f;
+            camera::Vec3 far = item.origin + own.forward * kMaxTraceDist;
+            if ((p.spawnFlags & kSpawnOrg2IsOffset) != 0) {
+                far = far + ((p.spawnFlags & kSpawnCheapOrg2Calc) != 0 ? raw2
+                                                                       : alongOwn(raw2));
+            }
+            const sim::Hit hit = sim::trace(item.origin, far, planes);
+            item.origin2 = hit.hit ? hit.point : far;
+            traceHit = hit.hit;
+            if (hit.hit) traceNormal = hit.normal;
+        }
+        // Bewegung. Zwei Regeln aus CFxScheduler::CreateEffect (FxScheduler.cpp,
+        // "There are only a few types that really use velocity and
+        // acceleration"):
+        //
+        //   1. Nur Particle, OrientedParticle, Tail und Emitter bewegen sich.
+        //      Line, Electricity, Cylinder, Decal, Light usw. bekommen weder
+        //      Geschwindigkeit noch Beschleunigung noch Schwerkraft — eine
+        //      Linie mit `velocity` steht im Spiel still. Bei uns wanderte sie.
+        //   2. `absoluteVel` / `absoluteAccel`: der Vektor gilt in
+        //      WELTkoordinaten (`VectorSet( vel, mVelX, mVelY, mVelZ )`), sonst
+        //      ueber die Achsen gedreht. Die Flags standen nur in der
+        //      Eigenschaftsseite; ein aufsteigender Rauch mit `0 0 100` und
+        //      absoluteVel flog bei uns seitwaerts.
+        //
+        // Die Schwerkraft wirkt immer in Welt-z — sie steht im selben Block.
+        const bool moves = p.type == PrimitiveType::Particle ||
+                           p.type == PrimitiveType::OrientedParticle ||
+                           p.type == PrimitiveType::Tail ||
+                           p.type == PrimitiveType::Emitter;
+        if (moves) {
+            const camera::Vec3 rawVel = pickVec3(p.velocity, random);
+            const camera::Vec3 rawAccel = pickVec3(p.acceleration, random);
+            item.velocity = (p.spawnFlags & kSpawnVelIsAbsolute) != 0 ? rawVel
+                                                                      : alongOwn(rawVel);
+            item.acceleration = (p.spawnFlags & kSpawnAccelIsAbsolute) != 0
+                                    ? rawAccel
+                                    : alongOwn(rawAccel);
+            item.gravity = p.gravity.set ? random.pick(p.gravity) : 0.0f;
+        }
 
         item.size = makeCurve(p.size, random);
         item.size2 = makeCurve(p.size2, random);
@@ -624,7 +696,12 @@ void System::playInto(const Effect& effect, sim::Random& random,
         // oder gar nichts; die Engine liest ueberall `mElasticity.GetVal()`.
         //
         // Das ist keine Schoenheit, aber es ist, was dasteht.
-        item.chaos = p.elasticity.set ? random.pick(p.elasticity) : 1.0f;
+        //
+        // Ohne Angabe 0, nicht 1: mElasticity steht NICHT im Erzeuger von
+        // CPrimitiveTemplate (FxTemplate.cpp), bleibt also beim CFxRange()-
+        // Anfangswert 0 — ein Blitz ohne `bounce` ist gerade, bis auf das
+        // Mikrozittern von ApplyShape.
+        item.chaos = p.elasticity.set ? random.pick(p.elasticity) : 0.0f;
 
         // Die Kameraerschuetterung holt sich ihre Werte aus denselben Feldern
         // — `elasticity` als Staerke, `radius` als Reichweite.
@@ -638,12 +715,6 @@ void System::playInto(const Effect& effect, sim::Random& random,
         item.rotation = p.rotation.set ? random.pick(p.rotation) : 0.0f;
         item.rotationDelta = p.rotationDelta.set ? random.pick(p.rotationDelta) : 0.0f;
 
-        // Je Kurve ein Zufallswert, einmal gezogen. Bei jedem Bild neu zu
-        // wuerfeln ergaebe Flimmern statt einer gedaempften Kurve.
-        item.randomSize = random.next();
-        item.randomAlpha = random.next();
-        item.randomRgb = random.next();
-        item.randomLength = random.next();
 
         // Untergeordnete Effekte starten mit dem Versatz ihres Erzeugers.
         //
@@ -721,11 +792,18 @@ void System::playInto(const Effect& effect, sim::Random& random,
             return names[std::min(at, names.size() - 1)];
         };
 
+        // Die Achse eines Kindeffekts ist die dieser Primitive (`own`, nach
+        // randRotAroundFwd und axisFromSphere) — FxScheduler.cpp:
+        // `PlayEffect( fx->mPlayFxHandles.GetHandle(), org, ax );` mit dem
+        // veraenderten ax. Vorher bekam das Kind die Achse des Elternteils.
+        PlayContext ownContext = context;
+        ownContext.axis = own;
+
         if (p.type == PrimitiveType::FxRunner) {
             if (!p.playFx.empty() && loader) {
                 if (const Effect* child = loader(pickEffect(p.playFx))) {
                     ++startedEffects_;
-                    playInto(*child, random, {}, context, depth + 1, item.spawnMs,
+                    playInto(*child, random, {}, ownContext, depth + 1, item.spawnMs,
                              item.origin);
                 } else {
                     ++missingEffects_;
@@ -771,7 +849,7 @@ void System::playInto(const Effect& effect, sim::Random& random,
                     for (float t = item.spawnMs; t < item.deathMs; t += kStepMs) {
                         const camera::Vec3 at = item.positionAt(t);
                         if (camera::length(at - last) >= std::fabs(step)) {
-                            playInto(*child, random, {}, context, depth + 1, t, at);
+                            playInto(*child, random, {}, ownContext, depth + 1, t, at);
                             ++startedEffects_;
                             last = at;
                             step = density + random.range(-1.0f, 1.0f) * variance;
@@ -807,16 +885,11 @@ void System::playInto(const Effect& effect, sim::Random& random,
                 const size_t count =
                     std::min(item.path.impactMs.size(), kMaxImpactEffects);
                 for (size_t k = 0; k < count; ++k) {
-                    Axis impactAxis;
-                    impactAxis.forward = camera::normalise(item.path.impactNormal[k]);
-                    camera::Vec3 side =
-                        camera::cross(impactAxis.forward, {0.0f, 0.0f, 1.0f});
-                    if (camera::length(side) < 1e-4f) {
-                        side = camera::cross(impactAxis.forward, {0.0f, 1.0f, 0.0f});
-                    }
-                    impactAxis.right = camera::normalise(side);
-                    impactAxis.up = camera::normalise(
-                        camera::cross(impactAxis.forward, impactAxis.right));
+                    // PlayEffect( id, org, forward ) baut die Achsen mit
+                    // MakeNormalVectors (FxScheduler.cpp) — dieselbe Rechnung
+                    // wie axisFromDirection. Wir hatten cross(forward, z)
+                    // genommen: der Kindeffekt lag um die Normale verdreht.
+                    const Axis impactAxis = axisFromDirection(item.path.impactNormal[k]);
 
                     ++startedEffects_;
                     PlayContext impactContext = context;
@@ -838,45 +911,54 @@ void System::playInto(const Effect& effect, sim::Random& random,
         //      ParseDeathFxStrings selbst, sobald die Liste da ist (SP und
         //      MP). Hier stand "ein gesetztes deathfx allein tut nichts";
         //      das galt fuer unsere Vorschau, nicht fuer das Spiel.
-        //   2. Bei FX_KILL_ON_IMPACT wird es beim natuerlichen Tod NICHT
-        //      ausgeloest — dann gehoert es zum Aufschlag.
+        //   2. Bei FX_KILL_ON_IMPACT wird es nur beim TOD DURCH AUFPRALL nicht
+        //      ausgeloest. Laeuft die Lebensdauer ab, loescht FxUtil.cpp das
+        //      Flag vorher ("this flag just has to be cleared otherwise death
+        //      effects might not happen correctly"):
+        //          ef->mEffect->ClearFlags( FX_KILL_ON_IMPACT ); FX_FreeMember( ef );
+        //      Wir hatten deathfx mit killOnImpact ganz abgeschaltet.
         //   3. Die Achse ist eine ZUFAELLIGE Richtung, nicht die Flugrichtung.
         //      Ravens Kommentar daneben: "Man, this just seems so, like,
         //      uncool and stuff..."
         //
         // Der dritte Punkt ist der ueberraschendste: ein Todeseffekt zeigt in
         // eine beliebige Richtung, egal wohin die Primitive flog.
+        const bool killedByImpact = item.hasPath && item.path.killed;
         if (!p.deathFx.empty() && loader &&
-            (flags & kFlagDeathRunsFx) != 0 &&
-            (flags & kFlagKillOnImpact) == 0) {
+            (flags & kFlagDeathRunsFx) != 0 && !killedByImpact) {
             if (const Effect* child = loader(pickEffect(p.deathFx))) {
                 ++startedEffects_;
 
-                // Die zufaellige Achse. Sie wird gezogen, auch wenn sie hier
-                // nicht in die Bahn eingeht — so bleibt die Zufallsfolge
-                // dieselbe wie in der Engine.
+                // Die zufaellige Achse, wie in CParticle::Die; die beiden
+                // anderen baut PlayEffect mit MakeNormalVectors
+                // (axisFromDirection).
                 Axis deathAxis;
                 camera::Vec3 norm{random.range(-1.0f, 1.0f),
                                   random.range(-1.0f, 1.0f),
                                   random.range(-1.0f, 1.0f)};
-                if (camera::length(norm) > 1e-4f) {
-                    deathAxis.forward = camera::normalise(norm);
-                    // Zwei Achsen dazu, damit sie senkrecht aufeinander
-                    // stehen — sonst verzerrt sich der Kindeffekt.
-                    camera::Vec3 side =
-                        camera::cross(deathAxis.forward, {0.0f, 0.0f, 1.0f});
-                    if (camera::length(side) < 1e-4f) {
-                        side = camera::cross(deathAxis.forward, {0.0f, 1.0f, 0.0f});
-                    }
-                    deathAxis.right = camera::normalise(side);
-                    deathAxis.up = camera::normalise(
-                        camera::cross(deathAxis.forward, deathAxis.right));
-                }
+                if (camera::length(norm) > 1e-4f) deathAxis = axisFromDirection(norm);
 
                 PlayContext deathContext = context;
                 deathContext.axis = deathAxis;
                 playInto(*child, random, {}, deathContext, depth + 1, item.deathMs,
                          item.positionAt(item.deathMs));
+            } else {
+                ++missingEffects_;
+            }
+        }
+
+        // `traceImpactFx`: am Treffpunkt des Endpunktstrahls den
+        // Einschlageffekt starten, ausgerichtet an der Flaechennormale
+        // (FxScheduler.cpp, siehe org2fromTrace oben). Ohne Treffer gibt es
+        // keine Flaeche und keine Normale — dann nichts.
+        if (traceHit && (p.spawnFlags & kSpawnTraceImpactFx) != 0 &&
+            !p.impactFx.empty() && loader) {
+            if (const Effect* child = loader(pickEffect(p.impactFx))) {
+                ++startedEffects_;
+                PlayContext traceContext = context;
+                traceContext.axis = axisFromDirection(traceNormal);
+                playInto(*child, random, {}, traceContext, depth + 1, item.spawnMs,
+                         item.origin2);
             } else {
                 ++missingEffects_;
             }
@@ -894,13 +976,60 @@ int System::aliveAt(float nowMs) const {
     return count;
 }
 
+namespace {
+
+// --- Zufall ------------------------------------------------------------------
+
+// Ein guter Mischer fuer 32 Bit (Ausgang wie bei "lowbias32").
+uint32_t mix32(uint32_t x) {
+    x ^= x >> 16;
+    x *= 0x7feb352du;
+    x ^= x >> 15;
+    x *= 0x846ca68bu;
+    x ^= x >> 16;
+    return x;
+}
+
+float unitFloat(uint32_t x) { return static_cast<float>(x >> 8) * (1.0f / 16777216.0f); }
+
+// Q_rand / Q_random / Q_crandom aus q_math.cpp — ein LCG auf einem int:
+//
+//     *seed = (69069 * *seed + 1);
+//     Q_random  = ( Q_rand( seed ) & 0xffff ) / (float)0x10000;
+//     Q_crandom = 2.0 * ( Q_random( seed ) - 0.5 );
+//
+// In vorzeichenlosen Zahlen gerechnet: der Ueberlauf eines int waere in C++
+// undefiniert, die unteren Bits sind dieselben.
+float qRandom(int& seed) {
+    seed = static_cast<int>(69069u * static_cast<uint32_t>(seed) + 1u);
+    return static_cast<float>(static_cast<uint32_t>(seed) & 0xffffu) / 65536.0f;
+}
+float qCRandom(int& seed) { return 2.0f * (qRandom(seed) - 0.5f); }
+
+}  // namespace
+
+float Live::randomAt(RandomChannel channel, float nowMs) const {
+    // Ein Bild alle 1/60 Sekunde. Gleicher Zeitpunkt, gleicher Wert — eine
+    // angehaltene Vorschau flackert nicht, eine laufende schon.
+    const auto tick = static_cast<uint32_t>(static_cast<int64_t>(std::floor(nowMs * 0.06f)));
+    uint32_t h = mix32(seed * 0x9E3779B9u + static_cast<uint32_t>(channel) * 0x85EBCA6Bu);
+    h = mix32(h ^ (tick * 0xC2B2AE35u + 0x27D4EB2Fu));
+    return unitFloat(h);
+}
+
 // Gibt zurueck, ob das Viereck Platz hatte. Der Aufrufer zaehlt die
 // Weggelassenen, damit die Grenze nicht STILL zuschlaegt.
+//
+// `halfSize` ist der Radius der Primitive: RB_SurfaceSprite spannt das Viereck
+// mit `left = viewaxis[1] * radius`, `up = viewaxis[2] * radius` auf, und
+// CParticle::UpdateSize schreibt `mRefEnt.radius = size`. Ein negativer Wert
+// (eine Welle unter null) ergibt in der Engine dasselbe Viereck gespiegelt —
+// deshalb wird nur bei genau null nichts gezeichnet.
 bool addBillboard(scene::Mesh& mesh, const camera::Vec3& centre,
                   const camera::Vec3& right, const camera::Vec3& up, float halfSize,
                   float rotationDegrees, uint32_t colour,
                   const std::vector<shader::TexMod>* texMods, float seconds) {
-    if (halfSize <= 0.0f) return true;
+    if (halfSize == 0.0f) return true;
 
     // Um die Blickachse drehen: die beiden Spannachsen werden gedreht, nicht
     // die Ecken einzeln. Damit bleibt das Viereck quadratisch.
@@ -928,21 +1057,11 @@ bool addBillboard(scene::Mesh& mesh, const camera::Vec3& centre,
     };
     float uvs[4][2] = {{0, 1}, {1, 1}, {1, 0}, {0, 0}};
 
-    // `tcMod` anwenden, falls der Shader welche hat. Je Eckpunkt, weil
-    // `rotate` und `scale` von der Koordinate abhaengen — ein gemeinsamer
-    // Versatz genuegt nur bei `scroll`.
+    // `tcMod` anwenden, falls welche uebergeben wurden. Je Eckpunkt, weil
+    // `rotate` und `scale` von der Koordinate abhaengen und `turb` von der
+    // Lage des Eckpunkts.
     if (texMods && !texMods->empty()) {
         for (int i = 0; i < 4; ++i) {
-            // Die Lage des Eckpunkts MIT uebergeben: `tcMod turb` braucht
-            // sie, alle anderen Regeln sehen sie nicht an.
-            //
-            //     st[0] += sin( ((xyz[0]+xyz[2]) * 1/128 * 0.125 + now) ) * amp;
-            //
-            // Ohne die Position waere `turb` eine gleichmaessige Verschiebung
-            // statt einer Verzerrung — es saehe aus wie ein langsames
-            // `scroll` und nicht wie das Flimmern, das gemeint ist. Genau so
-            // war es: die Regel war umgesetzt und geprueft, aber der Aufrufer
-            // gab nichts weiter, und der Zweig lief nie.
             const float at[3] = {corners[i].x, corners[i].y, corners[i].z};
             const shader::TexCoord moved =
                 shader::applyTexMods(*texMods, {uvs[i][0], uvs[i][1]}, seconds, at);
@@ -971,34 +1090,80 @@ bool addBillboard(scene::Mesh& mesh, const camera::Vec3& centre,
 }
 
 namespace {
-void addLine(scene::LineSet& lines, const camera::Vec3& from,
-             const camera::Vec3& to, uint32_t colour) {
-    scene::Vertex a{};
-    a.pos[0] = from.x; a.pos[1] = from.y; a.pos[2] = from.z;
-    a.colour = colour;
-    scene::Vertex b{};
-    b.pos[0] = to.x; b.pos[1] = to.y; b.pos[2] = to.z;
-    b.colour = colour;
-    lines.vertices.push_back(a);
-    lines.vertices.push_back(b);
+
+void pushVertex(scene::Mesh& mesh, const camera::Vec3& p, float u, float v,
+                uint32_t colour) {
+    scene::Vertex vertex{};
+    vertex.pos[0] = p.x;
+    vertex.pos[1] = p.y;
+    vertex.pos[2] = p.z;
+    vertex.uv[0] = u;
+    vertex.uv[1] = v;
+    vertex.colour = colour;
+    mesh.vertices.push_back(vertex);
 }
+
+// DoLine2 aus tr_surface.cpp: ein Band mit zwei Breiten und frei waehlbarem
+// t an den beiden Enden. DoLine ist der Sonderfall gleicher Breite, t 0..1.
+//
+//     start + w*up (0,tcStart)   start - w*up (1,tcStart)
+//     end + w2*up  (0,tcEnd)     end - w2*up  (1,tcEnd)
+//     Dreiecke 0,1,2 und 2,1,3
+bool addBand(scene::Mesh& mesh, const camera::Vec3& start, const camera::Vec3& end,
+             const camera::Vec3& side, float startWidth, float endWidth,
+             float tcStart, float tcEnd, uint32_t colour) {
+    if (!hasRoomForQuad(mesh)) return false;
+    const auto base = static_cast<uint16_t>(mesh.vertices.size());
+    pushVertex(mesh, start + side * startWidth, 0.0f, tcStart, colour);
+    pushVertex(mesh, start - side * startWidth, 1.0f, tcStart, colour);
+    pushVertex(mesh, end + side * endWidth, 0.0f, tcEnd, colour);
+    pushVertex(mesh, end - side * endWidth, 1.0f, tcEnd, colour);
+    for (uint16_t offset : {uint16_t{0}, uint16_t{1}, uint16_t{2},
+                            uint16_t{2}, uint16_t{1}, uint16_t{3}}) {
+        mesh.indices.push_back(static_cast<uint16_t>(base + offset));
+    }
+    return true;
+}
+
 }  // namespace
+
+camera::Vec3 lineSide(const camera::Vec3& start, const camera::Vec3& end,
+                      const camera::Vec3& eye) {
+    // RB_SurfaceLine:
+    //     VectorSubtract( start, viewParms.ori.origin, v1 );
+    //     VectorSubtract( end, viewParms.ori.origin, v2 );
+    //     CrossProduct( v1, v2, right );  VectorNormalize( right );
+    return camera::normalise(camera::cross(start - eye, end - eye));
+}
+
+bool addLineQuad(scene::Mesh& mesh, const camera::Vec3& start,
+                 const camera::Vec3& end, const camera::Vec3& side, float halfWidth,
+                 uint32_t colour) {
+    // DoLine( start, end, right, e->radius ): die halbe Breite IST der Radius.
+    return addBand(mesh, start, end, side, halfWidth, halfWidth, 0.0f, 1.0f, colour);
+}
 
 bool addOrientedQuad(scene::Mesh& mesh, const camera::Vec3& centre,
                      const camera::Vec3& normal, float halfSize,
                      float rotationDegrees, uint32_t colour) {
-    if (halfSize <= 0.0f) return true;
+    if (halfSize == 0.0f) return true;
     camera::Vec3 forward = camera::normalise(normal);
     if (camera::length(forward) < 1e-5f) forward = {0.0f, 0.0f, 1.0f};
 
-    // Zwei Achsen senkrecht zur Normalen. Die Wahl der ersten ist beliebig,
-    // solange sie nicht parallel zur Normalen liegt — deshalb die Ausweiche.
-    camera::Vec3 axisX = camera::cross(forward, {0.0f, 0.0f, 1.0f});
-    if (camera::length(axisX) < 1e-5f) axisX = camera::cross(forward, {0.0f, 1.0f, 0.0f});
-    axisX = camera::normalise(axisX);
-    camera::Vec3 axisY = camera::normalise(camera::cross(forward, axisX));
+    // RB_SurfaceOrientedQuad: `MakeNormalVectors( axis[0], left, up )` —
+    // dieselbe Rechnung wie axisFromDirection. RB_AddQuadStamp legt dann
+    // (0,0) auf origin + left + up. In unserer Eckenfolge (axisX nach
+    // "rechts") ist axisX = -left.
+    //
+    // Hier stand `cross(normal, z)` als erste Achse. Fuer eine nach oben
+    // zeigende Normale kommt dasselbe heraus, fuer jede andere nicht: an einer
+    // Wand stand die Textur auf dem Kopf (um 180 Grad gedreht).
+    const Axis basis = axisFromDirection(forward);
+    camera::Vec3 axisX = basis.right * -1.0f;
+    camera::Vec3 axisY = basis.up;
 
     if (rotationDegrees != 0.0f) {
+        // tempLeft = c*left - s*up; up = c*up + s*left — mit axisX = -left:
         const float r = rotationDegrees * kPi / 180.0f;
         const float c = std::cos(r), s = std::sin(r);
         const camera::Vec3 rotatedX = axisX * c + axisY * s;
@@ -1008,21 +1173,12 @@ bool addOrientedQuad(scene::Mesh& mesh, const camera::Vec3& centre,
     axisX = axisX * halfSize;
     axisY = axisY * halfSize;
 
-    // Die Indizes sind 16 Bit. Ueber 65535 Eckpunkten laeuft der Zaehler
-    // still ueber und zeigt auf FREMDE Eckpunkte — das Bild wird zu Fetzen,
-    // ohne dass irgendwo etwas gemeldet wird.
     if (!hasRoomForQuad(mesh)) return false;
     const auto base = static_cast<uint16_t>(mesh.vertices.size());
     const camera::Vec3 corners[4] = {centre - axisX - axisY, centre + axisX - axisY,
                                      centre + axisX + axisY, centre - axisX + axisY};
     const float uvs[4][2] = {{0, 1}, {1, 1}, {1, 0}, {0, 0}};
-    for (int i = 0; i < 4; ++i) {
-        scene::Vertex v{};
-        v.pos[0] = corners[i].x; v.pos[1] = corners[i].y; v.pos[2] = corners[i].z;
-        v.uv[0] = uvs[i][0]; v.uv[1] = uvs[i][1];
-        v.colour = colour;
-        mesh.vertices.push_back(v);
-    }
+    for (int i = 0; i < 4; ++i) pushVertex(mesh, corners[i], uvs[i][0], uvs[i][1], colour);
     for (uint16_t offset : {uint16_t{0}, uint16_t{1}, uint16_t{2},
                             uint16_t{0}, uint16_t{2}, uint16_t{3}}) {
         mesh.indices.push_back(static_cast<uint16_t>(base + offset));
@@ -1030,176 +1186,511 @@ bool addOrientedQuad(scene::Mesh& mesh, const camera::Vec3& centre,
     return true;
 }
 
-bool addCylinder(scene::Mesh& mesh, const camera::Vec3& base,
-                 const camera::Vec3& axis, float length, float radius,
-                 float radius2, uint32_t colour, int segments) {
-    if (length <= 0.0f || segments < 3) return true;
-    if (radius <= 0.0f && radius2 <= 0.0f) return true;
+int cylinderSegments(float distanceToEye, float fovXDegrees) {
+    // RB_SurfaceCylinder:
+    //     length *= (viewParms.fovX / 90.0f);
+    //     detail = 1 - ((float) length / 2048 );
+    //     segments = NUM_CYLINDER_SEGMENTS * detail;   // 40
+    //     if ( segments < 8 ) segments = 8;  if ( segments > 40 ) segments = 40;
+    const float length = distanceToEye * (fovXDegrees / 90.0f);
+    const float detail = 1.0f - length / 2048.0f;
+    int segments = static_cast<int>(40.0f * detail);
+    if (segments < 8) segments = 8;
+    if (segments > 40) segments = 40;
+    return segments;
+}
 
-    // Dieselbe Grenze wie bei den Vierecken (hasRoomForQuad), aber fuer den
-    // GANZEN Mantel: vier Eckpunkte je Abschnitt, 16 Abschnitte sind 64
-    // Eckpunkte. Ohne diese Pruefung liefen die 16-Bit-Indizes ab etwa 1024
-    // Zylindern mit demselben Shader still ueber — `count 2000` ergab ein
-    // Netz mit 128000 Eckpunkten, dessen Indizes auf fremde Ecken zeigten.
-    // Ganz oder gar nicht: ein halber Zylinder waere schlimmer als keiner.
-    if (mesh.vertices.size() + static_cast<size_t>(segments) * 4u > 65535u) {
-        return false;
+bool addCylinder(scene::Mesh& mesh, const camera::Vec3& base,
+                 const camera::Vec3& axis, float length, float baseRadius,
+                 float topRadius, uint32_t colour, int segments) {
+    if (length == 0.0f || segments < 3) return true;
+    if (baseRadius <= 0.0f && topRadius <= 0.0f) return true;
+
+    camera::Vec3 forward = camera::normalise(axis);
+    if (camera::length(forward) < 1e-5f) forward = {0.0f, 0.0f, 1.0f};
+    const camera::Vec3 top = base + forward * length;
+
+    // MakeNormalVectors( e->axis[0], vr, vu ); die Ringpunkte sind vu,
+    // um die Achse gedreht (RotatePointAroundVector) — vu*cos + vr*sin, weil
+    // axis x vu = vr.
+    const Axis basis = axisFromDirection(forward);
+    const auto ring = [&](float radius, int i) {
+        const float a = static_cast<float>(i) * 2.0f * kPi / static_cast<float>(segments);
+        return (basis.up * std::cos(a) + basis.right * std::sin(a)) * radius;
+    };
+    const float detail = 1.0f / static_cast<float>(segments);
+
+    // Ein Ende spitz genug: RB_SurfaceCone.
+    //     if ( !( radius < 0.3 && backlerp < 0.3 ) && ( radius < 0.3 || backlerp < 0.3 ))
+    // `radius` ist size (oben), `backlerp` size2 (am Ursprung).
+    const bool baseThin = baseRadius < 0.3f;
+    const bool topThin = topRadius < 0.3f;
+    if (baseThin != topThin) {
+        const size_t needed = 2u * static_cast<size_t>(segments + 1);
+        if (mesh.vertices.size() + needed > 65535u) return false;
+        // Nur um den groesseren Radius drehen; das andere Ende ist ein Punkt.
+        camera::Vec3 ringCentre = top, tapered = base;
+        float radius = topRadius;
+        if (topRadius < baseRadius) {
+            ringCentre = base;
+            tapered = top;
+            radius = baseRadius;
+        }
+        auto vbase = static_cast<uint16_t>(mesh.vertices.size());
+        for (int i = 0; i <= segments; ++i) {
+            const int k = i == segments ? 0 : i;
+            pushVertex(mesh, ringCentre + ring(radius, k), detail * static_cast<float>(i),
+                       1.0f, colour);
+            pushVertex(mesh, tapered, detail * static_cast<float>(i) + detail * 0.5f, 0.0f,
+                       colour);
+        }
+        for (int i = 0; i < segments; ++i) {
+            mesh.indices.push_back(vbase);
+            mesh.indices.push_back(static_cast<uint16_t>(vbase + 1));
+            mesh.indices.push_back(static_cast<uint16_t>(vbase + 2));
+            vbase = static_cast<uint16_t>(vbase + 2);
+        }
+        return true;
     }
 
-    camera::Vec3 up = camera::normalise(axis);
-    if (camera::length(up) < 1e-5f) up = {0.0f, 0.0f, 1.0f};
-    camera::Vec3 right = camera::cross(up, {0.0f, 0.0f, 1.0f});
-    if (camera::length(right) < 1e-5f) right = camera::cross(up, {0.0f, 1.0f, 0.0f});
-    right = camera::normalise(right);
-    const camera::Vec3 forward = camera::normalise(camera::cross(up, right));
+    // Dieselbe Grenze wie bei den Vierecken (hasRoomForQuad), aber fuer den
+    // GANZEN Mantel. Ganz oder gar nicht: ein halber Zylinder waere
+    // schlimmer als keiner.
+    const size_t needed = 2u * static_cast<size_t>(segments + 1);
+    if (mesh.vertices.size() + needed > 65535u) return false;
 
-    const camera::Vec3 top = base + up * length;
+    // Oberer Ring (size2) am URSPRUNG mit t = 1, unterer (size) am fernen Ende
+    // mit t = 0 — die Namen "upper/lower" sind Ravens, die Lage ist es auch.
+    // Der letzte Punkt wird mit s = 1 wiederholt, damit die Textur einmal
+    // ganz herumlaeuft.
+    auto vbase = static_cast<uint16_t>(mesh.vertices.size());
+    for (int i = 0; i <= segments; ++i) {
+        const int k = i == segments ? 0 : i;
+        const float s = detail * static_cast<float>(i);
+        pushVertex(mesh, base + ring(baseRadius, k), s, 1.0f, colour);
+        pushVertex(mesh, top + ring(topRadius, k), s, 0.0f, colour);
+    }
     for (int i = 0; i < segments; ++i) {
-        const float a0 = static_cast<float>(i) / segments * 2.0f * kPi;
-        const float a1 = static_cast<float>(i + 1) / segments * 2.0f * kPi;
-        auto ring = [&](float angle, float r) {
-            return right * (std::cos(angle) * r) + forward * (std::sin(angle) * r);
-        };
-
-        const auto start = static_cast<uint16_t>(mesh.vertices.size());
-        const camera::Vec3 corners[4] = {
-            base + ring(a0, radius), base + ring(a1, radius),
-            top + ring(a1, radius2), top + ring(a0, radius2)};
-        // Die Textur laeuft einmal um den Mantel — so macht es FX_AddCylinder.
-        const float u0 = static_cast<float>(i) / segments;
-        const float u1 = static_cast<float>(i + 1) / segments;
-        const float uvs[4][2] = {{u0, 1}, {u1, 1}, {u1, 0}, {u0, 0}};
-        for (int k = 0; k < 4; ++k) {
-            scene::Vertex v{};
-            v.pos[0] = corners[k].x; v.pos[1] = corners[k].y; v.pos[2] = corners[k].z;
-            v.uv[0] = uvs[k][0]; v.uv[1] = uvs[k][1];
-            v.colour = colour;
-            mesh.vertices.push_back(v);
-        }
         for (uint16_t offset : {uint16_t{0}, uint16_t{1}, uint16_t{2},
-                                uint16_t{0}, uint16_t{2}, uint16_t{3}}) {
-            mesh.indices.push_back(static_cast<uint16_t>(start + offset));
+                                uint16_t{2}, uint16_t{1}, uint16_t{3}}) {
+            mesh.indices.push_back(static_cast<uint16_t>(vbase + offset));
         }
+        vbase = static_cast<uint16_t>(vbase + 2);
     }
     return true;
 }
 
-void addLightning(scene::LineSet& lines, const camera::Vec3& from,
-                  const camera::Vec3& to, float chaos, unsigned seed,
-                  uint32_t colour) {
-    camera::Vec3 forward = to - from;
-    float distance = camera::length(forward);
-    if (distance < 1e-3f) return;
-    forward = forward * (1.0f / distance);
+namespace {
 
-    // Bei mehr als 2000 Einheiten deckelt die Engine:
-    //
-    //     if (dis > 2000)  // freaky long
-    //     {
-    //         dis = 2000;
-    //     }
-    //
-    // Das ist keine reine Vorsichtsmassnahme: `dis` geht in `perc` ein, der
-    // Blitz erreicht sein Ende also schon nach 2000 Einheiten und wird danach
-    // nicht weiter gezackt. Ohne den Deckel bekaeme ein sehr langer Blitz bei
-    // uns Hunderte zusaetzliche Knicke — und saehe damit anders aus als im
-    // Spiel, nicht nur feiner.
-    constexpr float kLongestBolt = 2000.0f;
-    if (distance > kLongestBolt) distance = kLongestBolt;
+// Der Blitz aus tr_surface.cpp (SP), Funktion fuer Funktion.
+class BoltBuilder {
+public:
+    BoltBuilder(scene::Mesh& mesh, const camera::Vec3& side, const camera::Vec3& end,
+                const BoltShape& shape, int boltSeed, unsigned jitterSeed, uint32_t colour)
+        : mesh_(mesh), side_(side), end_(end), shape_(shape), frame_(boltSeed),
+          jitter_(jitterSeed), colour_(colour) {}
 
-    // Die Querachsen kommen aus `MakeNormalVectors`, nicht aus einem Kreuz mit
-    // der Hochachse:
-    //
-    //     MakeNormalVectors( fwd, rt, up );
-    //
-    // Das ist eine andere Basis, und weil die Abweichungen genau in dieser
-    // Ebene liegen, zackt der Blitz sonst in anderer Richtung.
-    const Axis basis = axisFromDirection(forward);
-    const camera::Vec3 right = basis.right;
-    const camera::Vec3 up = basis.up;
+    bool ok() const { return ok_; }
 
-    sim::Random random(seed);
-    auto crandom = [&] { return random.range(-1.0f, 1.0f); };
+    // DoBoltSeg
+    void segment(const camera::Vec3& start, const camera::Vec3& end, float radius) {
+        camera::Vec3 fwd = end - start;
+        float dis = camera::length(fwd);
+        fwd = dis > 0.0f ? fwd * (1.0f / dis) : camera::Vec3{};
+        if (dis > 2000.0f) dis = 2000.0f;  // "freaky long"
+        const Axis basis = axisFromDirection(fwd);
+        const camera::Vec3 rt = basis.right;
+        const camera::Vec3 up = basis.up;
 
-    // Der Anfangsversatz ist {10,10,10}, nicht null.
-    //
-    //     vec3_t cur, off={10,10,10};
-    //
-    // Sieht nach einem vergessenen Testwert aus, ist aber der Grund, warum ein
-    // Blitz gleich am Anfang einen Knick hat statt schnurgerade loszulaufen.
-    camera::Vec3 off{10.0f, 10.0f, 10.0f};
-    camera::Vec3 previous = from;
+        camera::Vec3 old = start;
+        camera::Vec3 off{10.0f, 10.0f, 10.0f};
+        float oldPerc = 0.0f;
+        float oldRadius = radius;
+        float newRadius = radius;
 
-    // Schrittweite 16 Einheiten, nicht 20:
-    //
-    //     for ( i = 16; i <= dis; i += 16 )
-    //
-    // Die Zahl bestimmt, wie fein der Blitz gezackt ist — bei 20 hat er ein
-    // Fuenftel weniger Knicke als im Spiel.
-    constexpr float kStep = 16.0f;
+        for (int i = 16; static_cast<float>(i) <= dis; i += 16) {
+            // "because of our large step size, we may not actually draw to the
+            // end. In this case, fudge our percent"
+            const float perc = static_cast<float>(i + 16) > dis
+                                   ? 1.0f
+                                   : static_cast<float>(i) / dis;
 
-    for (float i = kStep; i <= distance; i += kStep) {
-        // Bei grossen Schritten kommt man nicht genau ans Ende — dann wird
-        // der Anteil auf eins gezogen. Steht so im Renderer.
-        const float perc = (i + kStep > distance) ? 1.0f : i / distance;
+            // Abweichung: wenig entlang, viel quer — nur quer wirkt chaos
+            // (e->angles[0]). Die Reihenfolge der drei Q_crandom ist die der
+            // Engine, weil sie dieselbe Folge aufbraucht.
+            camera::Vec3 temp = fwd * (qCRandom(frame_) * 3.0f);
+            temp = temp + rt * (qCRandom(frame_) * 7.0f * shape_.chaos);
+            temp = temp + up * (qCRandom(frame_) * 7.0f * shape_.chaos);
+            off = off + temp;
 
-        // Entlang der Achse weniger, quer dazu mehr — und nur quer wirkt
-        // chaos. Ravens Kommentar: "chaos also does not affect this".
-        camera::Vec3 step = forward * (crandom() * 3.0f);
-        step = step + right * (crandom() * 7.0f * chaos);
-        step = step + up * (crandom() * 7.0f * chaos);
-        off = off + step;
+            // Von genau start nach genau end, plus die summierte Abweichung.
+            const camera::Vec3 cur = (start + off) * (1.0f - perc) + end * perc;
 
-        // Die Abweichungen summieren sich, aber beide Enden sitzen trotzdem
-        // exakt: der Punkt wird auf die Gerade zurueckgezogen.
-        camera::Vec3 current = from + off;
-        current = current * (1.0f - perc) + to * perc;
+            if (shape_.taper) {
+                // "by using one minus the square, the radius stays fairly
+                // constant, then drops off quickly at the very point"
+                oldRadius = radius * (1.0f - oldPerc * oldPerc);
+                newRadius = radius * (1.0f - perc * perc);
+            }
 
-        addLine(lines, previous, current, colour);
-        previous = current;
+            // Zwei Stufen Feinzacken (2 - r_lodbias, r_lodbias ab Werk 0).
+            applyShape(cur, old, newRadius, oldRadius, 2, 0.0f, 1.0f);
+
+            // Abzweige: hoechstens drei, nur in den ersten 20 Prozent. Die
+            // Bedingung wird in der Reihenfolge der Engine geprueft — Q_random
+            // laeuft nur, wenn die beiden ersten Teile stimmen.
+            if (shape_.branch && forks_ > 0 && qRandom(frame_) > 0.93f &&
+                (1.0f - perc) > 0.8f) {
+                --forks_;
+                camera::Vec3 dest = (cur + end_) * 0.5f;
+                dest.x += qCRandom(frame_) * 80.0f;
+                dest.y += qCRandom(frame_) * 80.0f;
+                dest.z += qCRandom(frame_) * 80.0f;
+                segment(cur, dest, newRadius);
+            }
+
+            old = cur;
+            oldPerc = perc;
+        }
     }
-    if (camera::length(previous - to) > 1e-3f) addLine(lines, previous, to, colour);
+
+private:
+    // CreateShape: die Form, die auf jedes Stueck gelegt wird. Wie in der
+    // Engine GEMEINSAM fuer alle Rekursionsebenen (dort zwei statische
+    // Vektoren) — eine tiefere Ebene ueberschreibt sie, und die hoehere rechnet
+    // mit dem ueberschriebenen Wert weiter.
+    void createShape() {
+        sh1_ = {0.66f, 0.08f + jitter_.range(-1.0f, 1.0f) * 0.02f,
+                0.08f + jitter_.range(-1.0f, 1.0f) * 0.02f};
+        sh2_ = {0.33f, -sh1_.y + jitter_.range(-1.0f, 1.0f) * 0.02f,
+                -sh1_.z + jitter_.range(-1.0f, 1.0f) * 0.02f};
+    }
+
+    // ApplyShape
+    void applyShape(const camera::Vec3& start, const camera::Vec3& end, float sradius,
+                    float eradius, int count, float startPerc, float endPerc) {
+        if (count < 1) {
+            if (!addBand(mesh_, start, end, side_, sradius, eradius, startPerc, endPerc,
+                         colour_)) {
+                ok_ = false;
+            }
+            return;
+        }
+        createShape();
+
+        camera::Vec3 fwd = end - start;
+        const float len = camera::length(fwd);
+        const float dis = len * 0.7f;
+        fwd = len > 0.0f ? fwd * (1.0f / len) : camera::Vec3{};
+        const Axis basis = axisFromDirection(fwd);
+
+        float perc = sh1_.x;
+        const camera::Vec3 point1 = start * perc + end * (1.0f - perc) +
+                                    basis.right * (dis * sh1_.y) + basis.up * (dis * sh1_.z);
+        const float rads1 = sradius * 0.666f + eradius * 0.333f;
+        const float rads2 = sradius * 0.333f + eradius * 0.666f;
+
+        applyShape(start, point1, sradius, rads1, count - 1, startPerc,
+                   startPerc * 0.666f + endPerc * 0.333f);
+
+        perc = sh2_.x;
+        const camera::Vec3 point2 = start * perc + end * (1.0f - perc) +
+                                    basis.right * (dis * sh2_.y) + basis.up * (dis * sh2_.z);
+
+        applyShape(point2, point1, rads1, rads2, count - 1,
+                   startPerc * 0.333f + endPerc * 0.666f,
+                   startPerc * 0.666f + endPerc * 0.333f);
+        applyShape(point2, end, rads2, eradius, count - 1,
+                   startPerc * 0.333f + endPerc * 0.666f, endPerc);
+    }
+
+    scene::Mesh& mesh_;
+    camera::Vec3 side_;
+    camera::Vec3 end_;
+    BoltShape shape_;
+    int frame_;
+    sim::Random jitter_;
+    uint32_t colour_;
+    int forks_ = 3;  // "allow now more than three branches"
+    camera::Vec3 sh1_, sh2_;
+    bool ok_ = true;
+};
+
+}  // namespace
+
+bool addElectricity(scene::Mesh& mesh, const camera::Vec3& from,
+                    const camera::Vec3& to, const camera::Vec3& eye,
+                    const BoltShape& shape, int boltSeed, unsigned jitterSeed,
+                    uint32_t colour) {
+    // RB_SurfaceElectricity: `grow` kuerzt das Ende auf perc * Laenge.
+    camera::Vec3 fwd = to - from;
+    const float dis = camera::length(fwd);
+    if (dis <= 0.0f) return true;
+    fwd = fwd * (1.0f / dis);
+    float perc = shape.growPerc;
+    if (perc > 1.0f) perc = 1.0f;
+    if (perc < 0.0f) perc = 0.0f;
+    const camera::Vec3 end = from + fwd * (perc * dis);
+
+    const camera::Vec3 side = lineSide(from, end, eye);
+    BoltBuilder builder(mesh, side, end, shape, boltSeed, jitterSeed, colour);
+    builder.segment(from, end, shape.radius);
+    return builder.ok();
 }
 
+namespace {
+
+// Die Farbe einer Shaderstufe — ComputeColors in tr_shade.cpp, fuer die
+// Faelle, die bei Effekten vorkommen. `entity` ist die Farbe der Primitive
+// (shaderRGBA); sie steht bei Effekten auch in den Eckpunkten
+// (RB_AddQuadStamp kopiert sie hinein), Vertex und Entity sind also gleich.
+// r_overBrightBits 0 vorausgesetzt (OpenJK-Vorgabe): identityLight ist 1.
+uint32_t stageColour(const shader::Stage& stage, uint32_t entity, float seconds) {
+    const uint32_t er = entity & 0xFFu, eg = (entity >> 8) & 0xFFu,
+                   eb = (entity >> 16) & 0xFFu, ea = (entity >> 24) & 0xFFu;
+    uint32_t r = 255, g = 255, b = 255, a = 255;
+    const shader::ColorGen colorGen = shader::effectiveColorGen(stage);
+    switch (colorGen) {
+        case shader::ColorGen::Vertex:
+        case shader::ColorGen::ExactVertex:
+        case shader::ColorGen::Entity:
+            r = er; g = eg; b = eb; a = ea;
+            break;
+        case shader::ColorGen::OneMinusVertex:
+        case shader::ColorGen::OneMinusEntity:
+            r = 255 - er; g = 255 - eg; b = 255 - eb;
+            break;
+        case shader::ColorGen::Const:
+            r = static_cast<uint32_t>(std::clamp(stage.rgbConst[0], 0.0f, 1.0f) * 255.0f);
+            g = static_cast<uint32_t>(std::clamp(stage.rgbConst[1], 0.0f, 1.0f) * 255.0f);
+            b = static_cast<uint32_t>(std::clamp(stage.rgbConst[2], 0.0f, 1.0f) * 255.0f);
+            break;
+        case shader::ColorGen::Wave: {
+            // RB_CalcWaveColor: glow = EvalWaveForm * identityLight, auf 0..1.
+            const float glow = std::clamp(shader::evaluateWave(stage.rgbWave, seconds), 0.0f, 1.0f);
+            r = g = b = static_cast<uint32_t>(glow * 255.0f);
+            break;
+        }
+        default:  // identity, identityLighting, lightingDiffuse/Specular
+            break;
+    }
+
+    switch (shader::effectiveAlphaGen(stage)) {
+        case shader::AlphaGen::Identity:
+            // AGEN_IDENTITY setzt 255 — ausser bei rgbGen vertex (identityLight
+            // 1): dann bleibt das Alpha, das mit der Eckpunktfarbe kam.
+            if (colorGen != shader::ColorGen::Vertex) a = 255;
+            break;
+        case shader::AlphaGen::Vertex:
+        case shader::AlphaGen::Entity:
+            a = ea;
+            break;
+        case shader::AlphaGen::OneMinusVertex:
+        case shader::AlphaGen::OneMinusEntity:
+            a = 255 - ea;
+            break;
+        case shader::AlphaGen::Const:
+            a = static_cast<uint32_t>(std::clamp(stage.alphaConst, 0.0f, 1.0f) * 255.0f);
+            break;
+        case shader::AlphaGen::Wave: {
+            // RB_CalcWaveAlpha: EvalWaveFormClamped.
+            const float glow = std::clamp(shader::evaluateWave(stage.alphaWave, seconds), 0.0f, 1.0f);
+            a = static_cast<uint32_t>(glow * 255.0f);
+            break;
+        }
+        default:
+            a = 255;
+            break;
+    }
+    return r | (g << 8) | (b << 16) | (a << 24);
+}
+
+// Das Bild einer Stufe zu ihrer Shaderzeit — map, clampMap, das gerade
+// gueltige Bild einer Bildfolge (RB_ComputeAnimatedImage), oder das
+// eingebaute weisse. Leer: die Stufe hat kein Bild und wird uebergangen.
+std::string stageImage(const shader::Stage& stage, float seconds, bool& clamp) {
+    clamp = false;
+    if (!stage.animMaps.empty()) {
+        const int frame = shader::animFrameAt(static_cast<int>(stage.animMaps.size()),
+                                              stage.animFrequency, stage.animOneShot,
+                                              seconds);
+        return stage.animMaps[static_cast<size_t>(frame)];
+    }
+    if (!stage.clampMap.empty()) {
+        clamp = true;
+        return stage.clampMap;
+    }
+    return stage.map;
+}
+
+int alphaTestOf(const std::string& func) {
+    if (func.empty()) return 0;
+    auto lower = func;
+    for (char& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (lower == "gt0") return 1;
+    if (lower == "lt128") return 2;
+    if (lower == "ge128") return 3;
+    if (lower == "ge192") return 4;  // JKA-Zusatz (NameToAFunc: GLS_ATEST_GE_C0)
+    return 0;
+}
+
+// Sammelt die Zeichengruppen eines Bildes.
+class GroupCollector {
+public:
+    explicit GroupCollector(std::vector<DrawGroup>& groups) : groups_(groups) {}
+
+    DrawGroup& get(const std::string& shaderName, int stage, const std::string& image) {
+        const auto key = std::make_tuple(shaderName, stage, image);
+        const auto found = index_.find(key);
+        if (found != index_.end()) return groups_[found->second];
+        int seen = 0;
+        const auto known = firstSeen_.find(shaderName);
+        if (known != firstSeen_.end()) {
+            seen = known->second;
+        } else {
+            seen = static_cast<int>(firstSeen_.size());
+            firstSeen_.emplace(shaderName, seen);
+        }
+        index_.emplace(key, groups_.size());
+        groups_.emplace_back();
+        DrawGroup& group = groups_.back();
+        group.shader = shaderName;
+        group.stage = stage;
+        group.image = image;
+        group.firstSeen = seen;
+        return group;
+    }
+
+private:
+    std::vector<DrawGroup>& groups_;
+    std::map<std::tuple<std::string, int, std::string>, size_t> index_;
+    std::map<std::string, int> firstSeen_;
+};
+
+// Haengt die rohe Geometrie eines Teilchens mit Stufenfarbe und Stufen-tcMod
+// an eine Gruppe.
+void appendStage(DrawGroup& group, const scene::Mesh& raw, const shader::Stage* stage,
+                 const std::vector<shader::TexMod>* mods, uint32_t entity, float seconds,
+                 const shader::WaveForm* legacyRgbWave = nullptr,
+                 const shader::WaveForm* legacyAlphaWave = nullptr) {
+    if (group.mesh.vertices.size() + raw.vertices.size() > 65535u) return;
+    uint32_t colour = entity;
+    if (stage) {
+        colour = stageColour(*stage, entity, seconds);
+    } else {
+        // Ersatzshader (rgbGen vertex, alphaGen vertex) — und die alten
+        // Einzelangaben aus ShaderDraw, falls ein Aufrufer nur sie liefert.
+        if (legacyAlphaWave) {
+            const float glow =
+                std::clamp(shader::evaluateWave(*legacyAlphaWave, seconds), 0.0f, 1.0f);
+            colour = (colour & 0x00FFFFFFu) | (static_cast<uint32_t>(glow * 255.0f + 0.5f) << 24);
+        }
+        if (legacyRgbWave) {
+            const float glow =
+                std::clamp(shader::evaluateWave(*legacyRgbWave, seconds), 0.0f, 1.0f);
+            const auto level = static_cast<uint32_t>(glow * 255.0f + 0.5f);
+            colour = (colour & 0xFF000000u) | (level << 16) | (level << 8) | level;
+        }
+    }
+    const auto base = static_cast<uint16_t>(group.mesh.vertices.size());
+    for (scene::Vertex v : raw.vertices) {
+        v.colour = colour;
+        if (mods && !mods->empty()) {
+            const shader::TexCoord moved =
+                shader::applyTexMods(*mods, {v.uv[0], v.uv[1]}, seconds, v.pos);
+            v.uv[0] = moved.u;
+            v.uv[1] = moved.v;
+        }
+        group.mesh.vertices.push_back(v);
+    }
+    for (uint16_t index : raw.indices) {
+        group.mesh.indices.push_back(static_cast<uint16_t>(base + index));
+    }
+}
+
+}  // namespace
 
 DrawList System::build(float nowMs, const camera::Vec3& right,
-                       const camera::Vec3& up,
-                       const ShaderLookup& shaders) const {
+                       const camera::Vec3& up, const ShaderLookup& shaders,
+                       const View* view) const {
     DrawList out;
     static const std::vector<shader::TexMod> noMods;
 
+    // Blickrichtung: up x right zeigt in die Szene (rechte Hand, right = x,
+    // up = y, Blick entlang -z). Ohne Kamera steht das Auge sehr weit
+    // zurueck — dann sind alle Sichtlinien parallel.
+    camera::Vec3 viewForward = camera::normalise(camera::cross(up, right));
+    if (camera::length(viewForward) < 1e-5f) viewForward = {0.0f, 0.0f, -1.0f};
+
+    // Die Shaderabfragen je Name nur einmal je Bild — bei zweihundert Funken
+    // mit demselben Shader waeren es sonst zweihundert Suchen.
+    std::map<std::string, ShaderDraw> lookups;
+    const auto lookup = [&](const std::string& name) -> const ShaderDraw& {
+        const auto found = lookups.find(name);
+        if (found != lookups.end()) return found->second;
+        return lookups.emplace(name, shaders ? shaders(name) : ShaderDraw{}).first->second;
+    };
+
+    GroupCollector groups(out.groups);
+    scene::Mesh raw;
+
     for (const auto& item : live_) {
+        // Fuer die Statuszeile: noch wartend, und Abdruecke bis jetzt.
+        if (item.spawnMs > nowMs) ++out.scheduled;
+        if (item.type == PrimitiveType::Decal && item.spawnMs <= nowMs) ++out.marks;
+
         if (!item.aliveAt(nowMs)) continue;
         ++out.alive;
 
         const float endMs = item.deathMs;
         const camera::Vec3 position = item.positionAt(nowMs);
 
-        const float size = curve::evaluate(item.size, nowMs, item.spawnMs, endMs,
-                                           item.sizeParm, item.randomSize);
-        const float alpha =
-            item.alpha.flags || item.alpha.start != 0.0f
-                ? curve::evaluate(item.alpha, nowMs, item.spawnMs, endMs,
-                                  item.alphaParm, item.randomAlpha)
-                : 1.0f;
-        const float r = curve::evaluate(item.rgb[0], nowMs, item.spawnMs, endMs,
-                                        item.rgbParm, item.randomRgb);
-        const float g = curve::evaluate(item.rgb[1], nowMs, item.spawnMs, endMs,
-                                        item.rgbParm, item.randomRgb);
-        const float b = curve::evaluate(item.rgb[2], nowMs, item.spawnMs, endMs,
-                                        item.rgbParm, item.randomRgb);
-        // Wohin das Ausblenden wirkt — siehe Live::useAlpha.
+        // Die Kurven, mit dem `random`-Anteil dieses Bildes.
+        const auto value = [&](const curve::Curve& c, float parm,
+                               Live::RandomChannel channel) {
+            return curve::evaluate(c, nowMs, item.spawnMs, endMs, parm,
+                                   item.randomAt(channel, nowMs));
+        };
+        const float size = value(item.size, item.sizeParm, Live::kRandomSize);
+        const float r = value(item.rgb[0], item.rgbParm, Live::kRandomRgb);
+        const float g = value(item.rgb[1], item.rgbParm, Live::kRandomRgb);
+        const float b = value(item.rgb[2], item.rgbParm, Live::kRandomRgb);
+
+        // Alpha: CParticle::UpdateAlpha mischt OHNE den Zufall, schneidet auf
+        // 0..1 und multipliziert ERST DANN mit Q_flrand(0,1):
         //
-        // Hier stand bisher immer `packRgba(r, g, b, alpha)`, also der
-        // useAlpha-Fall fuer ALLE Segmente. Das ist der Fall, den die Engine
-        // nur bei gesetztem Flag nimmt, und es hat die Mehrheit falsch
-        // gemacht: bei additiver Mischung wertet die Grafikkarte den
-        // Alphakanal nicht aus, das Ausblenden fiel also aus. Flammen und
-        // Funken blieben bis zur letzten Millisekunde gleich hell und
-        // verschwanden dann schlagartig.
-        const uint32_t colour =
-            item.useAlpha ? packRgba(r, g, b, alpha)
-                          : packRgba(r * alpha, g * alpha, b * alpha, 1.0f);
+        //     perc1 = (mAlphaStart * perc1) + (mAlphaEnd * (1.0f - perc1));
+        //     if ( perc1 < 0.0f ) perc1 = 0.0f; else if ( perc1 > 1.0f ) perc1 = 1.0f;
+        //     if ( (mFlags & FX_ALPHA_RAND) ) perc1 = Q_flrand(0.0f, 1.0f) * perc1;
+        //
+        // Bei size/rgb/length steht der Zufall dagegen auf dem Anteil. Beim
+        // Alpha dort zu wuerfeln heisst: `alpha { flags random }` mit start ==
+        // end tut nichts, im Spiel flackert es zwischen 0 und dem Wert.
+        //
+        // Und: ohne Kurvenart ist Alpha einfach `start` — auch null. Hier
+        // stand `alpha.start != 0 ? ... : 1.0`, ein Alpha von null wurde also
+        // zu voll. Im Spiel ist so ein Teilchen unsichtbar.
+        curve::Curve alphaCurve = item.alpha;
+        const bool alphaRandom = (alphaCurve.flags & curve::kRandom) != 0;
+        alphaCurve.flags &= ~curve::kRandom;
+        float alpha = curve::evaluate(alphaCurve, nowMs, item.spawnMs, endMs, item.alphaParm, 1.0f);
+        alpha = std::clamp(alpha, 0.0f, 1.0f);
+        if (alphaRandom) alpha *= item.randomAt(Live::kRandomAlpha, nowMs);
+
+        // Die Farbe der Primitive (mRefEnt.shaderRGBA). Wohin das Ausblenden
+        // wirkt, entscheidet useAlpha (CParticle::UpdateAlpha):
+        //
+        //   mit useAlpha:  rgb bleibt, shaderRGBA[3] = alpha * 255
+        //   ohne:          rgb *= alpha, und shaderRGBA[3] bleibt, was es war —
+        //                  0, denn CEffect() setzt mRefEnt mit memset auf null.
+        //
+        // Das zweite ist der Grund fuer Ravens Abschnitt "If You Don't See
+        // Anything": ein alphagemischter Shader mit alphaGen vertex zeichnet
+        // ohne useAlpha NICHTS. Wir hatten dort 255 eingesetzt und zeigten,
+        // was das Spiel nicht zeigt.
+        const uint32_t colour = item.useAlpha
+                                    ? packRgba(r, g, b, alpha)
+                                    : packRgba(r * alpha, g * alpha, b * alpha, 0.0f);
 
         // Die Drehung waechst ueber die Lebensdauer — und zwar ZEHNMAL so
         // schnell, wie "Grad je Sekunde" vermuten laesst.
@@ -1208,203 +1699,353 @@ DrawList System::build(float nowMs, const camera::Vec3& right,
         //
         //     mRefEnt.rotation += theFxHelper.mFrameTime * 0.01f * mRotationDelta;
         //
-        // `mFrameTime` ist in MILLISEKUNDEN (die Sekundenfassung heisst
-        // mFloatFrameTime). Aus `ms * 0.01` wird also `Sekunden * 10`:
-        // `rotationDelta 1` sind zehn Grad je Sekunde, nicht eines.
-        //
-        // Wir haben mit Grad je Sekunde gerechnet — jede Datei drehte damit
-        // ein Zehntel so schnell wie im Spiel. Bei einem Funkenwirbel faellt
-        // das sofort auf, bei einem runden Rauchball gar nicht, und deshalb
-        // ist es lange durchgegangen.
-        //
-        // Dieselbe 0.01 steht bei der Emitter-Drehung, dort mit Ravens
-        // Kommentar: "was 0.001f, but then you really have to jack up the
-        // delta to even notice anything".
+        // `mFrameTime` ist in MILLISEKUNDEN. Aus `ms * 0.01` wird also
+        // `Sekunden * 10`: `rotationDelta 1` sind zehn Grad je Sekunde.
         constexpr float kRotationScale = 10.0f;
         const float seconds = (nowMs - item.spawnMs) * 0.001f;
         const float rotation =
             item.rotation + item.rotationDelta * seconds * kRotationScale;
 
+        // Die Shaderzeit: `refdef.floatTime - e.shaderTime` (tr_backend.cpp).
+        // shaderTime ist nur mit `setShaderTime` der Entstehungszeitpunkt
+        // (CEffect::SetTimeStart), sonst null — dann laeuft die Uhr des
+        // Spiels, hier die des Effekts. Davon haengen Bildfolgen, tcMod und
+        // Wellen ab. 38 von 39 Bildfolgen im Grundspiel setzen das Flag: jede
+        // verzoegerte Explosion beginnt dann bei ihrem ERSTEN Bild.
+        const float shaderSeconds = (item.flags & kFlagSetShaderTime) != 0
+                                        ? (nowMs - item.spawnMs) * 0.001f
+                                        : nowMs * 0.001f;
+
+        raw.vertices.clear();
+        raw.indices.clear();
+        uint32_t rawColour = colour;
+        bool built = false;   // gehoert in die Zaehlung "gezeichnet"
+        bool full = false;    // kein Platz mehr
+
+        // Ein Auge fuer die Baender: die Kamera, oder eine sehr ferne in
+        // Blickrichtung.
+        const camera::Vec3 eye =
+            view ? view->eye : position - viewForward * 1.0e6f;
+
         switch (item.type) {
             case PrimitiveType::Line: {
-                // origin2 ist ein PUNKT, kein Versatz — siehe oben.
-                addLine(out.lines, position, item.origin2, colour);
-                ++out.drawn;
+                // RB_SurfaceLine: ein Band von origin nach origin2, quer zur
+                // Sichtlinie, halbe Breite = size. Vorher eine 1-Pixel-Linie
+                // ohne Textur — jeder Strahl, jede Blasterspur war ein Haar.
+                built = true;
+                full = !addLineQuad(raw, position, item.origin2,
+                                    lineSide(position, item.origin2, eye), size, colour);
                 break;
             }
             case PrimitiveType::Electricity: {
-                // Der Ausgangswert haengt am Partikel, nicht an der Zeit: der
-                // Blitz soll zappeln, aber nicht in jedem Bild voellig anders
-                // aussehen. Ein Wechsel etwa alle 50 ms trifft, wie es im
-                // Spiel wirkt.
-                const unsigned frame = static_cast<unsigned>(nowMs / 50.0f);
-                addLightning(out.lines, position, item.origin2,
-                             item.chaos, item.seed ^ (frame * 2654435761u), colour);
-                ++out.drawn;
+                // RB_SurfaceElectricity. Die Formflags stehen auf den Bits von
+                // useModel/usePhysics/useBBox (CElectricity::Initialize).
+                BoltShape shape;
+                shape.radius = size;
+                shape.chaos = item.chaos;
+                shape.taper = (item.flags & kFlagElectricityTaper) != 0;
+                shape.branch = (item.flags & kFlagElectricityBranch) != 0;
+                if ((item.flags & kFlagElectricityGrow) != 0) {
+                    // perc = 1 - ( endTime - refdef.time ) / duration
+                    const float life = item.deathMs - item.spawnMs;
+                    shape.growPerc = life > 0.0f ? (nowMs - item.spawnMs) / life : 1.0f;
+                }
+                // Die grobe Form aus boltSeed steht; das Mikrozittern aendert
+                // sich jedes Bild (60 je Sekunde).
+                const auto tick = static_cast<unsigned>(std::floor(nowMs * 0.06f));
+                built = true;
+                full = !addElectricity(raw, position, item.origin2, eye, shape, item.boltSeed,
+                                       mix32(item.seed ^ (tick * 2654435761u)) | 1u, colour);
                 break;
             }
             case PrimitiveType::Cylinder: {
-                // Laenge und zweiter Radius sind die beiden Felder, die nur
-                // dieser Typ liest — size2 wird ausschliesslich von
-                // FX_AddCylinder ausgewertet.
-                const float length = curve::evaluate(item.length, nowMs, item.spawnMs,
-                                                     endMs, item.lengthParm,
-                                                     item.randomLength);
-                const float radius2 = item.size2.start != 0.0f || item.size2.flags
-                                          ? curve::evaluate(item.size2, nowMs,
-                                                            item.spawnMs, endMs,
-                                                            item.size2Parm, 1.0f)
-                                          : size;
-                // Die Achse ist die VORWAERTSACHSE des Effekts, nicht
-                // `origin2`. Fundstelle FxScheduler.cpp:
-                //
-                //     FX_AddCylinder( clientID, org, ax[0], ... );
-                //
-                // Wir hatten `origin2` genommen — das ist bei Line und
-                // Electricity der Endpunkt und hat mit der Ausrichtung eines
-                // Zylinders nichts zu tun. Eine Datei ohne `origin2` ergab
-                // damit einen Zylinder, der immer senkrecht stand.
+                // CCylinder::Draw: oldorigin = origin + length * axis[0].
+                // RB_SurfaceCylinder: size2 (`backlerp`) am Ursprung, size
+                // (`radius`) am fernen Ende. Vorher halbe Radien und die
+                // Enden vertauscht — Kegel standen auf dem Kopf.
+                const float length = value(item.length, item.lengthParm, Live::kRandomLength);
+                const float size2 = value(item.size2, item.size2Parm, Live::kRandomSize2);
                 camera::Vec3 axis = camera::normalise(item.forward);
                 if (camera::length(axis) < 1e-5f) axis = {0.0f, 0.0f, 1.0f};
-                if (!addCylinder(out.byTexture[item.shader], position, axis, length,
-                                 size * 0.5f, radius2 * 0.5f, colour)) {
-                    ++out.skipped;
-                    break;
-                }
-                ++out.drawn;
+                const camera::Vec3 middle = position + axis * (length * 0.5f);
+                const int segments = cylinderSegments(
+                    camera::length(middle - eye), view ? view->fovXDegrees : 90.0f);
+                built = true;
+                full = !addCylinder(raw, position, axis, length, size2, size, colour,
+                                    view ? segments : 16);
                 break;
             }
-            case PrimitiveType::OrientedParticle:
-            case PrimitiveType::Decal: {
-                // Beide liegen in einer eigenen Lage statt zur Kamera. Beim
-                // Decal ist das die Flaeche, auf die es projiziert wird; beim
-                // OrientedParticle die eingestellte Ausrichtung.
-                // Ebenfalls die Vorwaertsachse:
-                //     CG_ImpactMark( handle, org, ax[0], rotation, ... );
+            case PrimitiveType::OrientedParticle: {
                 camera::Vec3 normal = camera::normalise(item.forward);
                 if (camera::length(normal) < 1e-5f) normal = {0.0f, 0.0f, 1.0f};
-                if (!addOrientedQuad(out.byTexture[item.shader], position, normal,
-                                     size * 0.5f, rotation, colour)) {
-                    ++out.skipped;
-                    break;
+                built = true;
+                full = !addOrientedQuad(raw, position, normal, size, rotation, colour);
+                break;
+            }
+            case PrimitiveType::Decal: {
+                // CG_ImpactMark (cg_marks.cpp), aufgerufen in FxScheduler.cpp
+                // mit den STARTwerten: rgb start, alpha start, size start, ein
+                // rotation-Wert. Keine Kurven, kein rotationDelta, kein useAlpha:
+                //     colors[3] = alpha * 255;
+                // Die letzte Sekunde blendet das Alpha aus (alphaFade):
+                //     fade = 255 * t / MARK_FADE_TIME;  modulate[3] = fade;
+                const float radius = item.size.start;
+                if (radius <= 0.0f) break;
+                uint32_t markAlpha = static_cast<uint32_t>(
+                    std::clamp(item.alpha.start, 0.0f, 1.0f) * 255.0f);
+                const float remaining = item.deathMs - nowMs;
+                constexpr float kMarkFadeMs = 1000.0f;
+                if (remaining < kMarkFadeMs) {
+                    markAlpha = static_cast<uint32_t>(255.0f * std::max(remaining, 0.0f) /
+                                                      kMarkFadeMs);
                 }
-                ++out.drawn;
+                rawColour = packRgba(item.rgb[0].start, item.rgb[1].start,
+                                     item.rgb[2].start, 0.0f) |
+                            (markAlpha << 24);
+
+                // Die Achsen des Abdrucks:
+                //     axis[0] = dir; PerpendicularVector( axis[1], axis[0] );
+                //     RotatePointAroundVector( axis[2], axis[0], axis[1], orientation );
+                //     CrossProduct( axis[0], axis[2], axis[1] );
+                // und die Ecken o -/+ r*axis[1] -/+ r*axis[2] mit s, t von 0
+                // bis 1 entlang axis[1], axis[2].
+                camera::Vec3 dir = camera::normalise(item.forward);
+                if (camera::length(dir) < 1e-5f) dir = {0.0f, 0.0f, 1.0f};
+                // PerpendicularVector: die kleinste Komponente, auf die
+                // Ebene projiziert (q_math.cpp).
+                camera::Vec3 tempVec{0.0f, 0.0f, 0.0f};
+                {
+                    const float ax = std::fabs(dir.x), ay = std::fabs(dir.y),
+                                az = std::fabs(dir.z);
+                    if (ax <= ay && ax <= az) tempVec.x = 1.0f;
+                    else if (ay <= az) tempVec.y = 1.0f;
+                    else tempVec.z = 1.0f;
+                }
+                camera::Vec3 axis1 =
+                    camera::normalise(tempVec - dir * camera::dot(tempVec, dir));
+                const float rad = item.rotation * kPi / 180.0f;
+                camera::Vec3 axis2 = axis1 * std::cos(rad) +
+                                     camera::cross(dir, axis1) * std::sin(rad);
+                axis1 = camera::cross(dir, axis2);
+
+                // Die Flaeche, auf die er faellt: CM_MarkFragments sucht in
+                // 20 Einheiten entgegen `dir` und nimmt nur Flaechen, deren
+                // Normale nicht mehr als 60 Grad von `dir` weg zeigt
+                // (dot(normal, -dir) <= -0.5). Ohne Raum: dort, wo er ist —
+                // im Editor soll man ihn ohne Wand trotzdem sehen.
+                camera::Vec3 centre = position;
+                const sim::Plane* surface = nullptr;
+                float nearest = 1e9f;
+                for (const auto& plane : planes_) {
+                    const float facing = camera::dot(plane.normal, dir);
+                    if (facing < 0.5f) continue;
+                    const float distance = camera::dot(plane.normal, position) - plane.distance;
+                    if (distance - 20.0f * facing > 0.0f || distance < -1.0f) continue;
+                    if (distance < nearest) {
+                        nearest = distance;
+                        surface = &plane;
+                    }
+                }
+                if (!planes_.empty() && !surface) break;  // im Spiel: kein Abdruck
+                const camera::Vec3 corners[4] = {
+                    centre - axis1 * radius - axis2 * radius,
+                    centre + axis1 * radius - axis2 * radius,
+                    centre + axis1 * radius + axis2 * radius,
+                    centre - axis1 * radius + axis2 * radius,
+                };
+                const float uvs[4][2] = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+                if (!hasRoomForQuad(raw)) { full = true; break; }
+                for (int i = 0; i < 4; ++i) {
+                    camera::Vec3 p = corners[i];
+                    if (surface) {
+                        // Auf die Flaeche gelegt.
+                        p = p - surface->normal *
+                                    (camera::dot(surface->normal, p) - surface->distance);
+                    }
+                    pushVertex(raw, p, uvs[i][0], uvs[i][1], rawColour);
+                }
+                for (uint16_t offset : {uint16_t{0}, uint16_t{1}, uint16_t{2},
+                                        uint16_t{0}, uint16_t{2}, uint16_t{3}}) {
+                    raw.indices.push_back(offset);
+                }
+                built = true;
                 break;
             }
             case PrimitiveType::Tail: {
-                // Eine Linie entgegen der Flugrichtung, so lang wie `length`.
-                const float length = curve::evaluate(item.length, nowMs, item.spawnMs,
-                                                     endMs, item.lengthParm,
-                                                     item.randomLength);
+                // Ein Band entgegen der Flugrichtung, so lang wie `length`,
+                // halbe Breite = size — CTail ist ein RT_LINE.
+                const float length = value(item.length, item.lengthParm, Live::kRandomLength);
                 // Die Richtung kommt aus der TATSAECHLICHEN Bewegung, nicht
-                // aus der Anfangsgeschwindigkeit.
-                //
-                // `CTail::CalcNewEndpoint` in FxPrimitives.cpp:
-                //
-                //     VectorSubtract( mOldOrigin, mOrigin1, temp );
-                //     VectorNormalize( temp );
-                //     VectorMA( mOrigin1, mLength, temp, mRefEnt.oldorigin );
-                //
-                // `mOldOrigin` ist die Stelle, an der das Teilchen kurz zuvor
-                // war. Der Schweif zeigt also dorthin zurueck, wo es herkam.
-                //
-                // Wir haben `item.velocity` genommen — den Startwert. Bei
-                // einem Funken mit Schwerkraft zeigt der Schweif damit die
-                // ganze Flugzeit ueber in dieselbe Richtung, obwohl die Bahn
-                // laengst gekruemmt ist. Nach einem Abprall zeigt er sogar in
-                // die voellig falsche.
-                //
-                // Drei Millisekunden zurueck, wie die Engine es im
-                // angehefteten Fall rechnet:
-                //     VectorMA( org, (time - 0.003f), realVel, mOldOrigin );
+                // aus der Anfangsgeschwindigkeit (`CTail::CalcNewEndpoint`:
+                // VectorSubtract( mOldOrigin, mOrigin1, temp )). Drei
+                // Millisekunden zurueck, wie die Engine es im angehefteten
+                // Fall rechnet.
                 constexpr float kLookBackMs = 3.0f;
                 const float earlier = std::max(item.spawnMs, nowMs - kLookBackMs);
                 camera::Vec3 direction = item.positionAt(earlier) - position;
-                if (camera::length(direction) < 1e-5f) {
-                    // Am Anfang und im Stillstand: die Anfangsgeschwindigkeit,
-                    // umgekehrt.
-                    direction = item.velocity * -1.0f;
-                }
+                if (camera::length(direction) < 1e-5f) direction = item.velocity * -1.0f;
                 direction = camera::normalise(direction);
                 if (camera::length(direction) < 1e-5f) direction = {0.0f, 0.0f, -1.0f};
-                addLine(out.lines, position, position + direction * length, colour);
-                ++out.drawn;
+                const camera::Vec3 end = position + direction * length;
+                built = true;
+                full = !addLineQuad(raw, position, end, lineSide(position, end, eye), size,
+                                    colour);
                 break;
             }
+            case PrimitiveType::Light: {
+                // Ein Licht zeichnet NICHTS. CLight::Draw ist ein einziger
+                // Aufruf: AddLightToScene( mOrigin1, mRefEnt.radius, r, g, b ).
+                // Es erhellt die Umgebung — die Liste geht an den Raum.
+                DynamicLight light;
+                light.origin = position;
+                light.radius = size;
+                light.rgb[0] = r;
+                light.rgb[1] = g;
+                light.rgb[2] = b;
+                out.lights.push_back(light);
+                break;
+            }
+            case PrimitiveType::ScreenFlash: {
+                // CFlash::Draw: ein Sprite 8 Einheiten vor dem Auge, so gross,
+                // dass es das Sichtfeld fuellt, Farbe aus der rgb-Kurve,
+                // Alpha 255. CFlash::Init daempft nach Lage und Abstand:
+                //     mod = dot( normalize(origin - vieworg), viewaxis[0] );
+                //     if ( dis > 600 || ( mod < 0.5 && dis > 100 )) mod = 0;
+                //     else if ( mod < 0.5 && dis <= 100 ) mod += 1.1;
+                //     mod *= 1 - dis^2 / 600^2;
+                // Die Engine rechnet das einmal beim Ausloesen; die Kamera des
+                // Editors bewegt sich, also hier mit der aktuellen.
+                if (!view) break;
+                const camera::Vec3 toFlash = position - view->eye;
+                const float dis = camera::length(toFlash);
+                float mod = dis > 0.0f ? camera::dot(toFlash * (1.0f / dis), viewForward) : 1.0f;
+                if (dis > 600.0f || (mod < 0.5f && dis > 100.0f)) {
+                    mod = 0.0f;
+                } else if (mod < 0.5f && dis <= 100.0f) {
+                    mod += 1.1f;
+                }
+                mod *= 1.0f - (dis * dis) / (600.0f * 600.0f);
+                rawColour = packRgba(std::clamp(r * mod, 0.0f, 1.0f),
+                                     std::clamp(g * mod, 0.0f, 1.0f),
+                                     std::clamp(b * mod, 0.0f, 1.0f), 1.0f);
+                constexpr float kFlashDistance = 8.0f;
+                const float radius =
+                    kFlashDistance * std::tan(view->fovXDegrees * 0.5f * kPi / 180.0f);
+                built = true;
+                full = !addBillboard(raw, view->eye + viewForward * kFlashDistance, right, up,
+                                     radius, 0.0f, rawColour);
+                break;
+            }
+            case PrimitiveType::Particle: {
+                built = true;
+                full = !addBillboard(raw, position, right, up, size, rotation, colour);
+                break;
+            }
+            case PrimitiveType::Emitter:
+                // CEmitter::Draw zeichnet nur ein Modell, und nur mit
+                // FX_ATTACHED_MODEL (useModel); ein Sprite gibt es nicht.
+                // Hier stand der Standardzweig — jeder Brocken war ein
+                // weisser Fleck.
             case PrimitiveType::Sound:
             case PrimitiveType::CameraShake:
             case PrimitiveType::FxRunner:
-                // Nichts zu zeichnen — die wirken anders.
                 break;
-            case PrimitiveType::Light:
-                // Ein Licht zeichnet NICHTS. Fundstelle `CLight::Draw` in
-                // FxPrimitives.cpp — der ganze Rumpf ist ein Aufruf:
-                //
-                //     theFxHelper.AddLightToScene( mOrigin1, mRefEnt.radius, ... );
-                //
-                // Es erhellt die Umgebung, es hat keine eigene Flaeche.
-                //
-                // Bei uns fiel der Typ in den Standardzweig und wurde ein
-                // Billboard. Ohne Shader heisst das: ein weisses Viereck in
-                // Groesse des Lichtradius. In side_alt_explosion.efx hat das
-                // Segment "Flash" den Radius 350 — daher der grosse helle
-                // Kasten mitten in der Explosion.
-                //
-                // Kein Sonderfall: Licht kommt in vielen Explosionen vor.
-                break;
-            default: {
-                // Alles andere als Billboard. Ausgerichtete Vierecke, Zylinder
-                // und Decals brauchen noch eine eigene Behandlung; bis dahin
-                // sieht man wenigstens, dass und wo etwas passiert.
-                // Die `tcMod`-Regeln des Shaders und die Zeit seit dem
-                // Ausloesen — dieselbe Zeit, die auch die Bildfolgen steuert.
-                const ShaderDraw info =
-                    shaders ? shaders(item.shader) : ShaderDraw{};
-                const std::vector<shader::TexMod>& mods =
-                    info.texMods ? *info.texMods : noMods;
-                const float shaderSeconds = (nowMs - item.spawnMs) * 0.001f;
-
-                // `rgbGen wave`: der Shader gibt die Helligkeit vor und
-                // ersetzt damit die Farbe aus der .efx.
-                //
-                // Die Durchsichtigkeit bleibt, was die .efx sagt. Die Engine
-                // setzt an dieser Stelle zwar `color[3] = 255`, aber das ist
-                // nur der Ausgangswert der Stufe — `alphaGen` laeuft danach
-                // getrennt und holt sie sich in aller Regel wieder. Ihre
-                // Aussteuerung hier mitzuloeschen wuerde ein ausblendendes
-                // Teilchen hart stehen lassen.
-                uint32_t drawColour = colour;
-                if (info.alphaWave) {
-                    float glow =
-                        shader::evaluateWave(*info.alphaWave, shaderSeconds);
-                    if (glow < 0.0f) glow = 0.0f;
-                    if (glow > 1.0f) glow = 1.0f;
-                    const auto level =
-                        static_cast<uint32_t>(glow * 255.0f + 0.5f);
-                    drawColour = (drawColour & 0x00FFFFFFu) | (level << 24);
-                }
-                if (info.rgbWave) {
-                    float glow = shader::evaluateWave(*info.rgbWave, shaderSeconds);
-                    if (glow < 0.0f) glow = 0.0f;
-                    if (glow > 1.0f) glow = 1.0f;
-                    const auto level =
-                        static_cast<uint32_t>(glow * 255.0f + 0.5f);
-                    drawColour = (drawColour & 0xFF000000u) | (level << 16) |
-                                 (level << 8) | level;
-                }
-
-                if (!addBillboard(out.byTexture[item.shader], position, right, up,
-                                  size * 0.5f, rotation, drawColour, &mods,
-                                  shaderSeconds)) {
-                    ++out.skipped;
-                    break;
-                }
-                if (item.useAlpha) out.alphaShaders.insert(item.shader);
-                ++out.drawn;
-                break;
-            }
         }
+
+        if (full) {
+            ++out.skipped;
+            continue;
+        }
+        if (!built || raw.vertices.empty()) continue;
+
+        // Die 16-Bit-Grenze gilt fuer die GESAMMELTE Geometrie eines Shaders,
+        // nicht fuer das einzelne Teilchen. Was nicht mehr passt, wird
+        // gezaehlt statt still weggelassen (siehe DrawList::skipped).
+        scene::Mesh& existing = out.byTexture[item.shader];
+        if (existing.vertices.size() + raw.vertices.size() > 65535u) {
+            ++out.skipped;
+            continue;
+        }
+        ++out.drawn;
+        if (item.useAlpha) out.alphaShaders.insert(item.shader);
+
+        // Die rohe Geometrie, mit der Farbe der Primitive. Fuer Abnehmer, die
+        // nur nach Shadern gruppieren (Reichweite, Pruefungen); die alten
+        // Einzelangaben aus ShaderDraw (tcMod, Wellen) wirken hier wie bisher.
+        const ShaderDraw& info = lookup(item.shader);
+        {
+            scene::Mesh& target = existing;
+            DrawGroup legacy;
+            legacy.mesh = std::move(target);
+            appendStage(legacy, raw, nullptr, info.texMods ? info.texMods : &noMods,
+                        rawColour, shaderSeconds, info.rgbWave, info.alphaWave);
+            target = std::move(legacy.mesh);
+        }
+
+        // Und die Gruppen, wie die Engine sie zeichnet.
+        if (info.missing) {
+            // RE_RegisterShader gibt fuer einen Shader ohne Bild 0 zurueck,
+            // gezeichnet wird tr.defaultShader: das graue Kaestchen
+            // (R_CreateDefaultImage), undurchsichtig, Farbe egal.
+            DrawGroup& group = groups.get(item.shader, 0, "$default");
+            group.sort = shader::kSortOpaque;
+            const uint32_t white = 0xFFFFFFFFu;
+            appendStage(group, raw, nullptr, nullptr, white, shaderSeconds);
+            continue;
+        }
+        if (info.definition && !info.definition->stages.empty()) {
+            const shader::Shader& def = *info.definition;
+            const float sort = shader::sortValue(def);
+            for (size_t s = 0; s < def.stages.size(); ++s) {
+                const shader::Stage& stage = def.stages[s];
+                bool clamp = false;
+                const std::string image = stageImage(stage, shaderSeconds, clamp);
+                if (image.empty()) continue;
+                DrawGroup& group = groups.get(item.shader, static_cast<int>(s),
+                                              std::string(assets::kImagePrefix) + image);
+                group.clamp = clamp;
+                group.blended = shader::stageBlends(stage);
+                group.src = group.blended ? stage.srcBlend : shader::BlendFactor::One;
+                group.dst = group.blended ? stage.dstBlend : shader::BlendFactor::Zero;
+                group.depthWrite = shader::stageWritesDepth(stage);
+                // `depthFunc disable` (JKA, ParseStage): GLS_DEPTHTEST_DISABLE —
+                // gfx/effects/whiteFlash zeichnet so ueber alles hinweg.
+                std::string depthFunc = stage.depthFunc;
+                for (char& c : depthFunc) {
+                    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                }
+                group.depthTest = depthFunc != "disable";
+                group.alphaTest = alphaTestOf(stage.alphaFunc);
+                group.sort = sort;
+                appendStage(group, raw, &stage, &stage.texMods, rawColour, shaderSeconds);
+            }
+            continue;
+        }
+        // Kein Shaderblock: der Ersatzshader der Engine fuer ein nacktes Bild
+        // (R_FindShader, LIGHTMAP_2D): rgbGen vertex, alphaGen vertex,
+        // GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA, ohne Tiefentest.
+        DrawGroup& group = groups.get(item.shader, 0, item.shader);
+        group.blended = true;
+        group.src = shader::BlendFactor::SrcAlpha;
+        group.dst = shader::BlendFactor::OneMinusSrcAlpha;
+        group.depthWrite = false;
+        group.depthTest = false;
+        group.sort = shader::kSortBlend0;
+        appendStage(group, raw, nullptr, info.texMods, rawColour, shaderSeconds, info.rgbWave,
+                    info.alphaWave);
     }
+
+    // Die Reihenfolge der Engine: nach Sortierstufe, dann nach dem Shader
+    // (wer zuerst da war), dann die Stufen eines Shaders nacheinander
+    // (R_SortDrawSurfs, RB_StageIteratorGeneric). Vorher: alphabetisch nach
+    // Shadername — ein Rauch, dessen Name hinter dem eines additiven Glimmens
+    // sortierte, deckte es zu.
+    std::stable_sort(out.groups.begin(), out.groups.end(),
+                     [](const DrawGroup& a, const DrawGroup& b) {
+                         if (a.sort != b.sort) return a.sort < b.sort;
+                         if (a.firstSeen != b.firstSeen) return a.firstSeen < b.firstSeen;
+                         return a.stage < b.stage;
+                     });
     return out;
 }
 
@@ -1449,12 +2090,8 @@ PreviewInfo describePreview(const System& system) {
             }
             vertices += group.second.vertices.size();
         }
-        for (const scene::Vertex& v : list.lines.vertices) {
-            const float d = v.pos[0] * v.pos[0] + v.pos[1] * v.pos[1] +
-                            v.pos[2] * v.pos[2];
-            if (d > longest) longest = d;
-        }
-        vertices += list.lines.vertices.size();
+        // Linien, Schweife und Blitze liegen seit sie Baender sind ebenfalls
+        // in byTexture — eine eigene Linienliste gibt es nicht mehr.
 
         if (vertices > mostVertices) {
             mostVertices = vertices;
