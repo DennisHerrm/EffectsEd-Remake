@@ -506,6 +506,7 @@ enum class Str {
     SaveChangesText,
     SaveChangesYes,
     SaveChangesNo,
+    MsgScreenshotClipboard,
     Count,
 };
 

@@ -568,6 +568,36 @@ public:
         return true;
     }
 
+    bool readBackbuffer(std::vector<unsigned char>& rgba, int& width,
+                        int& height) override {
+        if (!device_ || !context_ || !swapChain_) return false;
+        ComPtr<ID3D11Texture2D> backBuffer;
+        if (FAILED(swapChain_->GetBuffer(0, IID_PPV_ARGS(&backBuffer)))) return false;
+        D3D11_TEXTURE2D_DESC desc{};
+        backBuffer->GetDesc(&desc);
+        desc.Usage = D3D11_USAGE_STAGING;
+        desc.BindFlags = 0;
+        desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        desc.MiscFlags = 0;
+        ComPtr<ID3D11Texture2D> staging;
+        if (FAILED(device_->CreateTexture2D(&desc, nullptr, &staging))) return false;
+        context_->CopyResource(staging.Get(), backBuffer.Get());
+        D3D11_MAPPED_SUBRESOURCE mapped{};
+        if (FAILED(context_->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) return false;
+        width = static_cast<int>(desc.Width);
+        height = static_cast<int>(desc.Height);
+        rgba.assign(static_cast<size_t>(width) * height * 4, 255);
+        const auto* source = static_cast<const unsigned char*>(mapped.pData);
+        for (int y = 0; y < height; ++y) {
+            std::memcpy(rgba.data() + static_cast<size_t>(y) * width * 4,
+                        source + static_cast<size_t>(y) * mapped.RowPitch,
+                        static_cast<size_t>(width) * 4);
+        }
+        context_->Unmap(staging.Get(), 0);
+        for (size_t i = 3; i < rgba.size(); i += 4) rgba[i] = 255;
+        return true;
+    }
+
     TextureId createTexture(const unsigned char* rgba, int width, int height,
                             bool clamp, bool mipmaps) override {
         (void)clamp;

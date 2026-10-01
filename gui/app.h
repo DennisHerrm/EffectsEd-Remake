@@ -142,6 +142,12 @@ public:
     using ShellOpen = std::function<void(const std::string& path)>;
     void setShellOpen(ShellOpen open) { shellOpen_ = std::move(open); }
 
+    // Ein Bild (RGBA, oben links zuerst) in die Zwischenablage legen. Vom
+    // Fensterrahmen gesetzt — die Oberflaeche kennt kein Win32.
+    using ClipboardImage =
+        std::function<bool(const std::vector<unsigned char>& rgba, int width, int height)>;
+    void setClipboardImage(ClipboardImage copy) { clipboardImage_ = std::move(copy); }
+
     // Was die Erkundung beim Start ergeben hat, und welche Schnittstelle
     // benutzt wird. Der Fensterrahmen weiß das; die Oberfläche zeigt es im
     // Fenster „Grafiktreiber-Information".
@@ -579,6 +585,12 @@ private:
     void buildPreviewStopped();
 
     ShellOpen shellOpen_;
+    ClipboardImage clipboardImage_;
+    // Entwuerfe der Dialoge: erst Ok uebernimmt sie, Abbrechen verwirft.
+    playback::Settings playbackDraft_;
+    playback::Origin spawnOriginDraft_;
+    float colourBackup_[3] = {};
+    bool colourBackupOverridden_ = false;
     void startPlayback();
     // Die Zeitleiste zwischen Ansicht und Segmentliste.
     void drawTimeline(float dpiScale);

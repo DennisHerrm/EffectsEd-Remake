@@ -474,6 +474,30 @@ public:
         return true;
     }
 
+    bool readBackbuffer(std::vector<unsigned char>& rgba, int& width,
+                        int& height) override {
+        GLint view[4] = {};
+        glGetIntegerv(GL_VIEWPORT, view);
+        width = view[2];
+        height = view[3];
+        if (width <= 0 || height <= 0) return false;
+        rgba.assign(static_cast<size_t>(width) * height * 4, 0);
+        gl::BindFramebuffer(GL_FRAMEBUFFER, 0);
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+        const size_t rowBytes = static_cast<size_t>(width) * 4;
+        std::vector<unsigned char> row(rowBytes);
+        for (int y = 0; y < height / 2; ++y) {
+            unsigned char* upper = rgba.data() + static_cast<size_t>(y) * rowBytes;
+            unsigned char* lower = rgba.data() + static_cast<size_t>(height - 1 - y) * rowBytes;
+            std::memcpy(row.data(), upper, rowBytes);
+            std::memcpy(upper, lower, rowBytes);
+            std::memcpy(lower, row.data(), rowBytes);
+        }
+        for (size_t i = 3; i < rgba.size(); i += 4) rgba[i] = 255;
+        return true;
+    }
+
     TextureId createTexture(const unsigned char* rgba, int width, int height,
                             bool clamp, bool mipmaps) override {
         (void)mipmaps;

@@ -22,5 +22,7 @@ bool selbsttestAktiv();
 void selbsttestVorBild();
 // Nach App::buildFrame, vor ImGui::Render.
 void selbsttestNachBild(App& app, render::Renderer* renderer);
+// Nach renderImGui, vor present: Fensterfotos des Tests.
+void selbsttestNachZeichnen(render::Renderer* renderer);
 
 }  // namespace efx::gui

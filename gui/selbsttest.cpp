@@ -29,6 +29,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -565,6 +566,18 @@ public:
                     return b >= 2;
                 }};
     }
+    // Das ganze Fenster, in genau diesem Bild (siehe selbsttestNachZeichnen).
+    static std::string fensterFotoName;
+    static Schritt fensterFoto(const std::string& name) {
+        return {"Fensterfoto " + name, [=](int b) {
+                    if (fotoOrdner.empty()) return true;
+                    if (b == 0) {
+                        fensterFotoName = name;
+                        return false;
+                    }
+                    return fensterFotoName.empty() || b > 3;
+                }};
+    }
     static Schritt foto(const std::string& name) {
         return {"Foto " + name, [=](int) {
                     if (fotoOrdner.empty() || renderer == nullptr) return true;
@@ -945,6 +958,156 @@ public:
         return s;
     }
 
+    // --- Dialoge -----------------------------------------------------------
+    //
+    // Jeder Dialog geht auf, zeigt sich ganz, und schliesst mit Ok wie mit
+    // Abbrechen. Abbrechen darf nichts veraendern — im Original sind das
+    // Windows-Dialoge, und dort heisst Abbrechen: alles wie vorher.
+    static bool dialogOffen(const std::string& kennung) {
+        ImGuiContext& g = *GImGui;
+        for (const auto& p : g.OpenPopupStack) {
+            if (p.Window && std::string(p.Window->Name).find(kennung) != std::string::npos) {
+                return true;
+            }
+        }
+        return false;
+    }
+    static void dialogAufZu(std::vector<Schritt>& s, Str menu, Str eintrag,
+                            const std::string& kennung, Str knopf) {
+        menue(s, menu, eintrag);
+        s.push_back(warteBis(std::string(tr(eintrag)) + " offen", [=] { return dialogOffen(kennung); }, 30));
+        s.push_back(fensterFoto("dialog" + kennung.substr(3)));
+        s.push_back(klick(tr(knopf), kennung));
+        s.push_back(warteBis(std::string(tr(eintrag)) + " wieder zu", [=] { return !dialogOffen(kennung); }, 30));
+    }
+
+    static std::vector<Schritt> teilDialoge() {
+        std::vector<Schritt> s;
+        s.push_back(teil("dialoge"));
+        frischesDokument(s);
+        neuesSegment(s, PrimitiveType::Particle);
+
+        // Ueber, Grafiktreiber, Wind, Sonne: auf und mit Ok zu.
+        dialogAufZu(s, Str::MenuHelp, Str::HelpAbout, "###about", Str::MsgOk);
+        dialogAufZu(s, Str::MenuView, Str::ViewGraphicsInfo, "###driverinfo", Str::MsgOk);
+        dialogAufZu(s, Str::MenuView, Str::DialogWind, "###wind", Str::MsgOk);
+        dialogAufZu(s, Str::MenuView, Str::DialogSun, "###sun", Str::MsgOk);
+
+        // Wandfarbe: aendern, Abbrechen -> unveraendert.
+        auto farbe = std::make_shared<std::array<float, 4>>();
+        s.push_back(tu("Wandfarbe merken", [=] {
+            (*farbe)[0] = app->wallColour_[0];
+            (*farbe)[1] = app->wallColour_[1];
+            (*farbe)[2] = app->wallColour_[2];
+            (*farbe)[3] = app->wallColourOverridden_ ? 1.0f : 0.0f;
+        }));
+        menue(s, Str::MenuEdit, Str::EditWallColor);
+        s.push_back(warteBis("Wandfarbe offen", [] { return dialogOffen("###colour"); }, 30));
+        s.push_back(fensterFoto("dialog_wandfarbe"));
+        s.push_back(tu("Farbe im Dialog verstellen (wie ein Zug im Farbfeld)", [] {
+            app->wallColour_[0] = 0.9f;
+            app->wallColour_[1] = 0.1f;
+            app->wallColour_[2] = 0.1f;
+            app->wallColourOverridden_ = true;
+            app->geometryDirty_ = true;
+        }));
+        s.push_back(klick(tr(Str::MsgCancel), "###colour"));
+        s.push_back(pruefSchritt("Wandfarbe: Abbrechen stellt die alte Farbe wieder her", [=] {
+            // Ohne eigene Farbe gilt die des Themas — dann zaehlt nur, dass
+            // keine eigene uebrig bleibt.
+            const bool vorherEigen = (*farbe)[3] != 0.0f;
+            if (app->wallColourOverridden_ != vorherEigen) return false;
+            return !vorherEigen || (app->wallColour_[0] == (*farbe)[0] &&
+                                    app->wallColour_[1] == (*farbe)[1] &&
+                                    app->wallColour_[2] == (*farbe)[2]);
+        }));
+        s.push_back(allesZu());
+
+        // Wiedergabe-Einstellungen: Modus aendern, Abbrechen -> unveraendert.
+        auto modus = std::make_shared<int>(0);
+        s.push_back(tu("Wiedergabemodus merken", [=] { *modus = static_cast<int>(app->playback_.mode); }));
+        menue(s, Str::MenuEffects, Str::EffectsPlaybackSettings);
+        s.push_back(warteBis("Wiedergabe offen", [] { return dialogOffen("###playback"); }, 30));
+        s.push_back(fensterFoto("dialog_wiedergabe"));
+        s.push_back(tu("Modus im Dialog umstellen", [] {}));
+        s.push_back(klickAuf("Klick anderer Modus", [=]() -> const Element* {
+            const Str ziel = *modus == 0 ? Str::PlaybackUntilStopped : Str::PlaybackOnce;
+            return finde(tr(ziel), "###playback");
+        }));
+        s.push_back(klick(tr(Str::MsgCancel), "###playback"));
+        s.push_back(pruefSchritt("Wiedergabe: Abbrechen laesst den Modus, wie er war",
+                                 [=] { return static_cast<int>(app->playback_.mode) == *modus; }));
+        s.push_back(allesZu());
+
+        // Eigener Ursprung: Abbrechen -> unveraendert.
+        auto ursprung = std::make_shared<int>(0);
+        s.push_back(tu("Ursprung merken", [=] { *ursprung = static_cast<int>(app->spawnOrigin_.mode); }));
+        menue(s, Str::MenuEffects, Str::EffectsCustomOrigin);
+        s.push_back(warteBis("Ursprung offen", [] { return dialogOffen("###spawnorigin"); }, 30));
+        s.push_back(fensterFoto("dialog_ursprung"));
+        s.push_back(klick(tr(Str::OriginCustom), "###spawnorigin"));
+        s.push_back(klick(tr(Str::MsgCancel), "###spawnorigin"));
+        s.push_back(pruefSchritt("Eigener Ursprung: Abbrechen laesst alles, wie es war",
+                                 [=] { return static_cast<int>(app->spawnOrigin_.mode) == *ursprung; }));
+        s.push_back(allesZu());
+        // ... und Ok uebernimmt.
+        menue(s, Str::MenuEffects, Str::EffectsCustomOrigin);
+        s.push_back(warteBis("Ursprung offen", [] { return dialogOffen("###spawnorigin"); }, 30));
+        s.push_back(klick(tr(Str::OriginOnFloor), "###spawnorigin"));
+        s.push_back(klick(tr(Str::MsgOk), "###spawnorigin"));
+        s.push_back(pruefSchritt("Eigener Ursprung: Ok uebernimmt", [] {
+            return app->spawnOrigin_.mode == playback::OriginMode::OnFloor;
+        }));
+        s.push_back(allesZu());
+
+        // Grafikschnittstelle wechseln: Rueckfrage, Abbrechen -> kein Wechsel.
+        menue(s, Str::MenuView, render::backendName(render::Backend::OpenGL3), tr(Str::ViewRenderer));
+        s.push_back(warteBis("Rueckfrage Grafikschnittstelle offen",
+                             [] { return dialogOffen("###renderer"); }, 30));
+        s.push_back(fensterFoto("dialog_grafik"));
+        s.push_back(klick(tr(Str::MsgCancel), "###renderer"));
+        s.push_back(pruefSchritt("Grafikschnittstelle: Abbrechen wechselt nicht", [] {
+            render::Backend ziel{};
+            return !app->wantsRendererChange(ziel);
+        }));
+        s.push_back(allesZu());
+
+        // Handbuch: wird geschrieben und an Windows uebergeben.
+        s.push_back(tu("Shell-Liste leeren", [] { geoeffnetPerShell.clear(); }));
+        menue(s, Str::MenuHelp, Str::HelpUsersGuide);
+        s.push_back(pruefSchritt("Handbuch: Datei an den Browser uebergeben", [] {
+            return !geoeffnetPerShell.empty() && fs::exists(geoeffnetPerShell.back());
+        }));
+
+        // Bildschirmfoto in Datei.
+        auto vorher = std::make_shared<size_t>(0);
+        const auto zaehleTga = [] {
+            size_t n = 0;
+            std::error_code ec;
+            for (const auto& e : fs::directory_iterator(paths::configDir(), ec)) {
+                if (e.path().extension() == ".tga") ++n;
+            }
+            return n;
+        };
+        s.push_back(tu("Bilder zaehlen", [=] { *vorher = zaehleTga(); }));
+        menue(s, Str::MenuView, Str::ViewScreenshot);
+        s.push_back(warte(3));
+        s.push_back(pruefSchritt("Screenshot to File schreibt ein Bild", [=] { return zaehleTga() == *vorher + 1; }));
+        // Bildschirmfoto in die Zwischenablage.
+        s.push_back(tu("Zwischenablage leeren", [] {
+            if (OpenClipboard(nullptr)) {
+                EmptyClipboard();
+                CloseClipboard();
+            }
+        }));
+        menue(s, Str::MenuView, Str::ViewScreenshotClip);
+        s.push_back(warte(3));
+        s.push_back(pruefSchritt("Screenshot to Clipboard legt ein Bild in die Zwischenablage",
+                                 [] { return IsClipboardFormatAvailable(CF_DIB) != FALSE; }));
+        s.push_back(pruefSchritt("... und schreibt dabei keine Datei", [=] { return zaehleTga() == *vorher + 1; }));
+        return s;
+    }
+
     // --- Jedes Feld jedes Typs -------------------------------------------
     //
     // Fuer jeden der dreizehn Typen: Segment anlegen, jeden Reiter oeffnen,
@@ -982,6 +1145,8 @@ public:
                              meldeOk(was + " aendert die Datei");
                          } else if (pflicht) {
                              meldeFehler(was + " aendert die Datei NICHT");
+                             static int nummer = 0;
+                             einfuegen({fensterFoto("fehler_" + std::to_string(++nummer))});
                          } else {
                              diag::info("Selbsttest HINWEIS: [" + aktuellerTeil + "] " + was +
                                         " aendert die Datei nicht");
@@ -1116,6 +1281,11 @@ public:
                 s.push_back(klick(label, "properties"));
                 s.push_back(warteBis("Reiter " + label + " offen",
                                      [reiter] { return app->propertyTab_ == reiter; }, 30));
+                {
+                    std::string datei = "reiter_" + name + "_" + label;
+                    std::replace(datei.begin(), datei.end(), '/', '-');
+                    s.push_back(fensterFoto(datei));
+                }
                 s.push_back(reiterScan(name + "/" + label));
             }
             const std::string pfad = arbeitsOrdner + "/felder_" + name + ".efx";
@@ -1170,6 +1340,7 @@ public:
             {"ansicht", &teilAnsicht},
             {"wiedergabe", &teilWiedergabe},
             {"eigenschaften", &teilEigenschaften},
+            {"dialoge", &teilDialoge},
             {"felder", &teilFelder},
         };
         std::vector<Schritt> s;
@@ -1200,6 +1371,7 @@ std::deque<std::string> Selbsttest::dateiAntworten;
 std::vector<std::string> Selbsttest::geoeffnetPerShell;
 std::string Selbsttest::aktuellerTeil = "vorlauf";
 size_t Selbsttest::einfuegeAn = 0;
+std::string Selbsttest::fensterFotoName;
 
 // ===========================================================================
 // Einstieg
@@ -1231,6 +1403,21 @@ bool selbsttestVorbereiten() {
 }
 
 bool selbsttestAktiv() { return g_an; }
+
+void selbsttestNachZeichnen(render::Renderer* renderer) {
+    if (!g_an || Selbsttest::fensterFotoName.empty() || renderer == nullptr) return;
+    std::vector<unsigned char> rgba;
+    int w = 0, h = 0;
+    if (renderer->readBackbuffer(rgba, w, h)) {
+        const auto tga = image::encodeTga(rgba.data(), w, h);
+        std::ofstream f(Selbsttest::fotoOrdner + "/" + Selbsttest::fensterFotoName + ".tga",
+                        std::ios::binary);
+        f.write(reinterpret_cast<const char*>(tga.data()), static_cast<std::streamsize>(tga.size()));
+    } else {
+        Selbsttest::meldeFehler("Fensterfoto " + Selbsttest::fensterFotoName + ": nicht lesbar");
+    }
+    Selbsttest::fensterFotoName.clear();
+}
 
 void selbsttestVorBild() {
     if (!g_an) return;
