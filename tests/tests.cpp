@@ -463,6 +463,34 @@ void testWindIsDead() {
     }
 }
 
+void testDiagnosticSegment() {
+    std::cout << "== Meldungen kennen ihr Segment ==\n";
+    // Ein Klick im Meldungsfenster waehlt das betroffene Segment. Dafuer
+    // muss jede Pruefmeldung sagen, welches es ist — die Hauptpruefung trug
+    // frueher 0 ein, und der Klick tat nichts.
+    efx::Effect effect;
+    effect.primitives.resize(3);
+    effect.primitives[0].type = efx::PrimitiveType::Particle;
+    effect.primitives[0].shaders.push_back("gfx/misc/test");
+    effect.primitives[1].type = efx::PrimitiveType::Sound;   // ohne Datei
+    effect.primitives[2].type = efx::PrimitiveType::Particle;  // ohne Shader
+    effect.primitives[2].shaders.push_back("gibt/es/nicht");
+    bool sound = false, ohneSegment = true;
+    for (const auto& d : efx::validate(effect)) {
+        if (d.id == efx::i18n::Str::VSoundNoFile) sound = d.primitive == 1;
+        if (d.primitive < 0 || d.primitive > 2) ohneSegment = false;
+        check(d.line == 0, "Pruefmeldungen haben keine Dateizeile");
+    }
+    check(sound, "die Sound-Meldung gehoert zu Segment 2");
+    check(ohneSegment, "jede Segmentmeldung nennt ein gueltiges Segment");
+    bool shader = false;
+    for (const auto& d : efx::validateShaderNames(effect, [](const std::string&) { return false; })) {
+        if (d.primitive == 0 || d.primitive == 2) shader = true;
+        check(d.line == 0, "die Shaderpruefung meldet das Segment nicht mehr als Zeile");
+    }
+    check(shader, "fehlende Shader nennen ihr Segment");
+}
+
 void testDialects() {
     std::cout << "== Dialekte SP und MP ==\n";
 
@@ -12448,6 +12476,7 @@ int main(int argc, char** argv) {
     }
     testPrecision();
     testNumberText();
+    testDiagnosticSegment();
     testFlags();
     testTolerance();
     testKnownRavenBugs();

@@ -1655,6 +1655,179 @@ public:
         return s;
     }
 
+    // --- Werkzeuge: Meldungen, Protokoll, Teiler, Regler, Leisten ------------------
+    static void feldNachLabel(std::vector<Schritt>& s, const std::string& label, const std::string& text) {
+        s.push_back(klickAuf("Doppelklick " + label, [=] { return finde(label, "##main"); }, 0, true));
+        s.push_back(taste(ImGuiKey_A, true));
+        s.push_back(tippe(text));
+        s.push_back(taste(ImGuiKey_Enter));
+    }
+
+    static std::vector<Schritt> teilWerkzeug() {
+        std::vector<Schritt> s;
+        s.push_back(teil("werkzeug"));
+        frischesDokument(s);
+        neuesSegment(s, PrimitiveType::Particle);
+        // Meldungen: ein Particle ohne Shader erzeugt einen Hinweis; die Zahl
+        // in der Statuszeile oeffnet das Fenster, ein Klick waehlt das Segment.
+        neuesSegment(s, PrimitiveType::Sound);
+        s.push_back(tu("Meldungen auffrischen", [] { app->refreshDiagnostics(); }));
+        s.push_back(warte(2));
+        s.push_back(klickAuf("Klick auf die Meldungszahl", [] {
+            for (const Element& e : g_elemente) {
+                if (e.innen.find("##main") != std::string::npos &&
+                    (e.label.find(tr(Str::DiagWarning)) != std::string::npos ||
+                     e.label.find(tr(Str::DiagError)) != std::string::npos)) {
+                    return &e;
+                }
+            }
+            return static_cast<const Element*>(nullptr);
+        }));
+        s.push_back(pruefSchritt("Klick auf die Meldungszahl oeffnet das Meldungsfenster",
+                                 [] { return app->showMessagesWindow_; }));
+        s.push_back(warte(2));
+        s.push_back(fensterFoto("meldungen"));
+        auto zielSegment = std::make_shared<int>(-1);
+        s.push_back(tu("Segment merken", [=] {
+            *zielSegment = doc().diagnostics.empty() ? -1 : doc().diagnostics.front().primitive;
+            // Ein anderes Segment waehlen als das der ersten Meldung.
+            doc().selectedPrimitive = *zielSegment == 0 ? 1 : 0;
+        }));
+        s.push_back(klickAuf("Klick erste Meldung", [] {
+            for (const Element& e : g_elemente) {
+                if (e.innen.find("###messages") != std::string::npos && !e.label.empty() &&
+                    e.label.find("###") == std::string::npos) {
+                    return &e;
+                }
+            }
+            return static_cast<const Element*>(nullptr);
+        }));
+        s.push_back(pruefSchritt("Klick auf eine Meldung waehlt das betroffene Segment",
+                                 [=] { return *zielSegment >= 0 && doc().selectedPrimitive == *zielSegment; }));
+        s.push_back(tu("Meldungen zu", [] { app->showMessagesWindow_ = false; }));
+        // Protokoll: oeffnen, alles kopieren.
+        menue(s, Str::MenuView, Str::WindowLog);
+        s.push_back(tu("Zwischenablage leeren", [] {
+            if (OpenClipboard(nullptr)) {
+                EmptyClipboard();
+                CloseClipboard();
+            }
+        }));
+        s.push_back(klick(tr(Str::LogCopy), "###log"));
+        s.push_back(pruefSchritt("Protokoll: 'Alles kopieren' legt Text in die Zwischenablage",
+                                 [] { return IsClipboardFormatAvailable(CF_TEXT) != FALSE; }));
+        s.push_back(tu("Protokoll zu", [] { app->showLogWindow_ = false; }));
+        // Zeitfaktor eintippen.
+        feldNachLabel(s, "##timeScale", "2");
+        s.push_back(pruefSchritt("Zeitfaktor 2 eingetippt: Uhr laeuft doppelt", [] {
+            return std::fabs(app->settings_.timeScale - 2.0f) < 1e-3f &&
+                   std::fabs(doc().clock.speed() - 2.0f) < 1e-3f;
+        }));
+        feldNachLabel(s, "##timeScale", "1");
+        // Wiederholrate eintippen: wird zum repeatDelay der Datei.
+        feldNachLabel(s, "##repeatRate", "1.5");
+        s.push_back(pruefSchritt("Wiederholrate 1.5 s: repeatDelay 1500 in der Datei", [] {
+            return effekt().repeatDelaySet && effekt().repeatDelay == 1500 &&
+                   text().find("repeatDelay") != std::string::npos;
+        }));
+        // Weltmassstab: Kamera faehrt mit (wie im Original).
+        auto abstand = std::make_shared<float>(0.0f);
+        s.push_back(tu("Abstand merken", [=] {
+            app->camera_.reset(app->settings_.worldScale);
+            *abstand = app->camera_.distance();
+        }));
+        s.push_back(klickMarke("weltmassstab"));
+        s.push_back(klickAuf("16 Einheiten je Fuss waehlen", [] {
+            for (int i = 0; i < layout::worldScaleCount(); ++i) {
+                if (layout::worldScales()[i].unitsPerFoot == 16.0f) {
+                    return finde(layout::worldScales()[i].label(), "##Combo");
+                }
+            }
+            return static_cast<const Element*>(nullptr);
+        }));
+        s.push_back(warte(3));
+        s.push_back(pruefSchritt("Weltmassstab 16: Kameraabstand waechst um 1.6", [=] {
+            return app->settings_.worldScale == 16.0f &&
+                   std::fabs(app->camera_.distance() - *abstand * 1.6f) < 0.01f;
+        }));
+        s.push_back(tu("zurueck auf 10", [] { app->settings_.worldScale = 10.0f; }));
+        s.push_back(warte(3));
+        // Leisten ein- und ausblenden.
+        menue(s, Str::MenuView, Str::ViewMainToolbar);
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("Main Toolbar aus: 'New' ist weg", [] {
+            return !app->settings_.showMainToolbar && finde("##new", "##main") == nullptr;
+        }));
+        menue(s, Str::MenuView, Str::ViewMainToolbar);
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("Main Toolbar wieder an", [] { return finde("##new", "##main") != nullptr; }));
+        menue(s, Str::MenuView, Str::ViewPlaybackToolbar);
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("Playback Toolbar aus: Wiederholrate ist weg",
+                                 [] { return finde("##repeatRate", "##main") == nullptr; }));
+        menue(s, Str::MenuView, Str::ViewPlaybackToolbar);
+        // Teiler ziehen: die Eigenschaftsspalte wird breiter.
+        auto anteil = std::make_shared<float>(0.0f);
+        s.push_back(tu("Anteil merken", [=] { *anteil = app->settings_.split.propertiesFraction; }));
+        s.push_back({"Teiler links/rechts ziehen", [=](int b) {
+                         ImGuiIO& io = ImGui::GetIO();
+                         // Der Teiler liegt zwischen der linken Spalte und der
+                         // Eigenschaftsspalte. Nur sichtbare Fenster zaehlen: alte
+                         // Tabs lassen ihre Kinder in der Liste stehen, und die
+                         // Eigenschaftsspalte hat selbst noch Kinder.
+                         auto kind = [](const char* praefix) -> ImGuiWindow* {
+                             for (ImGuiWindow* c : GImGui->Windows) {
+                                 const std::string n = c->Name;
+                                 if (c->WasActive && n.find(praefix) == 0 &&
+                                     n.find('/', std::strlen("##main/")) == std::string::npos) {
+                                     return c;
+                                 }
+                             }
+                             return nullptr;
+                         };
+                         ImGuiWindow* lw = kind("##main/leftColumn");
+                         ImGuiWindow* pw = kind("##main/properties");
+                         if (!lw || !pw) return true;
+                         const ImVec2 at((lw->Pos.x + lw->Size.x + pw->Pos.x) * 0.5f, pw->Pos.y + pw->Size.y * 0.5f);
+                         if (b == 0) setzeMaus(at);
+                         if (b == 1) io.AddMouseButtonEvent(0, true);
+                         if (b >= 2 && b <= 8) setzeMaus(ImVec2(at.x - 15.0f * float(b - 1), at.y));
+                         if (b == 9) io.AddMouseButtonEvent(0, false);
+                         return b >= 11;
+                     }});
+        s.push_back(pruefSchritt("Teiler ziehen macht die Eigenschaftsspalte breiter",
+                                 [=] { return app->settings_.split.propertiesFraction > *anteil + 0.01f; }));
+        // Segment abschalten: die Vorschau hat keine lebenden Teilchen mehr.
+        s.push_back(tu("nur ein Segment, lange Lebensdauer", [] {
+            effekt().primitives.resize(1);
+            effekt().primitives[0].life = Range::single(3000.0f);
+            doc().segmentEnabled.assign(1, true);
+            doc().selectedPrimitive = 0;
+            app->recordChange("test");
+            app->startPlayback();
+        }));
+        s.push_back(warte(10));
+        s.push_back(pruefSchritt("Segment an: Teilchen leben", [] { return app->lastAlive_ > 0; }));
+        s.push_back(klickAuf("Haekchen Segment 1", [] {
+            for (const Element& e : g_elemente) {
+                if (e.innen.find("segments") != std::string::npos && e.label == "##enabled") return &e;
+            }
+            return static_cast<const Element*>(nullptr);
+        }));
+        s.push_back(warte(5));
+        s.push_back(pruefSchritt("Segment aus: keine Teilchen mehr in der Vorschau",
+                                 [] { return app->lastAlive_ == 0; }));
+        // Raumarten (efxed-Zugabe: draussen mit Himmel, gar nichts).
+        const Str arten[] = {Str::RoomOpenSky, Str::RoomNone, Str::RoomEnclosed};
+        for (Str a : arten) {
+            menue(s, Str::MenuView, Str::ViewRoomStyle, a);
+            s.push_back(warte(3));
+            s.push_back(fensterFoto(std::string("raumart_") + std::to_string(static_cast<int>(a))));
+        }
+        s.push_back(pruefSchritt("Raumart wieder geschlossen", [] { return app->settings_.roomStyle == 0; }));
+        return s;
+    }
+
     // --- Dialoge -----------------------------------------------------------
     //
     // Jeder Dialog geht auf, zeigt sich ganz, und schliesst mit Ok wie mit
@@ -2160,6 +2333,7 @@ public:
             {"bibliothek", &teilBibliothek},
             {"auswahl", &teilAuswahl},
             {"dokumente", &teilDokumente},
+            {"werkzeug", &teilWerkzeug},
             {"felder", &teilFelder},
         };
         // Nicht in "alles": dauert mit allen Effekten mehrere Minuten.

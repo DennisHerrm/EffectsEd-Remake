@@ -1045,9 +1045,9 @@ void App::drawDialogs() {
                     ImGui::SameLine();
                 }
                 if (ImGui::Selectable(d.message.c_str())) {
-                    // Die Meldungen der Pruefregeln tragen die Segmentnummer
-                    // in `line` — so entsteht die Verbindung zur Liste.
-                    const int at = d.line - 1;
+                    // Die Meldungen der Pruefregeln tragen ihr Segment in
+                    // `primitive` — so entsteht die Verbindung zur Liste.
+                    const int at = d.primitive;
                     if (at >= 0 &&
                         at < static_cast<int>(doc().effect.primitives.size())) {
                         doc().selectedPrimitive = at;

@@ -38,6 +38,21 @@ std::string message(i18n::Str id, Args... args) {
 }
 
 
+// Ordnet alle Meldungen, die waehrend seiner Lebenszeit dazukommen, einem
+// Segment zu — auch die aus Zweigen mit `continue`.
+struct SegmentTag {
+    std::vector<Diagnostic>& out;
+    size_t first;
+    int primitive;
+    SegmentTag(std::vector<Diagnostic>& o, size_t index)
+        : out(o), first(o.size()), primitive(static_cast<int>(index)) {}
+    ~SegmentTag() {
+        for (size_t k = first; k < out.size(); ++k) out[k].primitive = primitive;
+    }
+    SegmentTag(const SegmentTag&) = delete;
+    SegmentTag& operator=(const SegmentTag&) = delete;
+};
+
 void add(std::vector<Diagnostic>& out, Severity severity,
          std::string message, i18n::Str id = i18n::Str::Count) {
     out.push_back({severity, 0, std::move(message), id});
@@ -82,6 +97,7 @@ std::vector<Diagnostic> validate(const Effect& effect, Dialect target) {
 
     for (size_t i = 0; i < effect.primitives.size(); ++i) {
         const Primitive& p = effect.primitives[i];
+        const SegmentTag tag(out, i);
         const std::string where =
             std::string(typeName(p.type)) + " #" + std::to_string(i + 1) +
             (p.name.empty() ? std::string{} : " (\"" + p.name + "\")");
@@ -423,13 +439,14 @@ std::vector<Diagnostic> validateShaderNames(
     // das erst eine andere Mod mitbringt.
     for (size_t i = 0; i < effect.primitives.size(); ++i) {
         const Primitive& p = effect.primitives[i];
+        const SegmentTag tag(out, i);
         const std::string where =
             std::string(typeName(p.type)) + " #" + std::to_string(i + 1) +
             (p.name.empty() ? std::string{} : " (\"" + p.name + "\")");
 
         for (const auto& name : p.shaders) {
             if (name.empty() || exists(name)) continue;
-            out.push_back({Severity::Warning, static_cast<int>(i + 1),
+            out.push_back({Severity::Warning, 0,
                            where + ": " +
                                message(i18n::Str::VShaderMissing, name.c_str())});
         }
@@ -443,6 +460,7 @@ std::vector<Diagnostic> validateAgainstShaders(const Effect& effect,
 
     for (size_t i = 0; i < effect.primitives.size(); ++i) {
         const Primitive& p = effect.primitives[i];
+        const SegmentTag tag(out, i);
         const std::string where =
             std::string(typeName(p.type)) + " #" + std::to_string(i + 1) +
             (p.name.empty() ? std::string{} : " (\"" + p.name + "\")");

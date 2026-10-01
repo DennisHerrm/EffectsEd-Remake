@@ -29,6 +29,14 @@ struct Diagnostic {
     //
     // `Count` heißt: keine bestimmte, etwa bei Meldungen aus dem Leser.
     i18n::Str id = i18n::Str::Count;
+
+    // Welches Segment die Meldung betrifft (0-basiert), -1 fuer keines.
+    //
+    // Frueher trugen die Pruefregeln die Segmentnummer in `line`, die
+    // Hauptpruefung aber 0 — ein Klick im Meldungsfenster waehlte darum bei
+    // keiner ihrer Meldungen das Segment, und die Shaderpruefung zeigte die
+    // Segmentnummer als "Zeile" an. `line` ist jetzt immer die Dateizeile.
+    int primitive = -1;
 };
 
 struct ReadResult {
