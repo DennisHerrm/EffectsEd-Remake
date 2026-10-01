@@ -224,6 +224,13 @@ struct ResolvedTexture {
 //
 //   2. Gesucht wird in ALLEN Spielpfaden und Archiven, nicht nur im ersten —
 //      wie bei Bildern auch.
+
+// Der Spielpfad, unter dem eine Datei liegt: alles bis einschliesslich des
+// letzten Ordners "base" (gross/klein egal), mit Schraegstrichen. Leer, wenn
+// kein solcher Ordner im Pfad vorkommt. Das Original leitet so den Spielpfad
+// aus der geoeffneten Datei ab.
+std::string gamePathFromFile(const std::string& path);
+
 // Sucht die Ordner, die wie ein Spielordner aussehen.
 //
 // Wofür: der Anwender zeigt auf `GameData` und erwartet, dass base, seine Mod

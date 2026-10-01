@@ -363,6 +363,17 @@ bool App::openFile(const std::string& path) {
     settings_.addRecentFile(path);
     doc().selectedPrimitive = doc().effect.primitives.empty() ? -1 : 0;
     doc().dirty = false;
+    // Wie im Original: liegt die Datei unter ".../base/", ist das der
+    // Spielpfad — aber nur, wenn noch keiner eingestellt ist. Ein gewaehlter
+    // Pfad wird nie still ersetzt.
+    if (settings_.gamePath.empty()) {
+        const std::string derived = assets::gamePathFromFile(path);
+        if (!derived.empty()) {
+            settings_.gamePath = derived;
+            diag::info("game path from file: " + derived);
+            rescanAssets();
+        }
+    }
     refreshDiagnostics();
 
     buildPreviewStopped();
