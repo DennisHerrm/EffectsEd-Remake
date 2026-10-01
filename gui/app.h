@@ -34,6 +34,7 @@
 #include "audio_win32.h"
 #include "icons.h"
 
+#include "efx/md3.h"
 #include "efx/particles.h"
 #include "efx/playback.h"
 #include "efx/scene.h"
@@ -696,6 +697,18 @@ private:
     // falsche Ort.
     std::map<std::string, std::unique_ptr<Effect>> childEffects_;
     const Effect* loadChildEffect(const std::string& name);
+
+    // Die md3-Modelle der Emitter (`useModel`), je Name aus der .efx.
+    //
+    // Anders als childEffects_ wird hier beim neuen Einlesen des Bestands
+    // NICHT geleert: die laufenden Systeme halten Zeiger auf die Modelle
+    // (particles::Live::model) ueber das ganze Abspielen. Vergessen wird nur
+    // das Scheitern — ein Modell, das vorher fehlte, kann jetzt da sein.
+    std::map<std::string, std::unique_ptr<md3::Model>> modelCache_;
+    const md3::Model* loadModel(const std::string& name);
+    particles::ModelLoader modelLoader() {
+        return [this](const std::string& name) { return loadModel(name); };
+    }
 
     // Klaenge. Wie die Texturen zwischengespeichert — und wie dort wird auch
     // das Scheitern gemerkt, sonst wird bei jedem Durchlauf wieder vergeblich

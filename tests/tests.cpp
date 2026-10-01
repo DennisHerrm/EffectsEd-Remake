@@ -32,6 +32,8 @@
 #include "efx/fields.h"
 #include "efx/diag.h"
 #include "efx/jobs.h"
+#include "efx/md3.h"
+#include <map>
 #include <numeric>
 #include <set>
 #include <mutex>
@@ -13149,6 +13151,368 @@ void testRenderSmallSimulationPoints() {
     check(radial, "FxRunner mit axisFromSphere: das Kind fliegt radial nach aussen");
 }
 
+// --- 18. md3-Modelle der Emitter ------------------------------------------------------
+//
+// Ein md3 im Speicher, Feld fuer Feld nach qfiles.h: Kopf, ein Bild, eine
+// Flaeche mit einem Shader, Dreiecken, Texturkoordinaten und xyz/Normalen.
+struct Md3Writer {
+    std::vector<unsigned char> bytes;
+    void i32(int32_t v) {
+        for (int k = 0; k < 4; ++k) bytes.push_back(static_cast<unsigned char>((static_cast<uint32_t>(v) >> (8 * k)) & 0xFFu));
+    }
+    void i16(int16_t v) {
+        bytes.push_back(static_cast<unsigned char>(static_cast<uint16_t>(v) & 0xFFu));
+        bytes.push_back(static_cast<unsigned char>(static_cast<uint16_t>(v) >> 8));
+    }
+    void f32(float v) {
+        uint32_t u = 0;
+        std::memcpy(&u, &v, 4);
+        i32(static_cast<int32_t>(u));
+    }
+    void name(const std::string& text, size_t length) {
+        for (size_t k = 0; k < length; ++k) bytes.push_back(k < text.size() ? static_cast<unsigned char>(text[k]) : 0);
+    }
+    void putI32(size_t at, int32_t v) {
+        for (int k = 0; k < 4; ++k) bytes[at + k] = static_cast<unsigned char>((static_cast<uint32_t>(v) >> (8 * k)) & 0xFFu);
+    }
+};
+
+struct Md3Corner {
+    float x, y, z;     // Einheiten
+    int lat, lng;      // Normale in 256stel des Vollkreises
+    float s, t;
+};
+
+std::vector<unsigned char> makeMd3(const std::vector<Md3Corner>& corners,
+                                   const std::vector<int>& indices,
+                                   const std::string& shaderName) {
+    Md3Writer w;
+    // md3Header_t (108 Bytes)
+    w.name("IDP3", 4);
+    w.i32(15);
+    w.name("models/test/box.md3", 64);
+    w.i32(0);    // flags
+    w.i32(1);    // numFrames
+    w.i32(0);    // numTags
+    w.i32(1);    // numSurfaces
+    w.i32(0);    // numSkins
+    w.i32(108);  // ofsFrames
+    w.i32(164);  // ofsTags (leer)
+    w.i32(164);  // ofsSurfaces
+    const size_t ofsEndAt = w.bytes.size();
+    w.i32(0);    // ofsEnd, unten
+    // md3Frame_t (56 Bytes)
+    for (float v : {-10.0f, -10.0f, -10.0f, 10.0f, 10.0f, 10.0f, 0.0f, 0.0f, 0.0f, 17.3f}) w.f32(v);
+    w.name("frame0", 16);
+    // md3Surface_t (108 Bytes), Versaetze ab Flaechenanfang
+    const size_t surface = w.bytes.size();
+    const int verts = static_cast<int>(corners.size());
+    const int tris = static_cast<int>(indices.size() / 3);
+    const int ofsShaders = 108;
+    const int ofsTriangles = ofsShaders + 68;
+    const int ofsSt = ofsTriangles + 12 * tris;
+    const int ofsXyz = ofsSt + 8 * verts;
+    const int ofsEnd = ofsXyz + 8 * verts;
+    w.name("IDP3", 4);
+    w.name("box", 64);
+    w.i32(0);  // flags
+    w.i32(1);  // numFrames
+    w.i32(1);  // numShaders
+    w.i32(verts);
+    w.i32(tris);
+    w.i32(ofsTriangles);
+    w.i32(ofsShaders);
+    w.i32(ofsSt);
+    w.i32(ofsXyz);
+    w.i32(ofsEnd);
+    w.name(shaderName, 64);
+    w.i32(0);
+    for (int index : indices) w.i32(index);
+    for (const auto& c : corners) { w.f32(c.s); w.f32(c.t); }
+    for (const auto& c : corners) {
+        w.i16(static_cast<int16_t>(std::lround(c.x * 64.0f)));
+        w.i16(static_cast<int16_t>(std::lround(c.y * 64.0f)));
+        w.i16(static_cast<int16_t>(std::lround(c.z * 64.0f)));
+        w.i16(static_cast<int16_t>((c.lat << 8) | c.lng));
+    }
+    (void)surface;
+    w.putI32(ofsEndAt, static_cast<int32_t>(w.bytes.size()));
+    return w.bytes;
+}
+
+// Ein Dreieck: Spitzen auf der x-, y- und z-Achse, 10 Einheiten weit. Die
+// Normale der ersten zeigt nach oben (lng 0), die der zweiten nach unten
+// (lng 128 = 180 Grad), die der dritten entlang x (lat 0, lng 64).
+std::vector<unsigned char> testTriangleMd3(const std::string& shaderName = "models/test/box.tga") {
+    return makeMd3({{10, 0, 0, 0, 0, 0.0f, 0.0f},
+                    {0, 10, 0, 0, 128, 1.0f, 0.0f},
+                    {0, 0, 10, 0, 64, 0.5f, 1.0f}},
+                   {0, 1, 2}, shaderName);
+}
+
+void testMd3Parser() {
+    std::cout << "== md3: Zerleger ==\n";
+    const auto bytes = testTriangleMd3();
+    const efx::md3::Model model = efx::md3::parse(bytes.data(), bytes.size());
+    check(model.ok && model.frames == 1 && model.surfaces.size() == 1,
+          "md3: Kopf, ein Bild, eine Flaeche gelesen");
+    if (model.ok && !model.surfaces.empty()) {
+        const auto& s = model.surfaces[0];
+        check(s.name == "box" && s.shaders.size() == 1 && s.shaders[0] == "models/test/box.tga",
+              "md3: Flaechenname und Shadername wie in der Datei");
+        check(s.vertices.size() == 3 && s.indices.size() == 3 && s.indices[0] == 0 &&
+                  s.indices[1] == 1 && s.indices[2] == 2,
+              "md3: drei Eckpunkte, ein Dreieck");
+        check(std::fabs(s.vertices[0].pos[0] - 10.0f) < 1e-4f &&
+                  std::fabs(s.vertices[1].pos[1] - 10.0f) < 1e-4f &&
+                  std::fabs(s.vertices[2].pos[2] - 10.0f) < 1e-4f,
+              "md3: xyz mal MD3_XYZ_SCALE (1/64)");
+        check(std::fabs(s.vertices[0].normal[2] - 1.0f) < 1e-4f &&
+                  std::fabs(s.vertices[1].normal[2] + 1.0f) < 1e-4f &&
+                  std::fabs(s.vertices[2].normal[0] - 1.0f) < 1e-4f,
+              "md3: Normale aus Breite/Laenge wie LerpMeshVertexes");
+        check(s.vertices[1].st[0] == 1.0f && s.vertices[2].st[1] == 1.0f, "md3: Texturkoordinaten");
+    }
+    check(std::fabs(model.maxs[0] - 10.0f) < 1e-4f && std::fabs(model.radius - 17.3f) < 1e-4f,
+          "md3: Huelle und Radius von Bild 0");
+    check(efx::md3::shaderName("Models\\Players\\Droids\\body_R5D2.TGA") ==
+                  "models/players/droids/body_r5d2" &&
+              efx::md3::shaderName("models/a.b/c") == "models/a.b/c",
+          "md3: Shadername ohne Endung (COM_StripExtension), klein, Vorwaertsstriche");
+
+    // Jede abgeschnittene Fassung wird abgewiesen, ohne hinter den Puffer zu
+    // lesen.
+    bool allRejected = true;
+    for (size_t n = 0; n < bytes.size(); ++n) {
+        const auto cut = efx::md3::parse(bytes.data(), n);
+        allRejected = allRejected && !cut.ok && cut.surfaces.empty();
+    }
+    check(allRejected, "md3: jede abgeschnittene Fassung abgewiesen");
+    check(!efx::md3::parse(nullptr, 0).ok, "md3: leerer Puffer abgewiesen");
+
+    // Gezielt falsche Felder.
+    auto broken = [&](size_t at, int32_t value) {
+        auto copy = bytes;
+        for (int k = 0; k < 4; ++k) copy[at + k] = static_cast<unsigned char>((static_cast<uint32_t>(value) >> (8 * k)) & 0xFFu);
+        return efx::md3::parse(copy.data(), copy.size());
+    };
+    check(!broken(0, 0x12345678).ok, "md3: falsche Kennung abgewiesen");
+    check(!broken(4, 16).ok, "md3: falsche Version abgewiesen (R_LoadMD3)");
+    check(!broken(76, 0).ok, "md3: kein Bild abgewiesen (\"has no frames\")");
+    check(!broken(84, 1000000).ok, "md3: unsinnige Flaechenzahl abgewiesen");
+    check(!broken(92, 0x7FFFFFF0).ok, "md3: Bildversatz hinter dem Ende abgewiesen");
+    // Flaeche ab 164: Zaehler bei 164+4+64+8 (numShaders) ...
+    const size_t head = 164 + 4 + 64;
+    check(!broken(head + 12, 70000).ok, "md3: zu viele Eckpunkte abgewiesen");
+    check(!broken(head + 16, -1).ok, "md3: negative Dreieckszahl abgewiesen");
+    check(!broken(head + 20, 0x7FFFFFF0).ok, "md3: Dreiecksversatz hinter dem Ende abgewiesen");
+    check(!broken(head + 36, 4).ok, "md3: Flaechenende vor dem Flaechenkopf abgewiesen");
+    check(!broken(164 + 108 + 68, 3).ok, "md3: Eckpunktnummer ausserhalb abgewiesen");
+
+    // Zufaellig verbogene Fassungen: kein Absturz, und was angenommen wird,
+    // ist in sich stimmig.
+    unsigned state = 12345u;
+    bool consistent = true;
+    for (int round = 0; round < 3000; ++round) {
+        auto copy = bytes;
+        const int hits = 1 + static_cast<int>(state % 12);
+        for (int k = 0; k < hits; ++k) {
+            state = state * 1664525u + 1013904223u;
+            copy[(state >> 8) % copy.size()] = static_cast<unsigned char>(state >> 24);
+        }
+        state = state * 1664525u + 1013904223u;
+        if ((state & 7u) == 0) copy.resize((state >> 8) % copy.size());
+        const auto parsed = efx::md3::parse(copy.data(), copy.size());
+        if (!parsed.ok) continue;
+        for (const auto& s : parsed.surfaces) {
+            for (uint16_t index : s.indices) consistent = consistent && index < s.vertices.size();
+            for (const auto& v : s.vertices) {
+                consistent = consistent && std::isfinite(v.pos[0]) && std::isfinite(v.st[0]);
+            }
+        }
+    }
+    // Reiner Zufall mit gueltigem Kopf.
+    for (int round = 0; round < 2000; ++round) {
+        std::vector<unsigned char> noise(108 + (round % 600));
+        for (auto& b : noise) {
+            state = state * 1664525u + 1013904223u;
+            b = static_cast<unsigned char>(state >> 24);
+        }
+        std::memcpy(noise.data(), "IDP3", 4);
+        noise[4] = 15; noise[5] = noise[6] = noise[7] = 0;
+        const auto parsed = efx::md3::parse(noise.data(), noise.size());
+        for (const auto& s : parsed.surfaces) {
+            for (uint16_t index : s.indices) consistent = consistent && index < s.vertices.size();
+        }
+    }
+    check(consistent, "md3: 5000 verbogene Eingaben ohne Absturz, Angenommenes in sich stimmig");
+}
+
+// Ein Lader mit einem Bestand aus Modellen im Speicher.
+struct ModelLibrary {
+    std::map<std::string, efx::md3::Model> models;
+    int asked = 0;
+    void add(const std::string& name, const std::vector<unsigned char>& bytes) {
+        models[name] = efx::md3::parse(bytes.data(), bytes.size());
+    }
+    efx::particles::ModelLoader loader() {
+        return [this](const std::string& name) -> const efx::md3::Model* {
+            ++asked;
+            const auto found = models.find(name);
+            return found != models.end() && found->second.ok ? &found->second : nullptr;
+        };
+    }
+};
+
+bool near3(const efx::scene::Vertex& v, float x, float y, float z) {
+    return std::fabs(v.pos[0] - x) < 1e-3f && std::fabs(v.pos[1] - y) < 1e-3f &&
+           std::fabs(v.pos[2] - z) < 1e-3f;
+}
+
+void testEmitterModels() {
+    std::cout << "== Emitter: md3-Modelle ==\n";
+    using namespace efx::particles;
+    ModelLibrary library;
+    library.add("models/test/box.md3", testTriangleMd3());
+
+    // Achse: vorwaerts entlang +x, damit vectoangles( ax[0] ) null ergibt.
+    Axis alongX;
+    alongX.forward = {1.0f, 0.0f, 0.0f};
+    alongX.right = {0.0f, 1.0f, 0.0f};
+    alongX.up = {0.0f, 0.0f, 1.0f};
+
+    // yaw 90, size 2, steht still: Modell-x zeigt nach Welt-y, alles doppelt.
+    const efx::Effect turned = effectFrom(
+        "Emitter\n{\n\tlife\t1000\n\torigin\t5 0 0\n\tangle\t0 90 0\n"
+        "\tsize\n\t{\n\t\tstart\t2\n\t}\n\tmodels\n\t[\n\t\tmodels/test/box.md3\n\t]\n}\n");
+    System system;
+    system.play(turned, 1u, {}, alongX, {}, {}, false, {}, library.loader());
+    const DrawList list = system.build(0.0f, {1, 0, 0}, {0, 1, 0});
+    const DrawGroup* group = groupOf(list, "models/test/box");
+    check(list.drawn == 1 && group != nullptr, "Emitter mit useModel zeichnet sein Modell");
+    if (group) {
+        check(group->mesh.vertices.size() == 3 && group->mesh.indices.size() == 3,
+              "Emitter: ein Dreieck des Modells in der Zeichengruppe");
+        // origin 5 0 0 (entlang der Achse), Modellpunkt (10,0,0) * 2 -> Welt-y 20.
+        check(near3(group->mesh.vertices[0], 5.0f, 20.0f, 0.0f) &&
+                  near3(group->mesh.vertices[1], -15.0f, 0.0f, 0.0f) &&
+                  near3(group->mesh.vertices[2], 5.0f, 0.0f, 20.0f),
+              "Emitter: yaw 90 dreht x nach y, axis[1] zeigt nach links, size 2 skaliert (CEmitter::Draw)");
+        check(group->image == "image:models/test/box" && !group->blended && group->depthWrite &&
+                  group->depthTest && group->sort == static_cast<float>(efx::shader::kSortOpaque),
+              "Emitter: Flaeche ohne Shaderblock -> Ersatzshader LIGHTMAP_NONE (undurchsichtig, mit Tiefe)");
+        // RB_CalcDiffuseColor: Normale nach unten -> nur Umgebungslicht 150+32.
+        const uint32_t down = group->mesh.vertices[1].colour;
+        check((down & 0xFFu) == 182u && ((down >> 24) & 0xFFu) == 255u,
+              "Emitter: abgewandte Flaeche bekommt das Umgebungslicht 182");
+        // Normale nach oben: 182 + 0.826 * 150 * |size 2| -> auf 255 begrenzt.
+        check((group->mesh.vertices[0].colour & 0xFFu) == 255u,
+              "Emitter: zugewandte Flaeche hell (gerichtetes Licht, begrenzt)");
+    }
+
+    // Ohne eigene Achse: vorwaerts ist +z, vectoangles gibt pitch -90, und
+    // das Modell-x zeigt nach oben.
+    const efx::Effect plain = effectFrom(
+        "Emitter\n{\n\tlife\t1000\n\tmodels\n\t[\n\t\tmodels/test/box.md3\n\t]\n}\n");
+    System up;
+    up.play(plain, 1u, {}, {}, {}, {}, false, {}, library.loader());
+    const DrawList upList = up.build(0.0f, {1, 0, 0}, {0, 1, 0});
+    const DrawGroup* upGroup = groupOf(upList, "models/test/box");
+    check(upGroup && near3(upGroup->mesh.vertices[0], 0.0f, 0.0f, 10.0f),
+          "Emitter: vectoangles( ax[0] ) wird auf angle addiert — Modell-x folgt der Effektachse");
+    const efx::camera::Vec3 angles = vectorToAngles({0.0f, 0.0f, 1.0f});
+    check(std::fabs(angles.x + 90.0f) < 1e-4f && angles.y == 0.0f, "vectoangles: nach oben ist pitch -90");
+
+    // angleDelta: zehn Grad je Sekunde und Einheit (mFrameTime * 0.01).
+    // Bewegt: nur das erste Bild daempft auf 60 % — aber DAUERHAFT, denn
+    // VectorScale schreibt in mAngleDelta zurueck.
+    const efx::Effect spinning = effectFrom(
+        "Emitter\n{\n\tlife\t2000\n\tspawnFlags\tabsoluteVel\n\tvelocity\t100 0 0\n"
+        "\tangleDelta\t0 10 0\n\tmodels\n\t[\n\t\tmodels/test/box.md3\n\t]\n}\n");
+    System spin;
+    spin.play(spinning, 1u, {}, alongX, {}, {}, false, {}, library.loader());
+    const float frame = 1000.0f / 60.0f;
+    const float expectedMoving = 0.6f * 10.0f * 1000.0f * 0.01f;
+    const float yawMoving = spin.live()[0].anglesAt(1000.0f).y;
+    check(std::fabs(yawMoving - expectedMoving) < 0.05f,
+          "angleDelta bewegt: nach 1 s 60 Grad (UpdateAngles, erstes Bild daempft auf 60 %)");
+    std::printf("  angleDelta 10, bewegt, 1 s: %.2f Grad (erwartet %.2f)\n", double(yawMoving),
+                double(expectedMoving));
+    // Steht still: jedes Bild 60 % weniger — die Drehung laeuft nach rund
+    // 10 * 0.01 * frame * 1.5 = 2.5 Grad aus.
+    const efx::Effect resting = effectFrom(
+        "Emitter\n{\n\tlife\t2000\n\tangleDelta\t0 10 0\n\tmodels\n\t[\n\t\tmodels/test/box.md3\n\t]\n}\n");
+    System rest;
+    rest.play(resting, 1u, {}, alongX, {}, {}, false, {}, library.loader());
+    const float yawResting = rest.live()[0].anglesAt(1000.0f).y;
+    check(std::fabs(yawResting - 10.0f * 0.01f * frame * 1.5f) < 0.02f,
+          "angleDelta steht still: die Drehung laeuft aus (VectorScale( mAngleDelta, 0.6f ))");
+    check(std::fabs(rest.live()[0].anglesAt(1000.0f).y - rest.live()[0].anglesAt(1999.0f).y) < 1e-3f,
+          "angleDelta steht still: danach keine Drehung mehr");
+
+    // Mehrere Modelle: je Teilchen eines gewuerfelt, wiederholbar je Ausgangswert.
+    library.add("models/test/other.md3", testTriangleMd3("models/test/other.tga"));
+    const efx::Effect two = effectFrom(
+        "Emitter\n{\n\tcount\t40\n\tlife\t1000\n\tmodels\n\t[\n\t\tmodels/test/box.md3\n"
+        "\t\tmodels/test/other.md3\n\t]\n}\n");
+    auto picks = [&](unsigned seed) {
+        System s;
+        s.play(two, seed, {}, {}, {}, {}, false, {}, library.loader());
+        std::string out;
+        for (const auto& item : s.live()) {
+            out += item.model == &library.models["models/test/box.md3"] ? 'a' : 'b';
+        }
+        return out;
+    };
+    const std::string first = picks(7u);
+    check(first == picks(7u), "models: dieselbe Wahl beim selben Ausgangswert");
+    check(first.size() == 40 && first.find('a') != std::string::npos &&
+              first.find('b') != std::string::npos,
+          "models: beide Modelle kommen vor (GetHandle wuerfelt je Teilchen)");
+    check(first != picks(8u), "models: ein anderer Ausgangswert wuerfelt anders");
+
+    // Fehlendes Modell, oder gar kein Lader: kein Absturz, nichts gezeichnet.
+    const efx::Effect missing = effectFrom(
+        "Emitter\n{\n\tlife\t1000\n\tmodels\n\t[\n\t\tmodels/test/nothere.md3\n\t]\n}\n");
+    System gone;
+    gone.play(missing, 1u, {}, {}, {}, {}, false, {}, library.loader());
+    const DrawList goneList = gone.build(100.0f, {1, 0, 0}, {0, 1, 0});
+    check(goneList.drawn == 0 && goneList.groups.empty() && goneList.alive == 1,
+          "fehlendes Modell: lebt, zeichnet nichts");
+    System noLoader;
+    noLoader.play(plain, 1u);
+    check(noLoader.build(100.0f, {1, 0, 0}, {0, 1, 0}).drawn == 0, "ohne Modell-Lader: nichts gezeichnet");
+
+    // Ein Shaderblock fuer die Flaeche: seine Stufen gelten, mit Licht je
+    // Eckpunkt fuer rgbGen lightingDiffuse.
+    ShaderBook book("models/test/box\n{\n\t{\n\t\tmap models/test/box_skin\n"
+                    "\t\trgbGen lightingDiffuse\n\t}\n\t{\n\t\tmap models/test/glow\n"
+                    "\t\tblendFunc GL_ONE GL_ONE\n\t}\n}\n");
+    const DrawList shaded = system.build(0.0f, {1, 0, 0}, {0, 1, 0}, book.lookup());
+    const DrawGroup* base = groupOf(shaded, "models/test/box", 0);
+    const DrawGroup* glow = groupOf(shaded, "models/test/box", 1);
+    check(base && glow && base->image == "image:models/test/box_skin" && !base->blended &&
+              glow->blended && !glow->depthWrite,
+          "Modell mit Shaderblock: jede Stufe eine Gruppe, mit Mischung und Tiefe der Stufe");
+    if (base) {
+        check((base->mesh.vertices[1].colour & 0xFFu) == 182u &&
+                  (base->mesh.vertices[0].colour & 0xFFu) == 255u,
+              "Modell mit Shaderblock: lightingDiffuse je Eckpunkt");
+    }
+    // Flaeche ohne Bild und ohne Shader: tr.defaultShader.
+    const auto missingLookup = [](const std::string&) {
+        System::ShaderDraw draw;
+        draw.missing = true;
+        return draw;
+    };
+    const DrawList missingList = system.build(0.0f, {1, 0, 0}, {0, 1, 0}, missingLookup);
+    const DrawGroup* fallback = groupOf(missingList, "models/test/box");
+    check(fallback && fallback->image == "$default", "Modellflaeche ohne Bild: das graue Ersatzbild");
+
+    // Die Vorschau sieht das Modell (Reichweite fuer die Kamera).
+    check(describePreview(system).reach > 15.0f, "Vorschau: das Modell zaehlt zur Reichweite");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -13285,6 +13649,9 @@ int main(int argc, char** argv) {
     testRenderLights();
     testRenderWaves();
     testRenderSmallSimulationPoints();
+    // md3-Modelle der Emitter (useModel).
+    testMd3Parser();
+    testEmitterModels();
 
     std::cout << "\n" << g_checks << " Pruefungen, " << g_failures << " Fehler";
     if (g_dataFiles > 0) {

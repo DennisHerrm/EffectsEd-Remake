@@ -803,7 +803,7 @@ void App::ensureBrowserEntry(BrowserEntry& entry) {
                       // Kacheln laufen immer in Schleife, also immer mit
                       // Vorlauf: ein Feuer soll in der Vorschau ein Feuer
                       // sein und nicht ein einzelnes Flaemmchen.
-                      true);
+                      true, {}, modelLoader());
     // Ueber genau EINE Wiederholung laufen, wenn der Effekt eine hat: nach
     // `repeatDelay` sieht der Bestand wieder aus wie am Anfang, und die Kachel
     // laeuft nahtlos rund. Ohne das liefe ein Rauch mit 62 Sekunden

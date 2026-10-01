@@ -27,8 +27,10 @@ Geprüft wird mit drei Läufen, alle grün:
 
 ## Noch nicht nachgebaut
 
-- **Glow, md3-Modelle, Taumeln der Emitter, reine MP-Unterschiede** in der
-  Darstellung. Emitter mit Modell zeichnen nichts (z. B. `chunks/r5d2head`).
+- **Glow, reine MP-Unterschiede** in der Darstellung. Die md3-Modelle der
+  Emitter (`useModel`) zeichnen jetzt, samt Taumeln (`angle`/`angleDelta`);
+  offen daran: nur Bild 0, keine .skin-Dateien, Licht wie eine Karte ohne
+  Lichtgitter, Flaechen beidseitig (der Renderer kennt kein `cull`).
 - **Cull Distance** hat noch keine Spinner-Pfeile (alle anderen Zahlenfelder
   haben sie seit dieser Runde).
 - **Klangausgabe** ist im Selbsttest nur bis zum Auslösen geprüft, nicht das

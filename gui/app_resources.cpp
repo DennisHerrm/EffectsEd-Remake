@@ -9,6 +9,7 @@
 // Zustaendigkeiten die Stelle, an der ein Leser aufgibt.
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <vector>
 #include "app.h"
 #include "efx/diag.h"
@@ -107,6 +108,11 @@ void App::rescanAssets() {
     // Grafikspeicher, ohne dass jemand sie noch kennt.
     textureCacheDirty_ = true;
     childEffects_.clear();
+    // Gelesene Modelle bleiben (laufende Systeme zeigen darauf, siehe
+    // modelCache_), nur die Fehlversuche werden vergessen.
+    for (auto it = modelCache_.begin(); it != modelCache_.end();) {
+        it = it->second ? std::next(it) : modelCache_.erase(it);
+    }
     // Der Browser zeigt, was der Bestand hergibt — aendert der sich, muss er
     // neu gefuellt werden. Die laufenden Vorschauen gehen dabei verloren, und
     // das ist richtig: sie zeigten Dateien aus dem alten Bestand.
