@@ -36,6 +36,7 @@ dort so wenig wie möglich.
 | `curve.cpp` | wie sich ein Wert über die Lebensdauer verändert |
 | `sim.cpp` | Zeitplanung, Bahn, Kollision |
 | `particles.cpp` | die laufende Vorschau, erzeugt Geometrie |
+| `md3.cpp` | md3-Modelle lesen (Emitter mit `useModel`) |
 | `timeline.cpp` | die Uhr der Wiedergabe |
 | `scene.cpp` | Testraum, Gitter, Himmel, Windfahne |
 | `camera.cpp` | Umlaufkamera, Matrizen, Strahl vom Bildschirm in die Welt |
