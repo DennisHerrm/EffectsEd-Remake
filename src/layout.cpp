@@ -141,6 +141,7 @@ std::string Settings::toIni() const {
 
 Settings Settings::fromIni(const std::string& text) {
     Settings s;
+    bool sawPlaybackMode = false;
     std::istringstream in(text);
     std::string line;
     while (std::getline(in, line)) {
@@ -177,7 +178,7 @@ Settings Settings::fromIni(const std::string& text) {
         else if (key == "timeScale") s.timeScale = toFloat();
         else if (key == "repeatRate") s.repeatRate = toFloat();
         else if (key == "repeat") s.repeat = toBool();
-        else if (key == "playbackMode") s.playbackMode = toInt();
+        else if (key == "playbackMode") { s.playbackMode = toInt(); sawPlaybackMode = true; }
         else if (key == "playDuration") s.playDuration = toFloat();
         else if (key == "perFrameRespawn") s.perFrameRespawn = toBool();
         else if (key == "animateSpawnPoint") s.animateSpawnPoint = toBool();
@@ -267,9 +268,9 @@ Settings Settings::fromIni(const std::string& text) {
         if (!(value > -100000.0f && value < 100000.0f)) value = -32.0f;
     }
     if (s.roomStyle < 0 || s.roomStyle > 2) s.roomStyle = 0;
-    // Aeltere Einstellungsdateien kennen nur "repeat".
-    if (s.playbackMode < 0 || s.playbackMode > 2) s.playbackMode = s.repeat ? 1 : 0;
-    if (s.playbackMode == 0 && s.repeat) s.playbackMode = 1;
+    // Aeltere Einstellungsdateien kennen nur "repeat" — ihre Wahl gilt.
+    if (!sawPlaybackMode) s.playbackMode = s.repeat ? 1 : 0;
+    if (s.playbackMode < 0 || s.playbackMode > 2) s.playbackMode = 1;
     if (!(s.playDuration >= 0.0f && s.playDuration <= 600.0f)) s.playDuration = 2.0f;
     if (!(s.spawnResetSeconds >= 0.0f && s.spawnResetSeconds <= 600.0f)) s.spawnResetSeconds = 1.0f;
     for (float& v : s.spawnVelocity) {

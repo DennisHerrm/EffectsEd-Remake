@@ -703,6 +703,10 @@ public:
         s.push_back(teil("start"));
         s.push_back(pruefSchritt("Programm laeuft, Hauptfenster gezeichnet",
                                  [] { return finde(tr(Str::MenuFile), "##main") != nullptr; }));
+        s.push_back(pruefSchritt("Voreinstellung wie im Original: Repeat until stopped", [] {
+            return app->playback_.mode == playback::RepeatMode::UntilStopped &&
+                   doc().clock.endMode() == timeline::EndMode::Repeat;
+        }));
         // Grundansicht wie nach dem Start, einmal im voreingestellten und
         // einmal im klassischen Thema (zum Vergleich mit dem Original).
         s.push_back(tu("Editor zeigen", [] { app->showEditor(); }));

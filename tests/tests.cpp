@@ -806,8 +806,13 @@ void testLayout() {
               "die Wiedergabe-Einstellungen ueberstehen einen Rundlauf");
         check(efx::layout::Settings::fromIni("repeat=1\n").playbackMode == 1,
               "eine alte Datei mit nur 'repeat=1' heisst: bis zum Anhalten");
-        check(efx::layout::Settings::fromIni("playbackMode=9\n").playbackMode == 0,
-              "Unsinn faellt auf 'einmal' zurueck");
+        check(efx::layout::Settings::fromIni("playbackMode=9\n").playbackMode == 1,
+              "Unsinn faellt auf die Voreinstellung zurueck");
+        check(efx::layout::Settings::fromIni("repeat=0\n").playbackMode == 0,
+              "eine alte Datei mit 'repeat=0' bleibt bei 'einmal'");
+        const efx::layout::Settings fresh;
+        check(fresh.playbackMode == 1 && fresh.repeat,
+              "voreingestellt ist 'Repeat until stopped' wie im Original");
     }
 
     // Der alte Schluesselname muss weiter gelten: Einstellungsdateien von
