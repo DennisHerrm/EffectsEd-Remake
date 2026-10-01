@@ -774,6 +774,27 @@ void testLayout() {
         check(efx::layout::Settings::fromIni("worldScale=16\n").showMainToolbar,
               "eine alte Einstellungsdatei ohne die Schluessel ebenso");
     }
+    {
+        // Der Dialog "Playback Settings" ueberlebt einen Neustart, wie im
+        // Original (Registry EffectPlay ...).
+        efx::layout::Settings pb;
+        pb.playbackMode = 2;
+        pb.playDuration = 3.5f;
+        pb.perFrameRespawn = true;
+        pb.animateSpawnPoint = true;
+        pb.spawnVelocity[0] = 12.0f;
+        pb.spawnVelocity[2] = -7.5f;
+        pb.spawnResetSeconds = 0.75f;
+        const auto pbBack = efx::layout::Settings::fromIni(pb.toIni());
+        check(pbBack.playbackMode == 2 && pbBack.playDuration == 3.5f && pbBack.perFrameRespawn &&
+                  pbBack.animateSpawnPoint && pbBack.spawnVelocity[0] == 12.0f &&
+                  pbBack.spawnVelocity[2] == -7.5f && pbBack.spawnResetSeconds == 0.75f,
+              "die Wiedergabe-Einstellungen ueberstehen einen Rundlauf");
+        check(efx::layout::Settings::fromIni("repeat=1\n").playbackMode == 1,
+              "eine alte Datei mit nur 'repeat=1' heisst: bis zum Anhalten");
+        check(efx::layout::Settings::fromIni("playbackMode=9\n").playbackMode == 0,
+              "Unsinn faellt auf 'einmal' zurueck");
+    }
 
     // Der alte Schluesselname muss weiter gelten: Einstellungsdateien von
     // frueher schrieben "drawWireframe" fuer dieselbe Sache.

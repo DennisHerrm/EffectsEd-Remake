@@ -1128,6 +1128,11 @@ public:
                                  [] { return app->scheduleActive_ && app->spawnCount_ == 5; }));
         s.push_back(pruefSchritt("und die Uhr laeuft weiter statt neu zu beginnen",
                                  [] { return doc().clock.state() == timeline::State::Playing; }));
+        // Die Wiederholart gilt auch fuer ein neues Dokument (im Original
+        // gibt es nur die eine Einstellung).
+        menue(s, Str::MenuFile, Str::FileNew);
+        s.push_back(pruefSchritt("Neues Dokument erbt 'bis zum Anhalten'",
+                                 [] { return doc().clock.endMode() == timeline::EndMode::Repeat; }));
         s.push_back(tu("aufraeumen", [] {
             app->pressStop();
             app->playback_ = playback::Settings{};

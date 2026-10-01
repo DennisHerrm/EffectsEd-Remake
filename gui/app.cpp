@@ -83,10 +83,18 @@ std::string Document::title() const {
     return cut == std::string::npos ? filePath : filePath.substr(cut + 1);
 }
 
+timeline::EndMode App::playbackEndMode() const {
+    return playback_.mode == playback::RepeatMode::UntilStopped ? timeline::EndMode::Repeat
+                                                                : timeline::EndMode::Stop;
+}
+
 void App::newDocument() {
     documents_.emplace_back();
     activeDocument_ = static_cast<int>(documents_.size()) - 1;
     doc().undo.reset(doc().effect);
+    // Die Wiederholart gilt fuer alle Dokumente, wie im Original (dort gibt
+    // es nur die eine Einstellung).
+    doc().clock.setEndMode(playbackEndMode());
 }
 
 void App::activateDocument(int index) {
@@ -257,6 +265,17 @@ void App::startup() {
     // Start beginnt bei 0.300 s. Die Einstellung wurde bisher gespeichert,
     // aber nie angewendet.
     if (settings_.resetRepeatRateOnStart) settings_.repeatRate = 0.300f;
+    // Die Wiedergabe-Einstellungen von gestern. Sie wurden bisher nur
+    // teilweise gespeichert ("repeat") und gar nicht angewendet.
+    playback_.mode = static_cast<playback::RepeatMode>(settings_.playbackMode);
+    playback_.repeatForSeconds = settings_.playDuration;
+    playback_.respawnEveryFrame = settings_.perFrameRespawn;
+    playback_.repeatRateSeconds = settings_.repeatRate;
+    playback_.animateSpawnLocation = settings_.animateSpawnPoint;
+    playback_.spawnVelocity = {settings_.spawnVelocity[0], settings_.spawnVelocity[1],
+                               settings_.spawnVelocity[2]};
+    playback_.resetLocationAfter = settings_.spawnResetSeconds;
+    for (Document& d : documents_) d.clock.setEndMode(playbackEndMode());
 
     // Sprache: gespeicherte Wahl schlaegt Systemeinstellung.
     if (const auto* language = i18n::findLanguage(settings_.languageCode)) {
@@ -278,6 +297,17 @@ void App::shutdown() {
     // laesst, bekommt einen Zugriff auf ein Objekt, das gerade zerfaellt —
     // und zwar nicht immer, sondern manchmal.
     settleTextureJobs();
+
+    // Die Wiedergabe-Einstellungen zurueck in die Datei.
+    settings_.playbackMode = static_cast<int>(playback_.mode);
+    settings_.repeat = playback_.mode != playback::RepeatMode::Once;
+    settings_.playDuration = playback_.repeatForSeconds;
+    settings_.perFrameRespawn = playback_.respawnEveryFrame;
+    settings_.animateSpawnPoint = playback_.animateSpawnLocation;
+    settings_.spawnVelocity[0] = playback_.spawnVelocity.x;
+    settings_.spawnVelocity[1] = playback_.spawnVelocity.y;
+    settings_.spawnVelocity[2] = playback_.spawnVelocity.z;
+    settings_.spawnResetSeconds = playback_.resetLocationAfter;
 
     diag::Step step("Write settings");
     std::ofstream out(paths::settingsPath(), std::ios::binary);
