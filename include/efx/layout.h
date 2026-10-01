@@ -256,12 +256,14 @@ struct Settings {
     float worldScale = 10.0f;
     float timeScale = 1.0f;
     float repeatRate = 0.300f;
-    bool repeat = false;
+    // Voreinstellung wie im Original: "Repeat until stopped" (Dialog 188,
+    // gemessen) — Play legt alle Repeat-Rate-Sekunden nach.
+    bool repeat = true;
     // Der Rest des Dialogs "Playback Settings" — das Original merkt sich
     // alles davon (Registry EffectPlay PlayDuration, PerframeRespawn,
     // AnimateSpawnPoint, SpawnVelocityX/Y/Z, SpawnResetDuration).
     // playbackMode: 0 einmal, 1 bis zum Anhalten, 2 fuer N Sekunden.
-    int playbackMode = 0;
+    int playbackMode = 1;
     float playDuration = 2.0f;
     bool perFrameRespawn = false;
     bool animateSpawnPoint = false;
