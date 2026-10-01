@@ -305,9 +305,15 @@ public:
     // Loslassen in getrennten Bildern.
 
     // Klick auf ein Element. `suche` liefert es aus dem aktuellen Bild.
+    // `griffX`: wie weit von links geklickt wird (Punkte); 0 = Mitte, hoechstens 40.
     static Schritt klickAuf(const std::string& was,
                             std::function<const Element*()> suche, int taste = 0,
-                            bool doppelt = false, bool sichtbarPruefen = true) {
+                            bool doppelt = false, bool sichtbarPruefen = true,
+                            float griffX = 0.0f) {
+        const auto greife = [griffX](const ImRect& r) {
+            return griffX > 0.0f ? std::min(griffX, r.GetWidth() - 2.0f)
+                                 : std::min(r.GetWidth() * 0.5f, 40.0f);
+        };
         auto kennung = std::make_shared<ImGuiID>(0);
         // Bilder, die das Hinrollen gekostet hat — danach beginnt der Klick neu.
         auto versatz = std::make_shared<int>(0);
@@ -356,7 +362,7 @@ public:
                         }
                         *kennung = e->id;
                         *lage = e->rect;
-                        setzeMaus(ImVec2(e->rect.Min.x + std::min(e->rect.GetWidth() * 0.5f, 40.0f),
+                        setzeMaus(ImVec2(e->rect.Min.x + greife(e->rect),
                                          e->rect.GetCenter().y));
                         return false;
                     }
@@ -371,8 +377,7 @@ public:
                             ++*unruhig;
                             *lage = jetzt->rect;
                             *kennung = jetzt->id;
-                            setzeMaus(ImVec2(jetzt->rect.Min.x +
-                                                 std::min(jetzt->rect.GetWidth() * 0.5f, 40.0f),
+                            setzeMaus(ImVec2(jetzt->rect.Min.x + greife(jetzt->rect),
                                              jetzt->rect.GetCenter().y));
                             *versatz += 1;
                             return false;
@@ -958,6 +963,168 @@ public:
         return s;
     }
 
+    // Packen, ueber die Ziehschwelle bewegen, zum Ziel fahren, dort stehen
+    // (das Ziel muss den Zug erst annehmen), loslassen.
+    static Schritt ziehe(const std::string& was, std::function<const Element*()> von,
+                         std::function<const Element*()> nach, ImVec2 versatz = ImVec2(0, 0)) {
+        auto start = std::make_shared<ImVec2>();
+        return {was, [=](int b) {
+                    ImGuiIO& io = ImGui::GetIO();
+                    if (b == 0) {
+                        const Element* e = von();
+                        if (!e) {
+                            meldeFehler(was + ": Quelle nicht gefunden");
+                            return true;
+                        }
+                        *start = ImVec2(e->rect.Min.x + std::min(e->rect.GetWidth() * 0.5f, 60.0f),
+                                        e->rect.GetCenter().y);
+                        setzeMaus(*start);
+                        return false;
+                    }
+                    if (b == 1) {
+                        io.AddMouseButtonEvent(0, true);
+                        return false;
+                    }
+                    if (b >= 2 && b <= 6) {
+                        setzeMaus(ImVec2(start->x + 3.0f * float(b - 1), start->y + 3.0f * float(b - 1)));
+                        return false;
+                    }
+                    if (b >= 7 && b <= 12) {
+                        const Element* z = nach();
+                        if (!z) {
+                            if (b == 12) {
+                                meldeFehler(was + ": Ziel nicht gefunden");
+                                io.AddMouseButtonEvent(0, false);
+                                return true;
+                            }
+                            return false;
+                        }
+                        const ImVec2 m = z->rect.GetCenter();
+                        setzeMaus(ImVec2(std::min(m.x, z->rect.Min.x + 60.0f) + versatz.x, m.y + versatz.y));
+                        return false;
+                    }
+                    if (b == 13) {
+                        io.AddMouseButtonEvent(0, false);
+                        return false;
+                    }
+                    return b >= 16;
+                }};
+    }
+
+    // Die Zeile des Segments `i` in der Liste (das Selectable mit dem Namen).
+    static const Element* listenZeile(int i) {
+        const std::string name = (i >= 0 && i < anzahlSegmente() &&
+                                  !effekt().primitives[size_t(i)].name.empty())
+                                     ? effekt().primitives[size_t(i)].name
+                                     : std::string(tr(Str::ListUnnamed));
+        int gesehen = 0;
+        // Gleichnamige Zeilen: die i-te mit diesem Namen zaehlt.
+        int nte = 0;
+        for (int k = 0; k < i; ++k) {
+            const auto& p = effekt().primitives[size_t(k)];
+            const std::string n = p.name.empty() ? std::string(tr(Str::ListUnnamed)) : p.name;
+            if (n == name) ++nte;
+        }
+        for (const Element& e : g_elemente) {
+            if (e.innen.find("segments") == std::string::npos || e.label != name) continue;
+            if (gesehen++ == nte) return &e;
+        }
+        return nullptr;
+    }
+
+    static std::vector<Schritt> teilListe() {
+        std::vector<Schritt> s;
+        s.push_back(teil("liste"));
+        frischesDokument(s);
+        neuesSegment(s, PrimitiveType::Particle);
+        neuesSegment(s, PrimitiveType::Line);
+        neuesSegment(s, PrimitiveType::Sound);
+        s.push_back(tu("Namen vergeben", [] {
+            effekt().primitives[0].name = "erstes";
+            effekt().primitives[1].name = "zweites";
+            effekt().primitives[2].name = "drittes";
+            app->recordChange("Namen");
+        }));
+        s.push_back(warte(2));
+        // Auswahl per Klick.
+        s.push_back(klickAuf("Klick Zeile 'erstes'", [] { return listenZeile(0); }, 0, false, true,
+                             120.0f));
+        s.push_back(pruefSchritt("Klick auf eine Zeile waehlt das Segment",
+                                 [] { return doc().selectedPrimitive == 0; }));
+        s.push_back(pruefSchritt("... und die Eigenschaftsseite zeigt es (Reiter Generation)",
+                                 [] { return finde(tr(Str::FieldName), "properties") != nullptr; }));
+        // Haekchen in der Zeile schaltet das Segment ab und wieder an.
+        s.push_back(klickAuf("Haekchen Zeile 2", [] {
+            int gesehen = 0;
+            for (const Element& e : g_elemente) {
+                if (e.innen.find("segments") != std::string::npos && e.label == "##enabled") {
+                    if (gesehen++ == 1) return &e;
+                }
+            }
+            return static_cast<const Element*>(nullptr);
+        }));
+        s.push_back(pruefSchritt("Haekchen in der Liste schaltet Segment 2 ab", [] {
+            return doc().segmentEnabled.size() == 3 && !doc().segmentEnabled[1];
+        }));
+        s.push_back(pruefSchritt("Abschalten aendert die Datei nicht (wie im Original)",
+                                 [] { return text().find("zweites") != std::string::npos; }));
+        // Umsortieren durch Ziehen: "erstes" auf "drittes".
+        s.push_back(ziehe("Ziehe 'erstes' auf 'drittes'", [] { return listenZeile(0); },
+                          [] { return listenZeile(2); }));
+        s.push_back(pruefSchritt("Ziehen sortiert um: erstes steht jetzt hinten", [] {
+            return anzahlSegmente() == 3 && effekt().primitives[2].name == "erstes" &&
+                   effekt().primitives[0].name == "zweites";
+        }));
+        s.push_back(pruefSchritt("Das abgeschaltete Segment bleibt beim Umsortieren abgeschaltet", [] {
+            // "zweites" war aus und steht jetzt vorn.
+            return doc().segmentEnabled.size() == 3 && !doc().segmentEnabled[0] &&
+                   doc().segmentEnabled[1] && doc().segmentEnabled[2];
+        }));
+        s.push_back(taste(ImGuiKey_Z, true));
+        s.push_back(pruefSchritt("Strg+Z nimmt das Umsortieren zurueck",
+                                 [] { return effekt().primitives[0].name == "erstes"; }));
+        // Kontextmenue: darueber einfuegen.
+        s.push_back(klickAuf("Rechtsklick Zeile 'zweites'", [] { return listenZeile(1); }, 1, false,
+                             true, 120.0f));
+        s.push_back(klick(tr(Str::SegmentInsertAbove), "##Popup"));
+        s.push_back(pruefSchritt("Kontextmenue: Neues Segment darueber", [] {
+            return anzahlSegmente() == 4 && effekt().primitives[2].name == "zweites" &&
+                   doc().selectedPrimitive == 1;
+        }));
+        s.push_back(taste(ImGuiKey_Z, true));
+        s.push_back(pruefSchritt("Strg+Z nimmt das Einfuegen zurueck", [] { return anzahlSegmente() == 3; }));
+        s.push_back(allesZu());
+        // Spaltenkopf anklicken: das Original sortiert danach.
+        s.push_back(pruefSchritt("Vor dem Kopfklick: Dateireihenfolge", [] {
+            return effekt().primitives[0].name == "erstes" && effekt().primitives[1].name == "zweites";
+        }));
+        s.push_back(tu("Segment 'zweites' waehlen", [] { doc().selectedPrimitive = 1; }));
+        s.push_back(klickMarke("liste/kopf0"));
+        s.push_back(warte(3));
+        s.push_back(fensterFoto("liste_nach_kopfklick"));
+        s.push_back(pruefSchritt("Klick auf Name sortiert aufsteigend (drittes, erstes, zweites)", [] {
+            return anzahlSegmente() == 3 && effekt().primitives[0].name == "drittes" &&
+                   effekt().primitives[1].name == "erstes" && effekt().primitives[2].name == "zweites";
+        }));
+        s.push_back(pruefSchritt("Die Auswahl wandert mit ihrem Segment",
+                                 [] { return gewaehlt() && gewaehlt()->name == "zweites"; }));
+        s.push_back(klickMarke("liste/kopf0"));
+        s.push_back(warte(3));
+        s.push_back(pruefSchritt("Zweiter Klick sortiert absteigend", [] {
+            return effekt().primitives[0].name == "zweites" && effekt().primitives[2].name == "drittes";
+        }));
+        s.push_back(klickMarke("liste/kopf1"));
+        s.push_back(warte(3));
+        s.push_back(pruefSchritt("Klick auf Type sortiert nach Typ (Line, Particle, Sound)", [] {
+            return std::string(typeName(effekt().primitives[0].type)) == "Line" &&
+                   std::string(typeName(effekt().primitives[2].type)) == "Sound";
+        }));
+        s.push_back(taste(ImGuiKey_Z, true));
+        s.push_back(pruefSchritt("Sortieren ist rueckgaengig machbar",
+                                 [] { return effekt().primitives[0].name == "drittes"; }));
+        return s;
+    }
+
     // --- Dialoge -----------------------------------------------------------
     //
     // Jeder Dialog geht auf, zeigt sich ganz, und schliesst mit Ok wie mit
@@ -1441,6 +1608,7 @@ public:
             {"wiedergabe", &teilWiedergabe},
             {"eigenschaften", &teilEigenschaften},
             {"dialoge", &teilDialoge},
+            {"liste", &teilListe},
             {"felder", &teilFelder},
         };
         // Nicht in "alles": dauert mit allen Effekten mehrere Minuten.

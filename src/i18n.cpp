@@ -492,6 +492,7 @@ const Entry kTable[] = {
     {"useModel set but no models list.", "useModel gesetzt, aber keine models-Liste.", "设置了 useModel 但没有 models 列表。", "useModel が設定されていますが models のリストがありません。"},  // VModelEmpty
     {"on Electricity these flags mean something else —%s. That is intended, not accidental.", "bei Electricity bedeuten diese Flags etwas anderes —%s. Das ist beabsichtigt, nicht versehentlich.", "在 Electricity 上这些标志含义不同 —%s。这是有意为之，而非误设。", "Electricity ではこれらのフラグは別の意味です —%s。意図的なもので、間違いではありません。"},  // VElectricityFlags
     {"field changed", "Feld geändert", "字段已更改", "フィールド変更"},  // UndoFieldChange
+    {"segments sorted", "Segmente sortiert", "片段已排序", "セグメントを並べ替え"},  // UndoSortSegments
     {"Save Changes", "Änderungen speichern", "保存更改", "変更を保存"},  // SaveChangesTitle
     {"Save changes to %s?", "Änderungen an %s speichern?", "是否保存对 %s 的更改？", "%s への変更を保存しますか？"},  // SaveChangesText
     {"Save", "Speichern", "保存", "保存"},  // SaveChangesYes
