@@ -7,8 +7,8 @@ Geprüft wird mit drei Läufen, alle grün:
 | Lauf | Ergebnis |
 |---|---|
 | `build\Release\efxtests.exe` (Kern) | 4374 Prüfungen, 0 Fehler |
-| Selbsttest `EFXED_SELBSTTEST=alles`, Direct3D 11 | 732 OK, 0 FEHLER |
-| derselbe Selbsttest mit `EFXED_RENDERER=gl3` | 732 OK, 0 FEHLER |
+| Selbsttest `EFXED_SELBSTTEST=alles`, Direct3D 11 | 738 OK, 0 FEHLER |
+| derselbe Selbsttest mit `EFXED_RENDERER=gl3` | 738 OK, 0 FEHLER |
 | Darstellungslauf `EFXED_SELBSTTEST=darstellung` | 376 Effekte aus Movie Duels, je 4 Zeitpunkte, kein Absturz |
 | `tools/lint_*.py` (12 Prüfer) | alle 0 |
 | `tools/check_menu.py <EffectsEd.exe>` | 49 Menübefehle: 44 umgesetzt, 5 bewusst ausgelassen, keiner fehlt |
@@ -27,6 +27,10 @@ Geprüft wird mit drei Läufen, alle grün:
 
 ## Noch nicht nachgebaut
 
+- **`depthHack`** („Always draw on top"): das Flag wird gelesen und
+  geschrieben, die Vorschau zeichnet solche Segmente aber wie alle anderen
+  (verdeckt vom Raum). In der Engine liegen sie vor der Welt.
+
 - **Glow, md3-Modelle, Taumeln der Emitter, reine MP-Unterschiede** in der
   Darstellung. Emitter mit Modell zeichnen nichts (z. B. `chunks/r5d2head`).
 - **Cull Distance** hat noch keine Spinner-Pfeile (alle anderen Zahlenfelder
@@ -37,4 +41,17 @@ Geprüft wird mit drei Läufen, alle grün:
 ## Ergebnisse des Bildvergleichs mit dem Original
 
 Siehe `ABGLEICH.md`, Abschnitt „Bildvergleich". Was dort als „efxed falsch"
-steht und hier nicht als behoben, ist offen.
+steht und dort nicht als behoben markiert ist, ist offen.
+
+## Leistung (gemessen auf dem Entwicklungsrechner, Intel-Grafik, 240-Hz-Bildschirm)
+
+| Lage | CPU in 5 s vorher | nachher |
+|---|---|---|
+| minimiert | 2,3 s | 0,02 s |
+| sichtbar, untätig, OpenGL | 6,4 s | 0,08 s |
+| sichtbar, untätig, Direct3D 11 | ≈1,1 s | ≈0,05 s |
+
+Läuft ein Effekt, weht die Windfahne oder ist die Bibliothek offen, wird
+weiter jedes Bild gezeichnet. Große Explosionen (≈600 Teilchen bildschirmfüllend)
+kosten auf dieser Grafik ≈20 ms je Bild — das ist Füllrate, nicht Rechenzeit
+(Aufbau < 1 ms, Zeichenaufrufe < 0,2 ms).
