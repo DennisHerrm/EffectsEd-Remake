@@ -1001,6 +1001,10 @@ void App::drawDialogs() {
         ImGui::TextUnformatted(
             (std::string("EffectsEd ") + versionWithRevision()).c_str());
         ImGui::TextDisabled("%s", tr(Str::AboutTagline));
+        // Woher die Vorlage stammt — das Original nennt seine Autoren auch.
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 30.0f);
+        ImGui::TextDisabled("%s", tr(Str::AboutOriginal));
+        ImGui::PopTextWrapPos();
         ImGui::Separator();
         ImGui::TextDisabled("%s: %s", tr(Str::AboutSettings),
                             paths::configDir().c_str());
