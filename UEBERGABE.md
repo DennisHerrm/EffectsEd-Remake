@@ -2,7 +2,69 @@
 
 Alles, was nötig ist, um ohne die alten Gespräche weiterzuarbeiten.
 
-Stand: **1.0.0** — die erste Fassung ohne Zusatz. 4051 Prüfungen grün, zehn Prüfwerkzeuge still.
+Stand: **1.18.0-rev77 plus Nachtrunde vom 1./2. Oktober 2026**. 4374 Kernprüfungen,
+732 Oberflächenprüfungen (Direct3D 11 und OpenGL), zwölf Prüfwerkzeuge still.
+Die Abschnitte ab 1 stammen aus früheren Runden; wo Zahlen abweichen, gilt
+Abschnitt 0.
+
+---
+
+## 0. Die Nachtrunde: was neu ist und wie man es prüft
+
+### Der Oberflächen-Selbsttest (neu)
+
+Nach dem Vorbild von behaved: das Programm bedient sich selbst — echte
+Mausklicks und Tasten über ImGuis Testschnittstelle (`IMGUI_ENABLE_TEST_ENGINE`
+in `gui/imgui_config.h`), jeder Knopf, jedes Menü, jeder Dialog, jedes Feld.
+Code: `gui/selbsttest.cpp`, Markierungen für Elemente ohne Beschriftung:
+`gui/testmarke.h`.
+
+```
+set EFXED_SELBSTTEST=alles          (oder ein Teil: start, segmente, speichern,
+                                     ansicht, wiedergabe, eigenschaften, dialoge,
+                                     liste, bedienung, beenden, bibliothek,
+                                     auswahl, dokumente, werkzeug, nachlegen,
+                                     spinner, felder; extra: darstellung)
+set EFXED_RENDERER=gl3              (optional, sonst Direct3D 11)
+set EFXED_FOTOS=C:\pfad             (optional: Fotos der Fenster und der Ansicht)
+set EFXED_FENSTER=1720x1040         (optional: Fenstergröße)
+build\Release\efxed.exe
+```
+
+Ergebnis in `<exe-Ordner>\selbsttest\selbsttest_ergebnis.txt`. Der Test benutzt
+einen eigenen Einstellungsordner neben der exe — nie die echten Einstellungen —,
+öffnet keine echten Windows-Dialoge (Datei-, Ordner-, Zwischenablage-Wege sind
+ersetzt) und nimmt keinen Fokus (`SW_SHOWNOACTIVATE`).
+
+`darstellung` öffnet jeden Effekt des Spielpfads (Movie Duels: 376), friert
+ihn mit festem Zufallswert bei 20/150/600/1500 ms ein, fotografiert die Ansicht
+und schreibt `darstellung.tsv` (lebende/gezeichnete Teilchen, Bild-, Aufbau-
+und Zeichenzeit).
+
+### Was diese Nacht dazukam (Auswahl, Einzelheiten in `git log`)
+
+- **Darstellung wie die Engine** (Render-Zweig `kern`, gegen OpenJK geprüft):
+  Linien, Schweife und Blitze als Bänder, `size` als Radius, Zylinder,
+  Shaderstufen mit Mischfaktoren 1:1, Sortierung, Abdrücke (Decals),
+  ScreenFlash, Lichter erhellen den Raum, `org2FromTrace`, Wellenfunktionen.
+- **Wiedergabe-Einstellungen wirken** wie im Original: eigener Ursprung,
+  „Repeat for N seconds", „Respawn effect every frame", wandernder
+  Startpunkt; „Repeat until stopped" ist voreingestellt und legt alle
+  Repeat-Rate-Sekunden nach; alles übersteht den Neustart.
+- **Bedienung wie im Original:** Spinner-Pfeile an jedem Zahlenfeld (Schritt
+  je Feld, gerundet wie gemessen), zwanzig Farbfelder im Farbknopf,
+  Alt+Rücktaste, Statuszeile mit Scheduled und Marks, Overdraw mit schwarzem
+  Hintergrund, Textured+Wireframe zusammen, Spielpfad aus dem Dateipfad.
+- **Fehler behoben:** Klick auf eine Meldung wählte kein Segment, Pause der
+  Zeitleiste setzte den Merker nicht, Reiterwechsel ließ das Auslaufen hängen,
+  minimiert lief die Schleife ungebremst (2,3 s CPU in 5 s, jetzt 16 ms),
+  minimierter Start wurde ignoriert.
+
+### Messwerkzeuge im Scratchpad (nicht im Projekt)
+
+Der Vergleich mit dem Original (Raumgeometrie, Kamera, Dialoge, Bildpaare)
+lief über Hilfsskripte außerhalb des Projekts; die Ergebnisse stehen in
+`ABGLEICH.md` und in den Kommentaren an den betroffenen Stellen.
 
 ---
 

@@ -155,6 +155,13 @@ public:
         probe.version = version ? version : "unknown";
         if (vendor) diag::info(std::string("vendor: ") + vendor);
 
+        // Bildsynchronisation. Ohne ausdrueckliches Intervall entscheidet der
+        // Treiber — und manche zeichnen dann ungebremst: gemessen 6.4 s
+        // Rechenzeit in 5 s bei einem untaetigen, sichtbaren Fenster. Die
+        // Erweiterung WGL_EXT_swap_control gibt es auf jedem Treiber seit
+        // Windows XP; fehlt sie, bleibt es beim Verhalten des Treibers.
+        swapInterval_ = reinterpret_cast<SwapIntervalProc>(wglGetProcAddress("wglSwapIntervalEXT"));
+
         // Mindestens OpenGL 3.3 verlangen — darunter fehlen die
         // Vertexpuffer-Objekte, auf denen die ImGui-Anbindung aufsetzt.
         int major = 0, minor = 0;
@@ -230,7 +237,14 @@ public:
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     }
 
-    void present(bool) override { SwapBuffers(dc_); }
+    void present(bool vsync) override {
+        const int wanted = vsync ? 1 : 0;
+        if (swapInterval_ && wanted != currentInterval_) {
+            swapInterval_(wanted);
+            currentInterval_ = wanted;
+        }
+        SwapBuffers(dc_);
+    }
 
     void resizeSwapChain(int width, int height) override {
         width_ = width;
@@ -720,6 +734,9 @@ private:
     HWND hwnd_ = nullptr;
     HDC dc_ = nullptr;
     HGLRC context_ = nullptr;
+    using SwapIntervalProc = BOOL(WINAPI*)(int);
+    SwapIntervalProc swapInterval_ = nullptr;
+    int currentInterval_ = -1;
     int width_ = 1280;
     int height_ = 860;
     Probe probe_;

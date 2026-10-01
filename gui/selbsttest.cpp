@@ -703,6 +703,8 @@ public:
         s.push_back(teil("start"));
         s.push_back(pruefSchritt("Programm laeuft, Hauptfenster gezeichnet",
                                  [] { return finde(tr(Str::MenuFile), "##main") != nullptr; }));
+        s.push_back(pruefSchritt("Start zeigt den Editor, nicht die Bibliothek (Voreinstellung)",
+                                 [] { return !app->startTabActive_; }));
         s.push_back(pruefSchritt("Voreinstellung wie im Original: Repeat until stopped", [] {
             return app->playback_.mode == playback::RepeatMode::UntilStopped &&
                    doc().clock.endMode() == timeline::EndMode::Repeat;

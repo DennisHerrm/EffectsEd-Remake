@@ -835,7 +835,11 @@ static bool runSession(efx::gui::App& app, efx::render::Backend preferred,
     const bool startMinimised = (startup.dwFlags & STARTF_USESHOWWINDOW) != 0 &&
                                 (asked == SW_SHOWMINIMIZED || asked == SW_MINIMIZE ||
                                  asked == SW_SHOWMINNOACTIVE || asked == SW_FORCEMINIMIZE);
-    if (efx::gui::selbsttestAktiv()) {
+    // Ebenso "zeigen, aber nicht aktivieren" (SW_SHOWNOACTIVATE / SW_SHOWNA),
+    // etwa aus Skripten: dann nimmt efxed dem Anwender nicht den Fokus.
+    const bool startQuiet = (startup.dwFlags & STARTF_USESHOWWINDOW) != 0 &&
+                            (asked == SW_SHOWNOACTIVATE || asked == SW_SHOWNA);
+    if (efx::gui::selbsttestAktiv() || startQuiet) {
         ShowWindow(hwnd, SW_SHOWNOACTIVATE);
     } else if (startMinimised) {
         WINDOWPLACEMENT wp{};
@@ -856,6 +860,7 @@ static bool runSession(efx::gui::App& app, efx::render::Backend preferred,
     DragAcceptFiles(hwnd, TRUE);
 
     std::string shownTitle;
+    ULONGLONG lastActivityMs = GetTickCount64();
     while (!g_quit && !app.wantsQuit()) {
         if (!g_dropped.empty()) {
             std::vector<std::wstring> dropped;
@@ -879,8 +884,20 @@ static bool runSession(efx::gui::App& app, efx::render::Backend preferred,
             renderer->initImGuiBackend();
         }
 
+        // Leerlauf: nichts laeuft, und seit einer halben Sekunde hat niemand
+        // etwas getan — dann auf die naechste Nachricht warten (hoechstens
+        // 100 ms), statt sechzigmal je Sekunde dasselbe Bild zu zeichnen.
+        // Gemessen vorher: 1.1 s Rechenzeit in 5 s bei einem untaetigen
+        // Fenster. Im Selbsttest nie: der braucht jedes Bild.
+        const bool idle = !efx::gui::selbsttestAktiv() && !app.needsContinuousFrames() &&
+                          !ImGui::GetIO().WantTextInput && GetTickCount64() - lastActivityMs > 500;
+        if (idle) {
+            MsgWaitForMultipleObjectsEx(0, nullptr, 100, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        }
+
         MSG msg;
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+            if (msg.message != WM_TIMER) lastActivityMs = GetTickCount64();
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
@@ -923,7 +940,10 @@ static bool runSession(efx::gui::App& app, efx::render::Backend preferred,
         efx::gui::selbsttestNachZeichnen(renderer.get());
         // Im Selbsttest ohne Warten auf den Bildschirm: der Test braucht
         // viele Bilder, nicht schoene.
-        renderer->present(!efx::gui::selbsttestAktiv());
+        // Im Leerlauf ohne Warten auf den Bildschirm: der Takt kommt dann vom
+        // Warten oben, und manche OpenGL-Treiber (gemessen: Intel) lassen die
+        // CPU beim Warten auf die Bildsynchronisation durchdrehen.
+        renderer->present(!efx::gui::selbsttestAktiv() && !idle);
 
         efx::render::Backend target{};
         if (app.wantsRendererChange(target)) {
