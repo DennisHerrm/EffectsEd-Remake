@@ -81,12 +81,18 @@ float Orbit::distanceToFit(float radius, float margin) const {
 void Orbit::reset(float worldScale) {
     worldScale_ = worldScale > 0.0f ? worldScale : 16.0f;
     target_ = Vec3{};
-    // Etwa zehn Fuss Abstand. In Welteinheiten gerechnet, damit die Ansicht
-    // bei einem anderen Massstab gleich aussieht.
-    distance_ = 10.0f * worldScale_;
-    yaw_ = 225.0f;
-    pitch_ = 15.0f;
+    // Grundstellung wie im Original (gemessen, agentA ROOM-GEOMETRY.md): Auge
+    // bei (0, -80, 0) fuer 10 Einheiten je Fuss, Blick entlang +Y genau auf
+    // den Ursprung, kein Kippen, 90 Grad senkrechtes Sichtfeld. Bei einem
+    // anderen Massstab waechst der Abstand mit (16 Einheiten: 128).
+    //
+    // Vorher: schraeg von oben (Gieren 225, Nicken 15), zehn Fuss, 60 Grad —
+    // ein ganz anderes Bild als im Original.
+    distance_ = 8.0f * worldScale_;
+    yaw_ = 270.0f;  // Auge auf -Y (yaw beschreibt, wo die Kamera STEHT)
+    pitch_ = 0.0f;
     roll_ = 0.0f;
+    fov_ = 90.0f;
     shakeOrigin_ = Vec3{};
     shakePitch_ = shakeYaw_ = 0.0f;
 }

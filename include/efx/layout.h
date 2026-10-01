@@ -84,7 +84,11 @@ struct Settings {
     //
     // Bei mir waren es zwei getrennte Einstellungen — zwei Schalter fuer
     // dieselbe Sache, und keiner tat, was sein Name versprach.
-    bool drawGrid = true;
+    //
+    // Seit dem Abgleich mit dem Original (1.10.2026, Handbuch und Messung):
+    // der Schalter zeichnet den Raum ALS Drahtgitter statt als Flaechen, auf
+    // allen sechs Seiten, 20 Einheiten je Feld. Darum aus, wie im Original.
+    bool drawGrid = false;
     bool drawWindVector = false;
     bool playSounds = true;
     bool showStatusBar = true;

@@ -32,10 +32,31 @@ struct LineSet {
 };
 
 // Maße des Raums, in Fuß. Wird mit dem Weltmaßstab in Einheiten umgerechnet.
+// Der Testraum des Originals, in Welteinheiten.
+//
+// Gemessen am Original (Disassembly von EffectsEd.exe, gegen Fotos der
+// Grundansicht bei 10 und 16 Einheiten je Fuss geprueft, Abweichung unter
+// einem Bildpunkt; scratchpad agentA/ROOM-GEOMETRY.md, 1.10.2026):
+//
+//   x -100..+100, y -140..+140, Boden z = -20, Decke z = +60
+//
+// Der Ursprung des Effekts schwebt also 20 Einheiten ueber dem Boden, und
+// der Raum haengt NICHT vom Weltmassstab ab — der verschiebt nur die Kamera.
+// Vorher: 32 x 48 x 20 Fuss, mit dem Massstab skaliert, Ursprung auf dem
+// Boden. Geschaetzt, nicht gemessen; der Bildeindruck war ein anderer.
 struct RoomSize {
-    float widthFeet = 32.0f;
-    float depthFeet = 48.0f;
-    float heightFeet = 20.0f;
+    float halfX = 100.0f;
+    float halfY = 140.0f;
+    float floorZ = -20.0f;
+    float ceilingZ = 60.0f;
+    // Ohne Raum (Draw Room aus): eine grosse Bodenflaeche auf Bodenhoehe.
+    float groundHalfX = 400.0f;
+    float groundHalfY = 560.0f;
+    // Gitter im Drahtgittermodus: 20 Einheiten je Feld auf jeder Flaeche
+    // (das Handbuch sagt "one foot", gemessen sind es 20 Einheiten).
+    float gridCell = 20.0f;
+    float height() const { return ceilingZ - floorZ; }
+    float centreZ() const { return (floorZ + ceilingZ) * 0.5f; }
 };
 
 // Die Wandtexturen des Testraums: Ziegel, Erde, Putz.

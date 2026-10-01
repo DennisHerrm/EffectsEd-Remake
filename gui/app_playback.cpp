@@ -494,12 +494,21 @@ std::vector<sim::Plane> App::collisionPlanes() const {
     const auto style = static_cast<scene::RoomStyle>(settings_.roomStyle);
     if (style == scene::RoomStyle::None) return {};
 
-    const float scale = settings_.worldScale > 0.0f ? settings_.worldScale : 16.0f;
-    const float halfWidth = roomSize_.widthFeet * scale * 0.5f;
-    const float halfDepth = roomSize_.depthFeet * scale * 0.5f;
-    const float height = roomSize_.heightFeet * scale;
-
-    auto planes = sim::roomPlanes(halfWidth, halfDepth, height);
+    // Die Flaechen des Testraums (gemessen am Original, siehe RoomSize).
+    // Alle Normalen zeigen nach innen; normal * x = distance liegt darauf.
+    const scene::RoomSize& r = roomSize_;
+    const bool open = !settings_.drawRoom;
+    const float hx = open ? r.groundHalfX : r.halfX;
+    const float hy = open ? r.groundHalfY : r.halfY;
+    std::vector<sim::Plane> planes = {
+        {{0.0f, 0.0f, 1.0f}, r.floorZ},       // Boden
+        {{0.0f, 0.0f, -1.0f}, -r.ceilingZ},   // Decke
+        {{1.0f, 0.0f, 0.0f}, -hx},
+        {{-1.0f, 0.0f, 0.0f}, -hx},
+        {{0.0f, 1.0f, 0.0f}, -hy},
+        {{0.0f, -1.0f, 0.0f}, -hy},
+    };
+    if (open) planes.resize(1);
     if (style == scene::RoomStyle::OpenSky) {
         // Draussen gibt es nur den Boden. Alles andere waere eine Wand, die
         // man nicht sieht — und nichts ist verwirrender als ein Funke, der
