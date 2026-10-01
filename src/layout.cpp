@@ -104,7 +104,9 @@ std::string Settings::toIni() const {
     out << "legacyRepeat=" << (legacyRepeat ? 1 : 0) << "\n";
     out << "gridOnWalls=" << (gridOnWalls ? 1 : 0) << "\n";
     out << "roomTexture=" << roomTexture << "\n";
-    out << "effectRenderMode=" << effectRenderMode << "\n";
+    out << "effectTextured=" << (effectTextured ? 1 : 0) << "\n";
+    out << "effectWireframe=" << (effectWireframe ? 1 : 0) << "\n";
+    out << "effectOverdraw=" << (effectOverdraw ? 1 : 0) << "\n";
     out << "gamePath=" << gamePath << "\n";
     // Je Pfad eine eigene Zeile: ein Trennzeichen waere in Windows-Pfaden
     // immer irgendwo enthalten.
@@ -179,7 +181,16 @@ Settings Settings::fromIni(const std::string& text) {
         else if (key == "legacyRepeat") s.legacyRepeat = toBool();
         else if (key == "gridOnWalls") s.gridOnWalls = toBool();
         else if (key == "roomTexture") s.roomTexture = toInt();
-        else if (key == "effectRenderMode") s.effectRenderMode = toInt();
+        else if (key == "effectRenderMode") {
+            // Alte Einstellungsdateien: eine Art aus dreien.
+            const int mode = toInt();
+            s.effectTextured = mode == 0;
+            s.effectWireframe = mode == 1;
+            s.effectOverdraw = mode == 2;
+        }
+        else if (key == "effectTextured") s.effectTextured = toBool();
+        else if (key == "effectWireframe") s.effectWireframe = toBool();
+        else if (key == "effectOverdraw") s.effectOverdraw = toBool();
         else if (key == "gamePath") s.gamePath = value;
         else if (key == "extraGamePath") {
             if (!value.empty()) s.extraGamePaths.push_back(value);
@@ -227,7 +238,7 @@ Settings Settings::fromIni(const std::string& text) {
     if (s.worldScale <= 0.0f) s.worldScale = 16.0f;
     if (s.orientation < 0 || s.orientation > 2) s.orientation = 0;
     if (s.roomTexture < 0 || s.roomTexture > 3) s.roomTexture = 0;
-    if (s.effectRenderMode < 0 || s.effectRenderMode > 2) s.effectRenderMode = 0;
+    s.updateRenderMode();
     // Ein Nullvektor waere keine Richtung; dann lieber die Voreinstellung.
     if (s.windDirection[0] == 0.0f && s.windDirection[1] == 0.0f &&
         s.windDirection[2] == 0.0f) {

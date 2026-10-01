@@ -70,11 +70,63 @@ void draw(const Canvas& c, Icon icon) {
             c.rect(0.28f, 0.56f, 0.72f, 0.84f);     // Etikett
             break;
         case Icon::AddSegment:
-            c.line(0.50f, 0.20f, 0.50f, 0.80f);
-            c.line(0.20f, 0.50f, 0.80f, 0.50f);
+            // Zauberstab wie im Original: Stab und Funken.
+            c.line(0.18f, 0.84f, 0.62f, 0.40f);
+            c.line(0.72f, 0.14f, 0.72f, 0.38f);
+            c.line(0.60f, 0.26f, 0.84f, 0.26f);
+            c.line(0.80f, 0.42f, 0.88f, 0.50f);
+            c.line(0.50f, 0.12f, 0.56f, 0.18f);
             break;
         case Icon::DeleteSegment:
-            c.line(0.20f, 0.50f, 0.80f, 0.50f);
+            // Rotes X wie im Original.
+            c.line(0.22f, 0.22f, 0.78f, 0.78f);
+            c.line(0.78f, 0.22f, 0.22f, 0.78f);
+            break;
+        case Icon::Clone:
+            c.rect(0.14f, 0.12f, 0.58f, 0.66f);
+            c.rect(0.40f, 0.34f, 0.86f, 0.88f);
+            break;
+        case Icon::About:
+            c.line(0.34f, 0.32f, 0.40f, 0.20f);
+            c.line(0.40f, 0.20f, 0.60f, 0.20f);
+            c.line(0.60f, 0.20f, 0.68f, 0.32f);
+            c.line(0.68f, 0.32f, 0.50f, 0.50f);
+            c.line(0.50f, 0.50f, 0.50f, 0.64f);
+            c.filled(0.46f, 0.76f, 0.54f, 0.84f);
+            break;
+        case Icon::PlaybackSettings:
+            // Haekchen-Feld mit Abspielpfeil, wie Knopf 32861 im Original.
+            c.rect(0.14f, 0.30f, 0.54f, 0.70f);
+            c.line(0.20f, 0.50f, 0.32f, 0.62f);
+            c.line(0.32f, 0.62f, 0.50f, 0.36f);
+            c.triangle(0.60f, 0.30f, 0.60f, 0.70f, 0.90f, 0.50f);
+            break;
+        case Icon::OrientUp:
+            c.line(0.30f, 0.80f, 0.30f, 0.14f);   // Z, hervorgehoben
+            c.line(0.30f, 0.14f, 0.20f, 0.28f);
+            c.line(0.30f, 0.14f, 0.40f, 0.28f);
+            c.line(0.30f, 0.80f, 0.80f, 0.80f);
+            c.line(0.30f, 0.80f, 0.62f, 0.54f);
+            break;
+        case Icon::OrientSide:
+            c.line(0.20f, 0.80f, 0.20f, 0.36f);
+            c.line(0.20f, 0.80f, 0.88f, 0.80f);   // X, hervorgehoben
+            c.line(0.88f, 0.80f, 0.74f, 0.70f);
+            c.line(0.88f, 0.80f, 0.74f, 0.90f);
+            c.line(0.20f, 0.80f, 0.52f, 0.54f);
+            break;
+        case Icon::OrientDown:
+            c.line(0.30f, 0.20f, 0.30f, 0.86f);   // -Z, hervorgehoben
+            c.line(0.30f, 0.86f, 0.20f, 0.72f);
+            c.line(0.30f, 0.86f, 0.40f, 0.72f);
+            c.line(0.30f, 0.20f, 0.80f, 0.20f);
+            c.line(0.30f, 0.20f, 0.62f, 0.46f);
+            break;
+        case Icon::SetOrigin:
+            c.line(0.22f, 0.80f, 0.22f, 0.30f);
+            c.line(0.22f, 0.80f, 0.72f, 0.80f);
+            c.line(0.22f, 0.80f, 0.52f, 0.54f);
+            c.circle(0.70f, 0.32f, 0.12f, true);
             break;
         case Icon::Play:
             c.triangle(0.30f, 0.18f, 0.30f, 0.82f, 0.82f, 0.50f);
@@ -234,6 +286,13 @@ static ImU32 colourFor(Icon icon) {
         case Icon::Room:           return IM_COL32(110, 150, 230, 255);
         case Icon::Grid:           return IM_COL32(226, 200, 74, 255);  // gelb
         case Icon::Wind:           return IM_COL32(226, 200, 74, 255);
+        case Icon::Clone:          return IM_COL32(110, 150, 230, 255);
+        case Icon::About:          return IM_COL32(226, 200, 74, 255);
+        case Icon::PlaybackSettings: return IM_COL32(88, 200, 96, 255);
+        case Icon::OrientUp:       return IM_COL32(110, 150, 230, 255); // Z blau
+        case Icon::OrientSide:     return IM_COL32(214, 78, 70, 255);   // X rot
+        case Icon::OrientDown:     return IM_COL32(200, 90, 200, 255);  // -Z magenta
+        case Icon::SetOrigin:      return IM_COL32(110, 150, 230, 255);
         default: break;
     }
     return ImGui::GetColorU32(ImGuiCol_Text);

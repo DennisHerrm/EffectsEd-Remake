@@ -617,6 +617,16 @@ private:
     bool flagHovered_ = false;
     std::vector<sim::Plane> collisionPlanes() const;
     void pressPlay();
+    // Wiederholung beenden, ohne abzubrechen: der laufende Durchlauf lebt aus
+    // (Play ein zweites Mal, wie im Original).
+    bool playOut_ = false;
+    timeline::EndMode endModeBeforePlayOut_ = timeline::EndMode::Repeat;
+    void finishPlayOut();
+    // Die Wiederholrate der Werkzeugleiste. Sie IST das `repeatDelay` der
+    // Datei (das Original schreibt den Wert der Leiste hinein); ohne Eintrag
+    // in der Datei gilt die zuletzt eingestellte Rate.
+    float repeatRateSeconds() const;
+    void setRepeatRateSeconds(float seconds);
     void pressStop();
     void togglePause();
 

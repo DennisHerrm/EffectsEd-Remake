@@ -205,14 +205,13 @@ void App::drawMenuBar() {
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu(tr(Str::ViewRenderOptions))) {
-            const Str labels[] = {Str::RenderTextured, Str::RenderWireframe,
-                                  Str::RenderOverdraw};
-            for (int i = 0; i < 3; ++i) {
-                if (ImGui::MenuItem(tr(labels[i]), nullptr,
-                                    settings_.effectRenderMode == i)) {
-                    settings_.effectRenderMode = i;
-                }
-            }
+            // Drei unabhaengige Schalter wie im Original; Overdraw sperrt die
+            // beiden anderen.
+            ImGui::BeginDisabled(settings_.effectOverdraw);
+            ImGui::MenuItem(tr(Str::RenderTextured), nullptr, &settings_.effectTextured);
+            ImGui::MenuItem(tr(Str::RenderWireframe), nullptr, &settings_.effectWireframe);
+            ImGui::EndDisabled();
+            ImGui::MenuItem(tr(Str::RenderOverdraw), nullptr, &settings_.effectOverdraw);
             ImGui::EndMenu();
         }
         ImGui::Separator();
@@ -294,33 +293,56 @@ void App::drawMenuBar() {
 }
 
 void App::drawToolbar(float dpiScale) {
-    const float wide = 120.0f * dpiScale;
-    const float narrow = 70.0f * dpiScale;
-    // Quadratische Symbolknoepfe, gross genug zum Treffen. Die Zeilenhoehe
-    // als Mass, damit sie zu den Eingabefeldern daneben passen.
-    const float iconSize = ImGui::GetFrameHeight();
-
-    // Zeile 1: Datei | Segmente | Wiedergabe
+    // Zwei Reihen wie im Original (Ressourcen RT_TOOLBAR 128, 155, 158, 167):
     //
-    // Die Gruppen entsprechen den Leisten 128, 155 und 158 des Originals und
-    // lassen sich einzeln abschalten. Dort waren es andockbare Fenster; eine
-    // feste Leiste mit schaltbaren Gruppen tut dasselbe, ohne dass man
-    // Fenster herumziehen muss.
-    bool anythingBefore = false;
+    //   Reihe 1: Main     New Open Save | Clone | About
+    //            Effects  New Segment, Delete Segment
+    //            Playback Play Pause Stop | Settings | Repeat Rate [Feld][Regler]
+    //                     Orient Up/Sideways/Down | Set Origin
+    //   Reihe 2: World    World Scale [Liste] Time Scale [Feld][Regler] |
+    //                     Axes | Room Grid | Textured Wireframe Overdraw | Wind
+    //
+    // Dazu, ans Ende der zweiten Reihe: die festen Blickrichtungen (gibt es im
+    // Original nicht). Jede Gruppe laesst sich ueber Ansicht ein- und
+    // ausblenden, wie im Original.
+    const float iconSize = ImGui::GetFrameHeight();
+    const float em = ImGui::GetFontSize();
+    (void)dpiScale;
+    const auto separator = [] {
+        ImGui::SameLine();
+        ImGui::TextDisabled("|");
+        ImGui::SameLine();
+    };
+    bool rowStarted = false;
+    const auto next = [&] {
+        if (rowStarted) separator();
+        rowStarted = true;
+    };
+
+    // --- Reihe 1 --------------------------------------------------------------
     if (settings_.showMainToolbar) {
+        next();
         if (iconButton("##new", Icon::New, tr(Str::FileNew), false, iconSize)) cmdNew();
         ImGui::SameLine();
         if (iconButton("##open", Icon::Open, tr(Str::FileOpen), false, iconSize)) cmdOpen();
         ImGui::SameLine();
         if (iconButton("##save", Icon::Save, tr(Str::FileSave), false, iconSize)) cmdSave();
-        anythingBefore = true;
+        separator();
+        ImGui::BeginDisabled(!canCloneSegment());
+        if (iconButton("##clone", Icon::Clone, tr(Str::ToolClone), false, iconSize)) {
+            cmdCloneSegment();
+        }
+        ImGui::EndDisabled();
+        separator();
+        if (iconButton("##about", Icon::About, tr(Str::HelpAbout), false, iconSize)) {
+            showAboutDialog_ = true;
+        }
     }
 
     if (settings_.showEffectsToolbar) {
-        if (anythingBefore) { ImGui::SameLine(); ImGui::TextUnformatted("|"); }
-        ImGui::SameLine();
-        if (iconButton("##addSegment", Icon::AddSegment, tr(Str::ToolNewSegment),
-                       false, iconSize)) {
+        next();
+        if (iconButton("##addSegment", Icon::AddSegment, tr(Str::ToolNewSegment), false,
+                       iconSize)) {
             showNewSegmentDialog_ = true;
         }
         ImGui::SameLine();
@@ -330,184 +352,165 @@ void App::drawToolbar(float dpiScale) {
             cmdDeleteSegment();
         }
         ImGui::EndDisabled();
-        anythingBefore = true;
     }
 
-    if (!settings_.showPlaybackToolbar) {
-        // Die zweite Zeile faengt trotzdem an.
-        if (!anythingBefore) ImGui::TextUnformatted(" ");
-    } else {
-    // Abspielen, Pause und Stopp stehen NUR noch unten in der Zeitleiste.
-    //
-    // Hier standen sie ein zweites Mal, samt Wiederholungshaeckchen — dieselben
-    // drei Knoepfe, keine zwei Handbreit von den anderen entfernt. Bei zwei
-    // Bedienelementen fuer dieselbe Sache fragt man sich, ob sie dasselbe tun,
-    // und probiert es aus. Das Original hat sie oben, aber es hat unten keine
-    // Zeitleiste; wir haben eine, und dort gehoeren sie hin.
-    //
-    // Stattdessen: feste Blickrichtungen. Die sind neu und haben oben Platz.
-    if (anythingBefore) { ImGui::SameLine(); ImGui::TextUnformatted("|"); ImGui::SameLine(); }
-    struct ViewButton {
-        const char* id;
-        Icon icon;
-        Str tip;
-        camera::Orbit::View view;
-    };
-    static const ViewButton kViews[] = {
-        {"##viewFront",  Icon::ViewFront,  Str::ViewFront,  camera::Orbit::View::Front},
-        {"##viewBack",   Icon::ViewBack,   Str::ViewBack,   camera::Orbit::View::Back},
-        {"##viewLeft",   Icon::ViewLeft,   Str::ViewLeft,   camera::Orbit::View::Left},
-        {"##viewRight",  Icon::ViewRight,  Str::ViewRight,  camera::Orbit::View::Right},
-        {"##viewTop",    Icon::ViewTop,    Str::ViewTop,    camera::Orbit::View::Top},
-        {"##viewBottom", Icon::ViewBottom, Str::ViewBottom, camera::Orbit::View::Bottom},
-    };
-    bool firstView = true;
-    for (const ViewButton& b : kViews) {
-        if (!firstView) ImGui::SameLine();
-        firstView = false;
-        if (iconButton(b.id, b.icon, tr(b.tip), false, iconSize)) {
-            camera_.lookFrom(b.view);
+    if (settings_.showPlaybackToolbar) {
+        next();
+        const bool hasSegments = !doc().effect.primitives.empty();
+        const bool running = doc().clock.state() != timeline::State::Stopped;
+        ImGui::BeginDisabled(!hasSegments);
+        // Play und Pause sind im Original Umschalter (eingedrueckt, solange
+        // die Wiederholung laeuft bzw. angehalten ist).
+        if (iconButton("##play", Icon::Play, tr(Str::ToolPlay),
+                       doc().clock.state() == timeline::State::Playing && !playOut_, iconSize)) {
+            pressPlay();
         }
-    }
-    ImGui::SameLine();
-    if (iconButton("##viewReset", Icon::ViewReset, tr(Str::ViewReset), false,
-                   iconSize)) {
-        // Auf die Ausgangsansicht, wie beim Programmstart.
-        camera_.reset(settings_.worldScale);
-    }
-    ImGui::SameLine();
-    // Das Feld zeigt `repeatDelay` DER DATEI, in Sekunden.
-    //
-    // Es hing an einer Einstellung des Editors — einer eigenen
-    // Wiederholrate, die mit dem Effekt nichts zu tun hat. Beim Anwender
-    // stand dort 1.062, waehrend die Datei `repeatDelay 300` sagte und die
-    // Vorschau auch danach lief. Das Original zeigt an derselben Stelle
-    // 0.300, also den Wert aus der Datei.
-    //
-    // Ein Feld, das eine Zahl zeigt, die nirgends wirkt, ist schlimmer als
-    // keines: wer daran dreht, glaubt etwas geaendert zu haben.
-    float repeatSeconds = static_cast<float>(doc().effect.repeatDelay) * 0.001f;
-    ImGui::SetNextItemWidth(narrow);
-    const bool byField =
-        ImGui::DragFloat("##repeatRate", &repeatSeconds, 0.005f, 0.0f, 10.0f, "%.3f");
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr(Str::ToolRepeatRate));
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(wide);
-    const bool bySlider =
-        ImGui::SliderFloat("##repeatSlider", &repeatSeconds, 0.0f, 2.0f, "");
-
-    if (byField || bySlider) {
-        const int millis = static_cast<int>(repeatSeconds * 1000.0f + 0.5f);
-        if (millis != doc().effect.repeatDelay) {
-            doc().effect.repeatDelay = millis;
-            doc().effect.repeatDelaySet = millis > 0;
-            doc().dirty = true;
-            // Sofort sichtbar: `repeatDelay` bestimmt Vorlauf und
-            // Schleifenlaenge, das laesst sich nicht nachtraeglich anpassen.
-            refreshPreview();
+        ImGui::SameLine();
+        if (iconButton("##pause", Icon::Pause, tr(Str::ToolPause),
+                       doc().clock.state() == timeline::State::Paused, iconSize)) {
+            togglePause();
         }
-    }
-    }
-
-    // Zeile 2: Massstaebe
-    ImGui::SetNextItemWidth(wide * 1.6f);
-    int current = 0;
-    for (int i = 0; i < layout::worldScaleCount(); ++i) {
-        if (layout::worldScales()[i].unitsPerFoot == settings_.worldScale) current = i;
-    }
-    if (ImGui::BeginCombo("##worldScale", layout::worldScales()[current].label())) {
-        for (int i = 0; i < layout::worldScaleCount(); ++i) {
-            const auto& scale = layout::worldScales()[i];
-            if (ImGui::Selectable(scale.label(), i == current)) {
-                settings_.worldScale = scale.unitsPerFoot;
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!running);
+        if (iconButton("##stop", Icon::Stop, tr(Str::ToolStop), false, iconSize)) pressStop();
+        ImGui::EndDisabled();
+        ImGui::EndDisabled();
+        separator();
+        if (iconButton("##playbackSettings", Icon::PlaybackSettings,
+                       tr(Str::EffectsPlaybackSettings), false, iconSize)) {
+            showPlaybackDialog_ = true;
+        }
+        ImGui::SameLine();
+        // Wiederholrate: Feld (%.3f s) und Regler. Der Regler ist im Original
+        // logarithmisch, 0.05 bis 5 s (gemessen: Wert = 0.05 * 100^(pos/1000),
+        // Vorgabe 0.300). Der Wert ist zugleich das `repeatDelay` der Datei.
+        float repeatSeconds = repeatRateSeconds();
+        ImGui::SetNextItemWidth(em * 4.0f);
+        const bool byField = ImGui::DragFloat("##repeatRate", &repeatSeconds, 0.005f, 0.001f,
+                                              60.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr(Str::ToolRepeatRate));
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(em * 8.0f);
+        float slider = std::clamp(repeatSeconds, 0.05f, 5.0f);
+        const bool bySlider = ImGui::SliderFloat("##repeatSlider", &slider, 0.05f, 5.0f, "",
+                                                 ImGuiSliderFlags_Logarithmic);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr(Str::ToolRepeatRate));
+        if (bySlider) repeatSeconds = slider;
+        if (byField || bySlider) setRepeatRateSeconds(repeatSeconds);
+        separator();
+        // Ausrichtung als Gruppe von drei Umschaltern.
+        const struct { const char* id; Icon icon; Str tip; int value; } orient[] = {
+            {"##orientUp", Icon::OrientUp, Str::EffectsOrientUp, 0},
+            {"##orientSide", Icon::OrientSide, Str::EffectsOrientSide, 1},
+            {"##orientDown", Icon::OrientDown, Str::EffectsOrientDown, 2},
+        };
+        bool firstOrient = true;
+        for (const auto& o : orient) {
+            if (!firstOrient) ImGui::SameLine();
+            firstOrient = false;
+            if (iconButton(o.id, o.icon, tr(o.tip), settings_.orientation == o.value, iconSize)) {
+                settings_.orientation = o.value;
+                refreshPreview();
             }
         }
-        ImGui::EndCombo();
+        separator();
+        if (iconButton("##setOrigin", Icon::SetOrigin, tr(Str::EffectsCustomOrigin), false,
+                       iconSize)) {
+            showSpawnOriginDialog_ = true;
+        }
     }
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(narrow);
-    // Untergrenze 0.10, wie im Original.
-    //
-    // Wir standen bei 0.01 — Faktor zehn daneben. Aufgefallen ist es beim
-    // Nebeneinanderstellen beider Programme: ganz links zeigt das Original
-    // 0.10, unseres 0.01.
-    //
-    // Es ist nicht nur Formsache. Bei 0.01 dauert ein Effekt von vier
-    // Sekunden sechseinhalb Minuten, und wer den Regler versehentlich ganz
-    // nach links zieht, haelt das Programm fuer eingefroren.
-    constexpr float kSlowestPlayback = 0.10f;
-    if (ImGui::DragFloat("##timeScale", &settings_.timeScale, 0.01f,
-                         kSlowestPlayback, 10.0f,
-                         "%.2f")) {
-        doc().clock.setSpeed(settings_.timeScale);
-    }
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr(Str::ToolTimeScale));
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(wide);
-    if (ImGui::SliderFloat("##timeSlider", &settings_.timeScale, kSlowestPlayback,
-                           4.0f, "")) {
-        doc().clock.setSpeed(settings_.timeScale);
-    }
-    // Die sieben Ansichtsknoepfe — Leiste 167 des Originals, einzeln
-    // abschaltbar wie die anderen drei Gruppen.
+    if (!rowStarted) ImGui::Dummy(ImVec2(0.0f, iconSize));
+
+    // --- Reihe 2 --------------------------------------------------------------
+    rowStarted = false;
     if (settings_.showWorldToolbar) {
-    // Die sieben Ansichtsknoepfe, in der Reihenfolge der Werkzeugleiste 167
-    // des Originals: Achsen | Raum, Gitter | Texturiert, Drahtgitter,
-    // Overdraw | Wind.
-    //
-    // Als Umschalter mit Hilfetext. Die Hilfetexte sind die des Originals —
-    // sie sagen praeziser, was ein Knopf tut, als jeder Name. "Draw Room"
-    // etwa schaltet nur die Waende, nicht den Boden, und das steht dort.
-    ImGui::SameLine();
-    ImGui::TextUnformatted("|");
-
-    auto toggleButton = [&](const char* id, Icon icon, bool* value, Str tip) {
-        ImGui::SameLine();
-        if (iconButton(id, icon, tr(tip), *value, iconSize)) {
-            *value = !*value;
-            geometryDirty_ = true;
+        next();
+        ImGui::SetNextItemWidth(em * 11.0f);
+        int current = 0;
+        for (int i = 0; i < layout::worldScaleCount(); ++i) {
+            if (layout::worldScales()[i].unitsPerFoot == settings_.worldScale) current = i;
         }
-    };
-
-    toggleButton("##axes", Icon::Axes, &settings_.drawAxes, Str::ToolDrawAxes);
-    toggleButton("##room", Icon::Room, &settings_.drawRoom, Str::ToolDrawRoom);
-    toggleButton("##grid", Icon::Grid, &settings_.drawGrid, Str::ToolDrawGrid);
-
-    // Die drei Darstellungsarten schliessen sich gegenseitig aus — im
-    // Original sind es drei Knoepfe, von denen immer genau einer gedrueckt
-    // ist.
-    ImGui::SameLine();
-    ImGui::TextUnformatted("|");
-    const struct { const char* id; Icon icon; int mode; Str tip; } modes[] = {
-        {"##textured", Icon::Textured, 0, Str::ToolDrawTextured},
-        {"##wireframe", Icon::Wireframe, 1, Str::ToolDrawWireframe},
-        {"##overdraw", Icon::Overdraw, 2, Str::ToolDrawOverdraw},
-    };
-    for (const auto& entry : modes) {
-        ImGui::SameLine();
-        if (iconButton(entry.id, entry.icon, tr(entry.tip),
-                       settings_.effectRenderMode == entry.mode, iconSize)) {
-            settings_.effectRenderMode = entry.mode;
-        }
-    }
-
-    ImGui::SameLine();
-    ImGui::TextUnformatted("|");
-    toggleButton("##wind", Icon::Wind, &settings_.drawWindVector,
-                 Str::ToolDrawWind);
-    }  // showWorldToolbar
-
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(wide * 1.2f);
-    const Str orientLabels[] = {Str::EffectsOrientUp, Str::EffectsOrientSide,
-                                Str::EffectsOrientDown};
-    if (ImGui::BeginCombo("##orientation", tr(orientLabels[settings_.orientation]))) {
-        for (int i = 0; i < 3; ++i) {
-            if (ImGui::Selectable(tr(orientLabels[i]), settings_.orientation == i)) {
-                settings_.orientation = i;
+        if (ImGui::BeginCombo("##worldScale", layout::worldScales()[current].label())) {
+            for (int i = 0; i < layout::worldScaleCount(); ++i) {
+                const auto& scale = layout::worldScales()[i];
+                if (ImGui::Selectable(scale.label(), i == current)) {
+                    settings_.worldScale = scale.unitsPerFoot;
+                }
             }
+            ImGui::EndCombo();
         }
-        ImGui::EndCombo();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr(Str::ToolWorldScale));
+        ImGui::SameLine();
+        // Zeitfaktor: Feld (%.2f) und Regler, logarithmisch 0.1 bis 10
+        // (gemessen: Wert = 10^((pos-500)/500)). Wirkt nur im Editor.
+        ImGui::SetNextItemWidth(em * 3.5f);
+        if (ImGui::DragFloat("##timeScale", &settings_.timeScale, 0.01f, 0.1f, 10.0f, "%.2f",
+                             ImGuiSliderFlags_AlwaysClamp)) {
+            doc().clock.setSpeed(settings_.timeScale);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr(Str::ToolTimeScale));
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(em * 8.0f);
+        if (ImGui::SliderFloat("##timeSlider", &settings_.timeScale, 0.1f, 10.0f, "",
+                               ImGuiSliderFlags_Logarithmic)) {
+            doc().clock.setSpeed(settings_.timeScale);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr(Str::ToolTimeScale));
+
+        const auto toggle = [&](const char* id, Icon icon, bool* value, Str tip) {
+            if (iconButton(id, icon, tr(tip), *value, iconSize)) {
+                *value = !*value;
+                geometryDirty_ = true;
+            }
+        };
+        separator();
+        toggle("##axes", Icon::Axes, &settings_.drawAxes, Str::ToolDrawAxes);
+        separator();
+        toggle("##room", Icon::Room, &settings_.drawRoom, Str::ToolDrawRoom);
+        ImGui::SameLine();
+        toggle("##grid", Icon::Grid, &settings_.drawGrid, Str::ToolDrawGrid);
+        separator();
+        // Texturiert und Drahtgitter sind im Original UNABHAENGIGE Schalter
+        // (beide an = Drahtgitter ueber den texturierten Flaechen); Overdraw
+        // sperrt beide, solange es an ist.
+        ImGui::BeginDisabled(settings_.effectOverdraw);
+        toggle("##textured", Icon::Textured, &settings_.effectTextured, Str::ToolDrawTextured);
+        ImGui::SameLine();
+        toggle("##wireframe", Icon::Wireframe, &settings_.effectWireframe, Str::ToolDrawWireframe);
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        toggle("##overdraw", Icon::Overdraw, &settings_.effectOverdraw, Str::ToolDrawOverdraw);
+        separator();
+        toggle("##wind", Icon::Wind, &settings_.drawWindVector, Str::ToolDrawWind);
+    }
+    // Die festen Blickrichtungen — nicht im Original, aber schneller als
+    // Ziehen, wenn man einen Effekt von der Seite sehen will.
+    {
+        next();
+        struct ViewButton {
+            const char* id;
+            Icon icon;
+            Str tip;
+            camera::Orbit::View view;
+        };
+        static const ViewButton kViews[] = {
+            {"##viewFront", Icon::ViewFront, Str::ViewFront, camera::Orbit::View::Front},
+            {"##viewBack", Icon::ViewBack, Str::ViewBack, camera::Orbit::View::Back},
+            {"##viewLeft", Icon::ViewLeft, Str::ViewLeft, camera::Orbit::View::Left},
+            {"##viewRight", Icon::ViewRight, Str::ViewRight, camera::Orbit::View::Right},
+            {"##viewTop", Icon::ViewTop, Str::ViewTop, camera::Orbit::View::Top},
+            {"##viewBottom", Icon::ViewBottom, Str::ViewBottom, camera::Orbit::View::Bottom},
+        };
+        bool first = true;
+        for (const ViewButton& b : kViews) {
+            if (!first) ImGui::SameLine();
+            first = false;
+            if (iconButton(b.id, b.icon, tr(b.tip), false, iconSize)) camera_.lookFrom(b.view);
+        }
+        ImGui::SameLine();
+        if (iconButton("##viewReset", Icon::ViewReset, tr(Str::ViewReset), false, iconSize)) {
+            camera_.reset(settings_.worldScale);
+        }
     }
 }
 

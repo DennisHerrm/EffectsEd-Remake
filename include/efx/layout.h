@@ -158,8 +158,19 @@ struct Settings {
     // die bis zur Decke reicht, sieht aus wie eine halb so hohe, solange
     // nichts danebensteht, woran man messen kann.
     bool gridOnWalls = false;
-    // 0 texturiert, 1 Drahtgitter, 2 Ueberzeichnung
+    // Wie der Effekt gezeichnet wird. Im Original drei Schalter: Textured
+    // und Wireframe unabhaengig (beide an = Drahtgitter ueber den Flaechen),
+    // Overdraw sperrt beide. Vorher eine Auswahl aus dreien — beides
+    // zugleich ging nicht.
+    bool effectTextured = true;
+    bool effectWireframe = false;
+    bool effectOverdraw = false;
+    // Abgeleitet fuer den Zeichenweg: 2 Ueberzeichnung, 1 nur Drahtgitter,
+    // 0 texturiert (Drahtgitter darueber, wenn effectWireframe).
     int effectRenderMode = 0;
+    void updateRenderMode() {
+        effectRenderMode = effectOverdraw ? 2 : (effectWireframe && !effectTextured) ? 1 : 0;
+    }
     // 0 nach oben, 1 seitwaerts, 2 nach unten. Das Original hat drei, nicht zwei.
     int orientation = 0;
 

@@ -28,6 +28,8 @@ enum class Icon {
     // Feste Blickrichtungen. Ein Wuerfel, dessen zugewandte Seite gefüllt
     // ist — so sieht man die Richtung, ohne den Kurzhinweis zu lesen.
     ViewFront, ViewBack, ViewLeft, ViewRight, ViewTop, ViewBottom, ViewReset,
+    // Aus den Werkzeugleisten des Originals (RT_TOOLBAR 128/158).
+    Clone, About, PlaybackSettings, OrientUp, OrientSide, OrientDown, SetOrigin,
 };
 
 // Ein Knopf mit Symbol. `active` zeichnet ihn eingedrückt — für Umschalter.
