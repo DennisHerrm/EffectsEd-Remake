@@ -38,4 +38,8 @@ enum class Icon {
 bool iconButton(const char* id, Icon icon, const char* tooltip, bool active,
                 float size);
 
+// Der Kurzhinweis des Werkzeugknopfs, ueber dem die Maus im letzten Bild
+// stand — fuer die Hilfezeile der Statusleiste. nullptr, wenn keiner.
+const char* iconButtonHoveredTip();
+
 }  // namespace efx::gui

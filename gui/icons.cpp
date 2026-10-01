@@ -298,6 +298,16 @@ static ImU32 colourFor(Icon icon) {
     return ImGui::GetColorU32(ImGuiCol_Text);
 }
 
+namespace {
+const char* g_hoveredTip = nullptr;
+int g_hoveredFrame = -1;
+}  // namespace
+
+const char* iconButtonHoveredTip() {
+    // Nur gueltig, wenn im letzten oder diesem Bild gemeldet.
+    return ImGui::GetFrameCount() - g_hoveredFrame <= 1 ? g_hoveredTip : nullptr;
+}
+
 bool iconButton(const char* id, Icon icon, const char* tooltip, bool active,
                 float size) {
     if (active) {
@@ -336,6 +346,8 @@ bool iconButton(const char* id, Icon icon, const char* tooltip, bool active,
 
     if (tooltip && *tooltip && ImGui::IsItemHovered()) {
         ImGui::SetTooltip("%s", tooltip);
+        g_hoveredTip = tooltip;
+        g_hoveredFrame = ImGui::GetFrameCount();
     }
     return pressed;
 }

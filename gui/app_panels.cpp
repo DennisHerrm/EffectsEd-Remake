@@ -32,13 +32,18 @@ void App::drawMenuBar() {
 
     if (ImGui::BeginMenu(tr(Str::MenuFile))) {
         if (ImGui::MenuItem(tr(Str::FileNew), "Ctrl+N")) cmdNew();
+        hint(Str::HintFileNew);
         if (ImGui::MenuItem(tr(Str::FileOpen), "Ctrl+O")) cmdOpen();
+        hint(Str::HintFileOpen);
         if (ImGui::MenuItem(tr(Str::FileOpenPk3))) cmdOpenPk3();
         ImGui::Separator();
         if (ImGui::MenuItem(tr(Str::FileSave), "Ctrl+S")) cmdSave();
+        hint(Str::HintFileSave);
         if (ImGui::MenuItem(tr(Str::FileSaveAs))) cmdSaveAs();
+        hint(Str::HintFileSaveAs);
         ImGui::Separator();
         if (ImGui::MenuItem(tr(Str::FileReloadAssets), "F5")) rescanAssets();
+        hint(Str::HintReloadAssets);
         ImGui::Separator();
         // Zuletzt geoeffnet, bis 16 wie im Original. Die Liste wurde schon
         // immer gefuehrt, aber nirgends angezeigt.
@@ -57,6 +62,7 @@ void App::drawMenuBar() {
         }
         ImGui::Separator();
         if (ImGui::MenuItem(tr(Str::FileExit), "Alt+F4")) requestQuit();
+        hint(Str::HintFileExit);
         ImGui::EndMenu();
     }
 
@@ -80,19 +86,24 @@ void App::drawMenuBar() {
         }
         ImGui::BeginDisabled(!canCloneSegment());
         if (ImGui::MenuItem(tr(Str::EditCloneEffect), "Ctrl+D")) cmdCloneSegment();
+        hint(Str::HintClone);
         ImGui::EndDisabled();
         ImGui::BeginDisabled(!hasSelection());
         if (ImGui::MenuItem(tr(Str::EditDelete), "Del")) cmdDeleteSegment();
+        hint(Str::HintDelete);
         ImGui::EndDisabled();
         ImGui::Separator();
         if (ImGui::MenuItem(tr(Str::EditWallColor))) showWallColourDialog_ = true;
+        hint(Str::HintWallColor);
         if (ImGui::MenuItem(tr(Str::EditBgColor))) showBackgroundColourDialog_ = true;
+        hint(Str::HintBgColor);
         ImGui::Separator();
         if (ImGui::MenuItem(tr(Str::EditGamePath))) {
             std::snprintf(gamePathBuffer_, sizeof(gamePathBuffer_), "%s",
                           settings_.gamePath.c_str());
             showGamePathDialog_ = true;
         }
+        hint(Str::HintGamePath);
         ImGui::MenuItem(tr(Str::EditResetRepeatRate), nullptr,
                         &settings_.resetRepeatRateOnStart);
         // Womit geoeffnet wird. Voreinstellung ist der Editor, wie im
@@ -177,13 +188,17 @@ void App::drawMenuBar() {
         ImGui::MenuItem(tr(Str::ViewStatusBar), nullptr, &settings_.showStatusBar);
         ImGui::Separator();
         ImGui::MenuItem(tr(Str::ViewDrawAxes), nullptr, &settings_.drawAxes);
+        hint(Str::HintDrawAxes);
         ImGui::MenuItem(tr(Str::ViewWindVector), nullptr, &settings_.drawWindVector);
+        hint(Str::HintWind);
         if (ImGui::MenuItem(tr(Str::DialogWind))) showWindDialog_ = true;
         ImGui::Separator();
         if (ImGui::MenuItem(tr(Str::ViewDrawRoom), nullptr, &settings_.drawRoom)) {
             geometryDirty_ = true;
         }
+        hint(Str::HintDrawRoom);
         ImGui::MenuItem(tr(Str::ViewDrawGrid), nullptr, &settings_.drawGrid);
+        hint(Str::HintDrawGrid);
         if (ImGui::BeginMenu(tr(Str::ViewRoomStyle))) {
             const Str labels[] = {Str::RoomEnclosed, Str::RoomOpenSky, Str::RoomNone};
             for (int i = 0; i < 3; ++i) {
@@ -235,12 +250,15 @@ void App::drawMenuBar() {
         if (ImGui::MenuItem(tr(Str::ViewResetCamera))) {
             camera_.reset(settings_.worldScale);
         }
+        hint(Str::HintResetView);
         if (ImGui::MenuItem(tr(Str::ViewScreenshot), "Shift+C")) {
             pendingScreenshot_ = 1;
         }
+        hint(Str::HintScreenshot);
         if (ImGui::MenuItem(tr(Str::ViewScreenshotClip), "Ctrl+Shift+C")) {
             pendingScreenshot_ = 2;
         }
+        hint(Str::HintScreenshotClip);
         ImGui::Separator();
         if (ImGui::MenuItem(tr(Str::BrowserOpen), "Ctrl+B", startTabActive_)) {
             // Zum Startreiter und zurueck.
@@ -250,6 +268,7 @@ void App::drawMenuBar() {
         }
         ImGui::Separator();
         if (ImGui::MenuItem(tr(Str::ViewGraphicsInfo))) showDriverInfoDialog_ = true;
+        hint(Str::HintGraphicsInfo);
         if (ImGui::MenuItem(tr(Str::ViewResetLayout))) {
             settings_.split = layout::Split{};
         }
@@ -261,6 +280,7 @@ void App::drawMenuBar() {
 
     if (ImGui::BeginMenu(tr(Str::MenuEffects))) {
         if (ImGui::MenuItem(tr(Str::EffectsNewSegment), "Ins")) showNewSegmentDialog_ = true;
+        hint(Str::HintNewSegment);
         {
             // "Segment Enabled" aus dem Original. Das Haekchen steht in der
             // Segmentliste, aber auch hier, wie dort.
@@ -273,14 +293,20 @@ void App::drawMenuBar() {
             if (ImGui::MenuItem(tr(Str::EffectsEnabled), nullptr, enabled)) {
                 cmdToggleSegmentEnabled();
             }
+            hint(Str::HintEnabled);
             if (ImGui::MenuItem(tr(Str::EditDelete), "Del")) cmdDeleteSegment();
+            hint(Str::HintDelete);
             ImGui::EndDisabled();
         }
         ImGui::Separator();
         if (ImGui::MenuItem(tr(Str::EffectsPlay), "Space")) pressPlay();
+        hint(Str::HintPlay);
         if (ImGui::MenuItem(tr(Str::EffectsPause))) togglePause();
+        hint(Str::HintPause);
         if (ImGui::MenuItem(tr(Str::EffectsStop))) pressStop();
+        hint(Str::HintStop);
         if (ImGui::MenuItem(tr(Str::EffectsPlaybackSettings))) showPlaybackDialog_ = true;
+        hint(Str::HintPlaybackSettings);
         ImGui::Separator();
         // Drei Ausrichtungen, nicht zwei — das Original hat auch "Orient Down".
         if (ImGui::MenuItem(tr(Str::EffectsOrientUp), nullptr,
@@ -290,8 +316,13 @@ void App::drawMenuBar() {
         if (ImGui::MenuItem(tr(Str::EffectsOrientDown), nullptr,
                             settings_.orientation == 2)) settings_.orientation = 2;
         ImGui::Separator();
+        hint(Str::HintOrientDown);
         if (ImGui::MenuItem(tr(Str::EffectsCustomOrigin))) showSpawnOriginDialog_ = true;
+        hint(Str::HintOrientSide);
+        hint(Str::HintCustomOrigin);
+        hint(Str::HintOrientUp);
         ImGui::MenuItem(tr(Str::EffectsPlaySounds), nullptr, &settings_.playSounds);
+        hint(Str::HintPlaySounds);
         ImGui::Separator();
         if (ImGui::MenuItem(tr(Str::EffectsValidate))) refreshDiagnostics();
         ImGui::EndMenu();
@@ -303,6 +334,7 @@ void App::drawMenuBar() {
         if (ImGui::MenuItem(tr(Str::HelpUsersGuide))) openUsersGuide();
         ImGui::Separator();
         if (ImGui::MenuItem(tr(Str::HelpAbout))) showAboutDialog_ = true;
+        hint(Str::HintAbout);
         ImGui::EndMenu();
     }
 
@@ -1154,7 +1186,10 @@ void App::drawStatusBar() {
     if (warnings > 0) {
         clickableCount(Severity::Warning, warnings, tr(Str::DiagWarning));
     }
-    if (errors == 0 && warnings == 0) {
+    if (statusHint_ != nullptr || iconButtonHoveredTip() != nullptr) {
+        ImGui::TextUnformatted(statusHint_ ? statusHint_ : iconButtonHoveredTip());
+        ImGui::SameLine();
+    } else if (errors == 0 && warnings == 0) {
         ImGui::TextUnformatted(tr(Str::StatusReady));
         ImGui::SameLine();
     }
