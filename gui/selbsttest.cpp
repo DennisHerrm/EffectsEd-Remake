@@ -1160,6 +1160,30 @@ public:
             return *sofort && app->documents_.size() >= 2 && !app->playOut_ &&
                    app->documents_.back().clock.state() == timeline::State::Stopped;
         }));
+        // Mit repeatDelay in der Datei: ohne Vorlauf wird wie im Original ab
+        // der ersten Ausloesung nachgelegt; "Eingeschwungen beginnen" (Menue
+        // Bearbeiten) schaltet auf die nahtlose Schleife mit Vorlauf.
+        s.push_back(tu("repeatDelay 300, bis zum Anhalten", [] {
+            app->pressStop();
+            app->activateDocument(static_cast<int>(app->documents_.size()) - 1);
+            effekt().repeatDelay = 300;
+            effekt().repeatDelaySet = true;
+            app->playback_ = playback::Settings{};
+            app->playback_.mode = playback::RepeatMode::UntilStopped;
+            doc().clock.setEndMode(timeline::EndMode::Repeat);
+            app->settings_.preRoll = false;
+            app->startPlayback();
+        }));
+        s.push_back(pruefSchritt("repeatDelay ohne Vorlauf: Nachlegen ab der ersten Ausloesung (Original)",
+                                 [] { return app->scheduleActive_; }));
+        menue(s, Str::MenuEdit, Str::MenuPreRoll);
+        s.push_back(pruefSchritt("Bearbeiten > Eingeschwungen beginnen schaltet den Vorlauf ein",
+                                 [] { return app->settings_.preRoll; }));
+        s.push_back(tu("neu ausloesen", [] { app->startPlayback(); }));
+        s.push_back(pruefSchritt("mit Vorlauf: nahtlose Schleife statt Nachlegen",
+                                 [] { return !app->scheduleActive_; }));
+        menue(s, Str::MenuEdit, Str::MenuPreRoll);
+        s.push_back(pruefSchritt("und wieder aus", [] { return !app->settings_.preRoll; }));
         s.push_back(tu("aufraeumen", [] {
             app->pressStop();
             app->playback_ = playback::Settings{};
@@ -1586,6 +1610,12 @@ public:
         s.push_back(taste(ImGuiKey_Tab, true));
         s.push_back(pruefSchritt("Strg+Tab wechselt zum naechsten Reiter",
                                  [] { return app->activeDocument_ == 0; }));
+        s.push_back(taste(ImGuiKey_Tab, true));
+        s.push_back(warte(3));
+        s.push_back(pruefSchritt("Strg+Tab auch nach rechts, und es bleibt dort",
+                                 [] { return app->activeDocument_ == 1; }));
+        s.push_back(taste(ImGuiKey_Tab, true));
+        s.push_back(warte(3));
         s.push_back(taste(ImGuiKey_W, true));
         s.push_back(warteBis("Rueckfrage beim Schliessen eines geaenderten Reiters",
                              [] { return dialogOffen("###savechanges"); }, 30));

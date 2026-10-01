@@ -373,6 +373,9 @@ private:
     const Document& doc() const;
 
     void newDocument();
+    // Die Achsen als 3 Bildpunkte breite Baender ueber dem Effekt.
+    void drawAxesOnTop(render::Renderer* renderer, const camera::Matrix& view, float viewHeight);
+    scene::Mesh axisQuads_;
     // Die Uhr-Endart, die zur eingestellten Wiederholart gehoert.
     timeline::EndMode playbackEndMode() const;
     void closeDocument(int index);
