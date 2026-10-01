@@ -110,6 +110,77 @@ camera::Vec3 Live::positionAt(float nowMs) const {
     return sim::positionAt(origin, velocity, acceleration, gravity, seconds);
 }
 
+camera::Vec3 Live::anglesAt(float nowMs) const {
+    // Ein Bild zu 1/60 s, wie die Zufallswerte (randomAt).
+    constexpr float kFrameMs = 1000.0f / 60.0f;
+    // Ab hier dreht sich nichts mehr sichtbar: nach dem Liegenbleiben
+    // schrumpft die Drehung je Bild auf 60 % — nach dreissig Bildern ist
+    // sie ein Millionstel.
+    constexpr float kResting = 1e-4f;
+
+    camera::Vec3 out = angles;
+    camera::Vec3 delta = angleDelta;
+    float remaining = nowMs - spawnMs;
+    camera::Vec3 previous = positionAt(spawnMs);
+    for (int frame = 0; remaining > 0.0f; ++frame) {
+        const float step = std::min(kFrameMs, remaining);
+        // Das erste Update laeuft im Bild der Entstehung: `mTimeStart <
+        // mTime` ist noch falsch, UpdateOrigin wird uebersprungen, der
+        // Ursprung bleibt gleich — und schon das erste Bild daempft auf 60 %.
+        // Danach nur, wenn der Brocken sich nicht bewegt hat (VectorCompare;
+        // bei uns mit einem Hauch Spiel fuer die Rundung).
+        bool resting = frame == 0;
+        if (!resting) {
+            const camera::Vec3 here = positionAt(spawnMs + frame * kFrameMs);
+            const camera::Vec3 moved = here - previous;
+            resting = camera::dot(moved, moved) < 1e-8f;
+            previous = here;
+        }
+        if (resting) delta = delta * 0.6f;
+        // VectorMA( mAngles, mFrameTime * 0.01f, mAngleDelta, mAngles ).
+        out = out + delta * (step * 0.01f);
+        remaining -= kFrameMs;
+        if (std::max({std::fabs(delta.x), std::fabs(delta.y), std::fabs(delta.z)}) < kResting) {
+            break;
+        }
+    }
+    return out;
+}
+
+void anglesToAxis(const camera::Vec3& angles, camera::Vec3 axis[3]) {
+    // AngleVectors (q_math.c), Winkel in der Reihenfolge PITCH, YAW, ROLL.
+    const float toRad = kPi / 180.0f;
+    const float sy = std::sin(angles.y * toRad), cy = std::cos(angles.y * toRad);
+    const float sp = std::sin(angles.x * toRad), cp = std::cos(angles.x * toRad);
+    const float sr = std::sin(angles.z * toRad), cr = std::cos(angles.z * toRad);
+    axis[0] = {cp * cy, cp * sy, -sp};
+    const camera::Vec3 right{-1.0f * sr * sp * cy + -1.0f * cr * -sy,
+                             -1.0f * sr * sp * sy + -1.0f * cr * cy, -1.0f * sr * cp};
+    axis[2] = {cr * sp * cy + -sr * -sy, cr * sp * sy + -sr * cy, cr * cp};
+    // AnglesToAxis: VectorSubtract( vec3_origin, right, axis[1] ) — links.
+    axis[1] = right * -1.0f;
+}
+
+camera::Vec3 vectorToAngles(const camera::Vec3& v) {
+    // vectoangles (q_math.c), Wort fuer Wort — auch die Sonderfaelle fuer
+    // senkrechte Richtungen, die atan2 sonst anders beantworten wuerde.
+    float yaw = 0.0f, pitch = 0.0f;
+    if (v.y == 0.0f && v.x == 0.0f) {
+        pitch = v.z > 0.0f ? 90.0f : 270.0f;
+    } else {
+        if (v.x != 0.0f) {
+            yaw = std::atan2(v.y, v.x) * 180.0f / kPi;
+        } else {
+            yaw = v.y > 0.0f ? 90.0f : 270.0f;
+        }
+        if (yaw < 0.0f) yaw += 360.0f;
+        const float forward = std::sqrt(v.x * v.x + v.y * v.y);
+        pitch = std::atan2(v.z, forward) * 180.0f / kPi;
+        if (pitch < 0.0f) pitch += 360.0f;
+    }
+    return {-pitch, yaw, 0.0f};
+}
+
 void System::stop() {
     // Nur anhalten. Die Geometrie bleibt, damit man sie weiter anfahren kann.
     playing_ = false;
@@ -118,7 +189,7 @@ void System::stop() {
 void System::spawnMore(const Effect& effect, unsigned seed, const std::vector<bool>& enabledMask,
                        float atMs, const camera::Vec3& origin) {
     sim::Random random(seed);
-    const PlayContext context{&loader_, &planes_, axis_};
+    const PlayContext context{&loader_, &planes_, axis_, &models_};
     playInto(effect, random, enabledMask, context, 0, atMs, origin);
     playing_ = !live_.empty();
 }
@@ -253,7 +324,8 @@ Axis axisFor(int orientation) {
 void System::play(const Effect& effect, unsigned seed,
                   const std::vector<bool>& enabledMask, const Axis& axis,
                   EffectLoader loader, const std::vector<sim::Plane>& planes,
-                  bool buildUpRepeats, const camera::Vec3& origin) {
+                  bool buildUpRepeats, const camera::Vec3& origin,
+                  ModelLoader models) {
     // clear() und nicht stop().
     //
     // Der Fehler, den das behebt: `stop()` haelt seit der Trennung von
@@ -272,9 +344,10 @@ void System::play(const Effect& effect, unsigned seed,
     clear();
     planes_ = planes;
     loader_ = loader;
+    models_ = std::move(models);
     axis_ = axis;
     sim::Random random(seed);
-    const PlayContext context{&loader, &planes, axis};
+    const PlayContext context{&loader, &planes, axis, &models_};
     playInto(effect, random, enabledMask, context, 0, 0.0f, origin);
 
     // `repeatDelay`: der Effekt wiederholt sich, OHNE dass der laufende
@@ -730,6 +803,35 @@ void System::playInto(const Effect& effect, sim::Random& random,
 
         item.rotation = p.rotation.set ? random.pick(p.rotation) : 0.0f;
         item.rotationDelta = p.rotationDelta.set ? random.pick(p.rotationDelta) : 0.0f;
+
+        // Emitter: Lage, Drehung und Modell, wie FxScheduler.cpp sie an
+        // FX_AddEmitter uebergibt (Fall Emitter in CreateEffect):
+        //
+        //     VectorSet( ang, mAngle1.GetVal(), mAngle2.GetVal(), mAngle3.GetVal() );
+        //     vectoangles( ax[0], temp );
+        //     VectorAdd( ang, temp, ang );
+        //     VectorSet( angDelta, mAngle1Delta.GetVal(), ... );
+        //     emitterModel = fx->mMediaHandles.GetHandle();
+        //
+        // `ax[0]` ist die Achse DIESER Primitive (`own`) — nach
+        // randRotAroundFwd und axisFromSphere. Ohne angle steht 0: mAngle1..3
+        // stehen nicht im Erzeuger von CPrimitiveTemplate.
+        //
+        // Nur hier gewuerfelt, nicht fuer alle Typen: sonst verschoeben sich
+        // die Zufallsfolgen jedes anderen Segments.
+        if (p.type == PrimitiveType::Emitter) {
+            item.angles = pickVec3(p.angles, random) + vectorToAngles(own.forward);
+            item.angleDelta = pickVec3(p.anglesDelta, random);
+            if ((flags & kFlagAttachedModel) != 0 && !p.models.empty()) {
+                // GetHandle: irand( 0, size-1 ) — jeder Eintrag gleich oft.
+                const size_t at = static_cast<size_t>(
+                    random.next() * static_cast<float>(p.models.size()));
+                const std::string& name = p.models[std::min(at, p.models.size() - 1)];
+                if (context.models != nullptr && *context.models) {
+                    item.model = (*context.models)(name);
+                }
+            }
+        }
 
 
         // Untergeordnete Effekte starten mit dem Versatz ihres Erzeugers.
@@ -1550,6 +1652,24 @@ int alphaTestOf(const std::string& func) {
     return 0;
 }
 
+// Mischung, Tiefe und Alphatest einer Gruppe aus ihrer Shaderstufe.
+void configureStageGroup(DrawGroup& group, const shader::Stage& stage, float sort, bool clamp) {
+    group.clamp = clamp;
+    group.blended = shader::stageBlends(stage);
+    group.src = group.blended ? stage.srcBlend : shader::BlendFactor::One;
+    group.dst = group.blended ? stage.dstBlend : shader::BlendFactor::Zero;
+    group.depthWrite = shader::stageWritesDepth(stage);
+    // `depthFunc disable` (JKA, ParseStage): GLS_DEPTHTEST_DISABLE —
+    // gfx/effects/whiteFlash zeichnet so ueber alles hinweg.
+    std::string depthFunc = stage.depthFunc;
+    for (char& c : depthFunc) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    group.depthTest = depthFunc != "disable";
+    group.alphaTest = alphaTestOf(stage.alphaFunc);
+    group.sort = sort;
+}
+
 // Sammelt die Zeichengruppen eines Bildes.
 class GroupCollector {
 public:
@@ -1624,6 +1744,151 @@ void appendStage(DrawGroup& group, const scene::Mesh& raw, const shader::Stage* 
     }
 }
 
+// --- Modelle (Emitter mit useModel) ------------------------------------------
+
+// Ein Emitter-Modell, das in diesem Bild gezeichnet wird.
+//
+// Erst gesammelt und nach allen anderen Primitiven gebaut: die Beleuchtung
+// braucht die Lichter DIESES Bildes (R_SetupEntityLighting rechnet alle
+// dlights der Szene ein), und die stehen erst nach dem Durchlauf fest.
+struct PendingModel {
+    const Live* item = nullptr;
+    camera::Vec3 position;
+    float radius = 0.0f;
+    float shaderSeconds = 0.0f;
+};
+
+// Was R_SetupEntityLighting (tr_light.cpp) fuer die Entity ausrechnet.
+struct EntityLight {
+    float ambient[3]{0.0f, 0.0f, 0.0f};
+    float directed[3]{0.0f, 0.0f, 0.0f};
+    // ent->lightDir: in Modellkoordinaten, mit den SKALIERTEN Achsen gerechnet.
+    camera::Vec3 dir;
+    // backEnd.ori.viewOrigin: das Auge in Modellkoordinaten (R_RotateForEntity).
+    camera::Vec3 view;
+};
+
+// Die Beleuchtung einer Modell-Entity im Fall ohne Lichtgitter — der Fall
+// des Testraums, der keine Karte und damit kein Lichtgitter hat:
+//
+//     ambientLight = directedLight = identityLight * 150;
+//     lightDir = tr.sunDirection;      // RE_LoadWorldMap: (0.45, 0.3, 0.9) normiert
+//     ambientLight += identityLight * 32;   // "give everything a minimum light add"
+//
+// dann die dynamischen Lichter (Light-Primitive), jedes mit
+//
+//     d = DLIGHT_AT_RADIUS * radius^2 / max( Abstand, DLIGHT_MINIMUM_RADIUS )^2;
+//     directedLight += d * color;  lightDir += d * Richtung;
+//
+// Umgebungslicht auf 255 begrenzt, lightDir normiert und in die Achsen der
+// Entity gedreht. Die Achsen sind mit size skaliert (CEmitter::Draw), und
+// die Engine normiert sie hier NICHT — ein Brocken mit size 2 wird doppelt so
+// stark gerichtet beleuchtet. So steht es im Quelltext, so machen wir es.
+// identityLight ist 1 (r_overBrightBits 0, wie ueberall hier).
+EntityLight entityLight(const camera::Vec3& origin, const camera::Vec3 axis[3],
+                        const camera::Vec3& eye, const std::vector<DynamicLight>& lights) {
+    constexpr float kGridless = 150.0f;
+    constexpr float kMinimumAdd = 32.0f;
+    constexpr float kAtRadius = 16.0f;      // DLIGHT_AT_RADIUS
+    constexpr float kMinimumRadius = 16.0f; // DLIGHT_MINIMUM_RADIUS
+    EntityLight out;
+    for (int k = 0; k < 3; ++k) {
+        out.ambient[k] = kGridless + kMinimumAdd;
+        out.directed[k] = kGridless;
+    }
+    const camera::Vec3 sun = camera::normalise({0.45f, 0.3f, 0.9f});
+    // VectorScale( ent->lightDir, VectorLength( directedLight ), lightDir ).
+    camera::Vec3 lightDir =
+        sun * std::sqrt(out.directed[0] * out.directed[0] + out.directed[1] * out.directed[1] +
+                        out.directed[2] * out.directed[2]);
+    for (const DynamicLight& light : lights) {
+        camera::Vec3 dir = light.origin - origin;
+        float d = camera::length(dir);
+        dir = d > 0.0f ? dir * (1.0f / d) : camera::Vec3{};
+        const float power = kAtRadius * light.radius * light.radius;
+        if (d < kMinimumRadius) d = kMinimumRadius;
+        d = power / (d * d);
+        for (int k = 0; k < 3; ++k) out.directed[k] += d * light.rgb[k];
+        lightDir = lightDir + dir * d;
+    }
+    for (float& a : out.ambient) a = std::min(a, 255.0f);
+
+    lightDir = camera::normalise(lightDir);
+    out.dir = {camera::dot(lightDir, axis[0]), camera::dot(lightDir, axis[1]),
+               camera::dot(lightDir, axis[2])};
+
+    // R_RotateForEntity: viewOrigin = dot( delta, axis ) / |axis[0]| bei
+    // nonNormalizedAxes.
+    const float axisLength = camera::length(axis[0]);
+    const float inverse = axisLength > 0.0f ? 1.0f / axisLength : 0.0f;
+    const camera::Vec3 delta = eye - origin;
+    out.view = {camera::dot(delta, axis[0]) * inverse, camera::dot(delta, axis[1]) * inverse,
+                camera::dot(delta, axis[2]) * inverse};
+    return out;
+}
+
+// RB_CalcDiffuseColor (tr_shade_calc.cpp) fuer einen Eckpunkt: Umgebungslicht,
+// plus gerichtetes Licht, wo die Normale zum Licht zeigt. Q_ftol schneidet ab.
+uint32_t diffuseColour(const EntityLight& light, const float normal[3]) {
+    const float incoming =
+        normal[0] * light.dir.x + normal[1] * light.dir.y + normal[2] * light.dir.z;
+    uint32_t rgb[3];
+    for (int k = 0; k < 3; ++k) {
+        const float value = incoming <= 0.0f ? light.ambient[k]
+                                             : light.ambient[k] + incoming * light.directed[k];
+        rgb[k] = static_cast<uint32_t>(std::clamp(static_cast<int>(value), 0, 255));
+    }
+    return rgb[0] | (rgb[1] << 8) | (rgb[2] << 16) | (255u << 24);
+}
+
+// RB_CalcSpecularAlpha: bei einem Modell mit ent->lightDir (nicht mit dem
+// festen Ersatzlicht), Glanz hoch vier.
+uint32_t specularAlpha(const EntityLight& light, const md3::Vertex& v) {
+    const camera::Vec3 n{v.normal[0], v.normal[1], v.normal[2]};
+    const float d = 2.0f * camera::dot(n, light.dir);
+    const camera::Vec3 reflected = n * d - light.dir;
+    const camera::Vec3 viewer = light.view - camera::Vec3{v.pos[0], v.pos[1], v.pos[2]};
+    const float viewerLength = camera::length(viewer);
+    if (viewerLength <= 0.0f) return 0;
+    float l = camera::dot(reflected, viewer) / viewerLength;
+    if (l < 0.0f) return 0;
+    l = l * l;
+    l = l * l;
+    return static_cast<uint32_t>(std::min(static_cast<int>(l * 255.0f), 255));
+}
+
+// RB_CalcEnvironmentTexCoords: Spiegelvektor zum Auge, in Modellkoordinaten.
+void environmentUv(const EntityLight& light, const md3::Vertex& v, float uv[2]) {
+    const camera::Vec3 n{v.normal[0], v.normal[1], v.normal[2]};
+    const camera::Vec3 viewer =
+        camera::normalise(light.view - camera::Vec3{v.pos[0], v.pos[1], v.pos[2]});
+    const float d = camera::dot(n, viewer);
+    const camera::Vec3 reflected = n * (2.0f * d) - viewer;
+    uv[0] = 0.5f + reflected.y * 0.5f;
+    uv[1] = 0.5f - reflected.z * 0.5f;
+}
+
+// Haengt Modellgeometrie an eine Gruppe — wie appendStage, aber die Farbe
+// steht schon JE ECKPUNKT darin (Beleuchtung), statt fuer alle gleich.
+bool appendVertexColoured(DrawGroup& group, const scene::Mesh& raw,
+                          const std::vector<shader::TexMod>* mods, float seconds) {
+    if (group.mesh.vertices.size() + raw.vertices.size() > 65535u) return false;
+    const auto base = static_cast<uint16_t>(group.mesh.vertices.size());
+    for (scene::Vertex v : raw.vertices) {
+        if (mods && !mods->empty()) {
+            const shader::TexCoord moved =
+                shader::applyTexMods(*mods, {v.uv[0], v.uv[1]}, seconds, v.pos);
+            v.uv[0] = moved.u;
+            v.uv[1] = moved.v;
+        }
+        group.mesh.vertices.push_back(v);
+    }
+    for (uint16_t index : raw.indices) {
+        group.mesh.indices.push_back(static_cast<uint16_t>(base + index));
+    }
+    return true;
+}
+
 }  // namespace
 
 DrawList System::build(float nowMs, const camera::Vec3& right,
@@ -1649,6 +1914,7 @@ DrawList System::build(float nowMs, const camera::Vec3& right,
 
     GroupCollector groups(out.groups);
     scene::Mesh raw;
+    std::vector<PendingModel> pendingModels;
 
     for (const auto& item : live_) {
         // Fuer die Statuszeile: noch wartend, und Abdruecke bis jetzt.
@@ -1961,7 +2227,16 @@ DrawList System::build(float nowMs, const camera::Vec3& right,
                 // CEmitter::Draw zeichnet nur ein Modell, und nur mit
                 // FX_ATTACHED_MODEL (useModel); ein Sprite gibt es nicht.
                 // Hier stand der Standardzweig — jeder Brocken war ein
-                // weisser Fleck.
+                // weisser Fleck. Gebaut wird nach dem Durchlauf (PendingModel).
+                //
+                // size ist der Massstab: UpdateSize schreibt mRefEnt.radius,
+                // und Draw skaliert damit die Achsen ("ensure that we are
+                // sized"). rgb und alpha wirken nicht — UpdateRGB und
+                // UpdateAlpha sind in CEmitter::Update auskommentiert.
+                if (item.model != nullptr) {
+                    pendingModels.push_back({&item, position, size, shaderSeconds});
+                }
+                break;
             case PrimitiveType::Sound:
             case PrimitiveType::CameraShake:
             case PrimitiveType::FxRunner:
@@ -2019,20 +2294,7 @@ DrawList System::build(float nowMs, const camera::Vec3& right,
                 if (image.empty()) continue;
                 DrawGroup& group = groups.get(item.shader, static_cast<int>(s),
                                               std::string(assets::kImagePrefix) + image);
-                group.clamp = clamp;
-                group.blended = shader::stageBlends(stage);
-                group.src = group.blended ? stage.srcBlend : shader::BlendFactor::One;
-                group.dst = group.blended ? stage.dstBlend : shader::BlendFactor::Zero;
-                group.depthWrite = shader::stageWritesDepth(stage);
-                // `depthFunc disable` (JKA, ParseStage): GLS_DEPTHTEST_DISABLE —
-                // gfx/effects/whiteFlash zeichnet so ueber alles hinweg.
-                std::string depthFunc = stage.depthFunc;
-                for (char& c : depthFunc) {
-                    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-                }
-                group.depthTest = depthFunc != "disable";
-                group.alphaTest = alphaTestOf(stage.alphaFunc);
-                group.sort = sort;
+                configureStageGroup(group, stage, sort, clamp);
                 appendStage(group, raw, &stage, &stage.texMods, rawColour, shaderSeconds);
             }
             continue;
@@ -2049,6 +2311,131 @@ DrawList System::build(float nowMs, const camera::Vec3& right,
         group.sort = shader::kSortBlend0;
         appendStage(group, raw, nullptr, info.texMods, rawColour, shaderSeconds, info.rgbWave,
                     info.alphaWave);
+    }
+
+    // Die Modelle der Emitter, jetzt mit allen Lichtern dieses Bildes.
+    for (const PendingModel& pending : pendingModels) {
+        const Live& item = *pending.item;
+        // AnglesToAxis, dann mit size skaliert (CEmitter::Draw,
+        // nonNormalizedAxes): Modellpunkt p liegt bei origin + sum(p[k] * axis[k]).
+        camera::Vec3 axis[3];
+        anglesToAxis(item.anglesAt(nowMs), axis);
+        for (camera::Vec3& a : axis) a = a * pending.radius;
+        const camera::Vec3 eye =
+            view ? view->eye : pending.position - viewForward * 1.0e6f;
+        const EntityLight light = entityLight(pending.position, axis, eye, out.lights);
+
+        bool overflow = false;
+        bool any = false;
+        for (const md3::Surface& surface : item.model->surfaces) {
+            if (surface.vertices.empty() || surface.indices.empty()) continue;
+            // RB_SurfaceMesh zeichnet mit dem ersten Shader der Flaeche. Ohne
+            // einen nimmt R_AddMD3Surfaces tr.defaultShader.
+            const std::string name =
+                surface.shaders.empty() ? std::string() : md3::shaderName(surface.shaders[0]);
+
+            // Die Flaeche in Weltkoordinaten, gefaerbt mit der Beleuchtung
+            // (rgbGen lightingDiffuse — das hat jede Modellflaeche ohne
+            // eigenen Shaderblock, und die meisten mit).
+            raw.vertices.clear();
+            raw.indices.clear();
+            for (const md3::Vertex& v : surface.vertices) {
+                const camera::Vec3 world = pending.position + axis[0] * v.pos[0] +
+                                           axis[1] * v.pos[1] + axis[2] * v.pos[2];
+                pushVertex(raw, world, v.st[0], v.st[1], diffuseColour(light, v.normal));
+            }
+            raw.indices = surface.indices;
+
+            scene::Mesh& existing = out.byTexture[name];
+            if (existing.vertices.size() + raw.vertices.size() > 65535u) {
+                overflow = true;
+                continue;
+            }
+            {
+                DrawGroup legacy;
+                legacy.mesh = std::move(existing);
+                appendVertexColoured(legacy, raw, nullptr, pending.shaderSeconds);
+                existing = std::move(legacy.mesh);
+            }
+            any = true;
+
+            static const ShaderDraw kNoShader = [] {
+                ShaderDraw draw;
+                draw.missing = true;
+                return draw;
+            }();
+            const ShaderDraw& info = name.empty() ? kNoShader : lookup(name);
+            if (info.missing) {
+                // tr.defaultShader: das graue Kaestchen, undurchsichtig.
+                DrawGroup& group = groups.get(name, 0, "$default");
+                group.sort = shader::kSortOpaque;
+                appendStage(group, raw, nullptr, nullptr, 0xFFFFFFFFu, pending.shaderSeconds);
+                continue;
+            }
+            if (info.definition && !info.definition->stages.empty()) {
+                const shader::Shader& def = *info.definition;
+                const float sort = shader::sortValue(def);
+                for (size_t s = 0; s < def.stages.size(); ++s) {
+                    const shader::Stage& stage = def.stages[s];
+                    bool clamp = false;
+                    const std::string image = stageImage(stage, pending.shaderSeconds, clamp);
+                    if (image.empty()) continue;
+                    DrawGroup& group = groups.get(name, static_cast<int>(s),
+                                                  std::string(assets::kImagePrefix) + image);
+                    configureStageGroup(group, stage, sort, clamp);
+
+                    // ComputeColors mit der Entity-Farbe der Emitter: null —
+                    // CEffect() leert mRefEnt mit memset, und UpdateRGB/
+                    // UpdateAlpha laufen beim Emitter nicht.
+                    const uint32_t fixed = stageColour(stage, 0u, pending.shaderSeconds);
+                    const bool diffuse =
+                        shader::effectiveColorGen(stage) == shader::ColorGen::LightingDiffuse;
+                    const bool specular =
+                        shader::effectiveAlphaGen(stage) == shader::AlphaGen::LightingSpecular;
+                    std::string tcGen = stage.tcGen;
+                    for (char& c : tcGen) {
+                        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                    }
+                    const bool environment = tcGen == "environment";
+
+                    scene::Mesh staged = raw;
+                    for (size_t i = 0; i < staged.vertices.size(); ++i) {
+                        scene::Vertex& target = staged.vertices[i];
+                        const md3::Vertex& v = surface.vertices[i];
+                        uint32_t colour = diffuse ? (raw.vertices[i].colour & 0x00FFFFFFu) |
+                                                        (fixed & 0xFF000000u)
+                                                  : fixed;
+                        if (specular) {
+                            colour = (colour & 0x00FFFFFFu) | (specularAlpha(light, v) << 24);
+                        }
+                        target.colour = colour;
+                        if (environment) environmentUv(light, v, target.uv);
+                    }
+                    if (!appendVertexColoured(group, staged, &stage.texMods,
+                                              pending.shaderSeconds)) {
+                        overflow = true;
+                    }
+                }
+                continue;
+            }
+            // Kein Shaderblock: der Ersatzshader, den R_FindShader fuer ein
+            // Modell anlegt (lightmapIndex LIGHTMAP_NONE, "dynamic colors at
+            // vertexes"):
+            //
+            //     stages[0].rgbGen = CGEN_LIGHTING_DIFFUSE;
+            //     stages[0].stateBits = GLS_DEFAULT;    // undurchsichtig, schreibt Tiefe
+            //
+            // Also NICHT der Ersatz fuer Effektbilder (LIGHTMAP_2D, gemischt,
+            // ohne Tiefentest), den die Teilchen bekommen.
+            DrawGroup& group = groups.get(name, 0, std::string(assets::kImagePrefix) + name);
+            group.blended = false;
+            group.depthWrite = true;
+            group.depthTest = true;
+            group.sort = shader::kSortOpaque;
+            if (!appendVertexColoured(group, raw, nullptr, pending.shaderSeconds)) overflow = true;
+        }
+        if (overflow) ++out.skipped;
+        if (any) ++out.drawn;
     }
 
     // Die Reihenfolge der Engine: nach Sortierstufe, dann nach dem Shader

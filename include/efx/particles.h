@@ -18,6 +18,7 @@
 #include "efx/camera.h"
 #include "efx/curve.h"
 #include "efx/effect.h"
+#include "efx/md3.h"
 #include "efx/scene.h"
 #include "efx/shader.h"
 #include "efx/sim.h"
@@ -145,11 +146,49 @@ struct Live {
     sim::Path path;
     bool hasPath = false;
 
+    // Nur Emitter mit `useModel`: das Modell, das beim Ausloesen aus der
+    // `models`-Liste gewuerfelt wurde (FxScheduler.cpp: `emitterModel =
+    // fx->mMediaHandles.GetHandle()`, also irand ueber die Liste). Leer, wenn
+    // der Lader es nicht fand — dann zeichnet der Emitter nichts.
+    //
+    // Der Zeiger gehoert dem Lader (ModelLoader) und muss das Abspielen
+    // ueberleben, wie die Effekte des EffectLoader.
+    const md3::Model* model = nullptr;
+
+    // Lage des Modells in Grad, Reihenfolge der Engine: PITCH, YAW, ROLL.
+    //
+    //     VectorSet( ang, mAngle1.GetVal(), mAngle2.GetVal(), mAngle3.GetVal() );
+    //     vectoangles( ax[0], temp );
+    //     VectorAdd( ang, temp, ang );
+    //
+    // `angles` enthaelt die Richtung der Effektachse also schon.
+    camera::Vec3 angles;
+    camera::Vec3 angleDelta;
+
     bool aliveAt(float nowMs) const {
         return nowMs >= spawnMs && nowMs < deathMs;
     }
     camera::Vec3 positionAt(float nowMs) const;
+
+    // Die Lage zum Zeitpunkt, wie CEmitter::Update und UpdateAngles sie
+    // Bild fuer Bild fortschreiben:
+    //
+    //     if ( VectorCompare( mOldOrigin, mOrigin1 )) VectorScale( mAngleDelta, 0.6f, mAngleDelta );
+    //     VectorMA( mAngles, theFxHelper.mFrameTime * 0.01f, mAngleDelta, mAngles );
+    //
+    // `angleDelta 1` sind also zehn Grad je Sekunde, und sobald der Brocken
+    // liegt, laeuft die Drehung in wenigen Bildern aus. Abgeschritten wird in
+    // festen Bildern zu 60 je Sekunde — dann zeigt derselbe Zeitpunkt beim
+    // Zurueckspulen dieselbe Lage.
+    camera::Vec3 anglesAt(float nowMs) const;
 };
+
+// AnglesToAxis aus q_math: die drei Achsen zu PITCH/YAW/ROLL in Grad.
+// axis[0] vorwaerts, axis[1] LINKS (die Engine dreht `right` um), axis[2] oben.
+void anglesToAxis(const camera::Vec3& angles, camera::Vec3 axis[3]);
+
+// vectoangles aus q_math: PITCH und YAW einer Richtung, ROLL null.
+camera::Vec3 vectorToAngles(const camera::Vec3& direction);
 
 // Ein Zeichenaufruf, so wie die Engine ihn absetzt: EINE Shaderstufe eines
 // Shaders, mit genau dem Bild, der Mischung und den Farben dieser Stufe.
@@ -330,6 +369,13 @@ using EffectLoader = std::function<const Effect*(const std::string& name)>;
 // als in echten Dateien vorkommt.
 inline constexpr int kMaxEffectDepth = 4;
 
+// Woher die Modelle der Emitter kommen — wie EffectLoader ein Rueckruf, damit
+// der Kern das Dateisystem nicht kennt. Der Name steht wie in der .efx
+// ("models/players/droids/r5d2_head.md3"). nullptr, wenn es die Datei nicht
+// gibt oder sie sich nicht lesen laesst. Der Aufrufer speichert zwischen und
+// haelt die Modelle so lange, wie ein System sie zeigen kann.
+using ModelLoader = std::function<const md3::Model*(const std::string& name)>;
+
 class System {
 public:
     // Startet den Effekt. seed macht den Ablauf wiederholbar.
@@ -353,7 +399,8 @@ public:
               EffectLoader loader = {},
               const std::vector<sim::Plane>& planes = {},
               bool buildUpRepeats = false,
-              const camera::Vec3& origin = {});
+              const camera::Vec3& origin = {},
+              ModelLoader models = {});
 
     // Den Effekt ZUSAETZLICH ausloesen, ohne den Bestand wegzuwerfen.
     //
@@ -480,6 +527,7 @@ private:
     std::vector<sim::Plane> planes_;
     // Lader und Achse aus play(), fuer spawnMore().
     EffectLoader loader_;
+    ModelLoader models_;
     Axis axis_;
     int startedEffects_ = 0;
     int missingEffects_ = 0;
@@ -499,6 +547,7 @@ private:
         const EffectLoader* loader = nullptr;
         const std::vector<sim::Plane>* planes = nullptr;
         Axis axis;
+        const ModelLoader* models = nullptr;
     };
 
     // Rekursiv, mit Tiefenbegrenzung. `atMs` ist der Zeitpunkt, zu dem der
