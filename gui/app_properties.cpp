@@ -389,6 +389,33 @@ bool colourButton(const char* id, Vec3& colour, bool set) {
     }
     testmarke::marke(id);
     if (ImGui::BeginPopup("pick")) {
+        // Die zwanzig Felder des Originals (Popup 5100, Windows-Systempalette),
+        // fuenf Reihen zu vier; der freie Farbwaehler darunter ist sein
+        // "Other...".
+        static constexpr unsigned char kPalette[20][3] = {
+            {0, 0, 0},       {128, 0, 0},     {0, 128, 0},     {128, 128, 0},
+            {0, 0, 128},     {128, 0, 128},   {0, 128, 128},   {192, 192, 192},
+            {192, 220, 192}, {166, 202, 240}, {255, 251, 240}, {160, 160, 164},
+            {128, 128, 128}, {255, 0, 0},     {0, 255, 0},     {255, 255, 0},
+            {0, 0, 255},     {255, 0, 255},   {0, 255, 255},   {255, 255, 255}};
+        const float cell = ImGui::GetFrameHeight();
+        for (int k = 0; k < 20; ++k) {
+            if (k % 4 != 0) ImGui::SameLine();
+            ImGui::PushID(k);
+            const ImVec4 swatch(kPalette[k][0] / 255.0f, kPalette[k][1] / 255.0f,
+                                kPalette[k][2] / 255.0f, 1.0f);
+            if (ImGui::ColorButton("##palette", swatch, ImGuiColorEditFlags_NoAlpha,
+                                   ImVec2(cell, cell))) {
+                colour[0] = swatch.x;
+                colour[1] = swatch.y;
+                colour[2] = swatch.z;
+                changed = true;
+                ImGui::CloseCurrentPopup();
+            }
+            testmarke::marke(("palette" + std::to_string(k)).c_str());
+            ImGui::PopID();
+        }
+        ImGui::Separator();
         float value[3] = {shown.x, shown.y, shown.z};
         if (ImGui::ColorPicker3("##picker", value,
                                 ImGuiColorEditFlags_NoSidePreview | ImGuiColorEditFlags_InputRGB)) {
