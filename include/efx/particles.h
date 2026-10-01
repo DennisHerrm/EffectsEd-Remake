@@ -107,13 +107,34 @@ struct Live {
     std::string soundName;
     mutable bool soundPlayed = false;
 
-    // Je Kurve ein eigener Zufallswert, einmal beim Auslösen gezogen. Das
-    // `random`-Flag dämpft damit über die ganze Lebensdauer gleich stark — bei
-    // jedem Bild neu zu würfeln ergäbe Flimmern.
-    float randomSize = 1.0f;
-    float randomAlpha = 1.0f;
-    float randomRgb = 1.0f;
-    float randomLength = 1.0f;
+    // Die Flags, wie die Engine sie sieht (efx::effectiveFlags): useAlpha,
+    // setShaderTime, die Blitzformen taper/branch/grow, killOnImpact.
+    uint32_t flags = 0;
+
+    // Nur Electricity: der Startwert fuer Q_random, aus dem die GROBE Form
+    // des Blitzes entsteht. CElectricity::Initialize (FxPrimitives.cpp):
+    //
+    //     mRefEnt.frame = Q_flrand(0.0f, 1.0f) * 1265536;
+    //
+    // Einmal beim Erzeugen gesetzt; der Renderer arbeitet in jedem Bild auf
+    // einer Kopie der Entity, also beginnt die Folge jedes Bild gleich — die
+    // Form steht fuer die ganze Lebensdauer. Nur das Mikrozittern aus
+    // CreateShape (Q_flrand) aendert sich von Bild zu Bild.
+    int boltSeed = 0;
+
+    // Der `random`-Anteil einer Kurve.
+    //
+    // Die Engine wuerfelt ihn in JEDEM Bild neu: `perc1 = Q_flrand(0,1) *
+    // perc1` steht in UpdateSize, UpdateRGB, UpdateAlpha, UpdateLength
+    // (FxPrimitives.cpp), die jedes Bild laufen. Daher das Flackern von
+    // Funken und Flammen. Wir hatten einen Wert je Teilchen fuer die ganze
+    // Lebensdauer gezogen — ruhig, wo das Spiel flackert.
+    //
+    // Abhaengig von Zeit (60 Bilder je Sekunde) statt vom Bildzaehler: so
+    // zeigt dasselbe angefahrene Bild beim Zurueckspulen denselben Wert.
+    enum RandomChannel { kRandomSize = 0, kRandomSize2, kRandomLength,
+                         kRandomAlpha, kRandomRgb };
+    float randomAt(RandomChannel channel, float nowMs) const;
 
     // Vorgerechnet, damit es nicht in jedem Bild neu bestimmt wird.
     float sizeParm = 0.0f, size2Parm = 0.0f, lengthParm = 0.0f;
@@ -130,6 +151,55 @@ struct Live {
     camera::Vec3 positionAt(float nowMs) const;
 };
 
+// Ein Zeichenaufruf, so wie die Engine ihn absetzt: EINE Shaderstufe eines
+// Shaders, mit genau dem Bild, der Mischung und den Farben dieser Stufe.
+//
+// `byTexture` (unten) ist die rohe Geometrie je Shadername mit den Farben aus
+// der .efx. Gezeichnet wird aber `groups`: dort ist jede Stufe des Shaders
+// eine eigene Gruppe (RB_StageIteratorGeneric zeichnet alle Stufen
+// nacheinander), die Farbe ist nach rgbGen/alphaGen der Stufe berechnet
+// (ComputeColors in tr_shade.cpp), und die Reihenfolge ist die der Engine.
+struct DrawGroup {
+    std::string shader;  // wie in der .efx
+    int stage = 0;
+    // Das Bild dieser Stufe: Dateiname aus map/clampMap, das gerade gueltige
+    // Bild einer Bildfolge, "$whiteimage" fuer das eingebaute weisse — oder
+    // der Shadername selbst, wenn es keinen Shaderblock gibt (dann baut die
+    // Engine einen Ersatzshader aus dem gleichnamigen Bild).
+    std::string image;
+    bool clamp = false;  // clampMap
+
+    // Die Mischung als GL-Faktorpaar, genau wie im Shader. `blended` falsch
+    // heisst: keine Mischung (kein blendFunc oder GL_ONE GL_ZERO), und dann
+    // schreibt die Stufe Tiefe (ParseStage: depthMaskBits = GLS_DEPTHMASK_TRUE).
+    shader::BlendFactor src = shader::BlendFactor::One;
+    shader::BlendFactor dst = shader::BlendFactor::Zero;
+    bool blended = false;
+    bool depthWrite = true;
+    // Der Ersatzshader fuer ein Bild ohne Shaderblock zeichnet OHNE
+    // Tiefentest (R_FindShader, LIGHTMAP_2D: GLS_DEPTHTEST_DISABLE).
+    bool depthTest = true;
+    // alphaFunc der Stufe: 0 keiner, 1 GT0, 2 LT128, 3 GE128, 4 GE192
+    // (NameToAFunc in tr_shader.cpp).
+    int alphaTest = 0;
+
+    // Sortierschluessel der Engine (shaderSort_t, oder der Zahlenwert hinter
+    // `sort`). Gezeichnet wird aufsteigend.
+    float sort = 0.0f;
+    int firstSeen = 0;   // wann der Shader in diesem Bild zuerst vorkam
+
+    scene::Mesh mesh;
+};
+
+// Ein dynamisches Licht (Light-Primitive). CLight::Draw ruft nur
+// `AddLightToScene( origin, radius, r, g, b )` — es erhellt die Flaechen der
+// Umgebung, es hat keine eigene Geometrie.
+struct DynamicLight {
+    camera::Vec3 origin;
+    float radius = 0.0f;
+    float rgb[3]{1.0f, 1.0f, 1.0f};
+};
+
 // Was gezeichnet werden soll, unabhängig von der Grafikschnittstelle.
 struct DrawList {
     // Nach Shadername gruppiert. Ein Zeichenaufruf je Shader statt einer je
@@ -142,7 +212,12 @@ struct DrawList {
     // alphagemischten Flächen sehr wohl.
     std::map<std::string, scene::Mesh> byTexture;
 
-    scene::LineSet lines;   // Line, Electricity, Tail
+    // Was die Grafikschnittstelle zeichnet: je Shaderstufe eine Gruppe, schon
+    // in der Reihenfolge der Engine (siehe DrawGroup).
+    std::vector<DrawGroup> groups;
+
+    // Die Lichter dieses Bildes — fuer die Raumflaechen.
+    std::vector<DynamicLight> lights;
 
     // Wie viele Vierecke weggelassen wurden, weil die Geometrie voll war.
     //
@@ -157,6 +232,13 @@ struct DrawList {
     int skipped = 0;
     int drawn = 0;
     int alive = 0;
+
+    // Fuer die Statuszeile des Originals ("Active | Drawn | Scheduled |
+    // Marks"): wie viele Ausloesungen noch auf ihre Verzoegerung warten
+    // (Kindeffekte eingeschlossen), und wie viele Decal-Abdruecke bis zu
+    // diesem Zeitpunkt entstanden sind — ein Abdruck bleibt, bis man anhaelt.
+    int scheduled = 0;
+    int marks = 0;
 
     // Shadernamen, die von einem Segment mit `useAlpha` kommen.
     //
@@ -328,12 +410,37 @@ public:
         // deshalb bei eins ab: die Engine bekommt hier ein Ergebnis, das kein
         // Autor gemeint haben kann.
         const shader::WaveForm* alphaWave = nullptr;
+
+        // Der ganze Shaderblock, wenn es einen gibt. Daraus entstehen die
+        // Stufen in `DrawList::groups` — jede mit Bild, Mischung, rgbGen,
+        // alphaGen, tcMod und Bildfolge. Fehlt er, gilt der Ersatzshader der
+        // Engine fuer ein nacktes Bild (Alphamischung, Eckpunktfarbe, ohne
+        // Tiefentest).
+        const shader::Shader* definition = nullptr;
+
+        // Weder Shaderblock noch Bild dieses Namens: RE_RegisterShader gibt 0
+        // zurueck, und die Engine zeichnet tr.defaultShader — ein graues
+        // Kaestchen mit weissem Rand. Die Gruppe bekommt dann das Bild
+        // "$default" (assets::findTexture liefert es).
+        bool missing = false;
     };
     using ShaderLookup = std::function<ShaderDraw(const std::string&)>;
 
+    // Wo die Kamera steht und wie weit sie blickt.
+    //
+    // Linien, Schweife und Blitze stehen in der Engine quer zur Sichtlinie
+    // (RB_SurfaceLine: right = cross(start-eye, end-eye)), Zylinder werden mit
+    // der Entfernung feiner (RB_SurfaceCylinder), und ein ScreenFlash steht
+    // 8 Einheiten vor dem Auge (CFlash::Draw). Ohne Angabe gilt eine
+    // unendlich ferne Kamera, die entlang up x right blickt.
+    struct View {
+        camera::Vec3 eye;
+        float fovXDegrees = 90.0f;
+    };
     DrawList build(float nowMs, const camera::Vec3& right,
                    const camera::Vec3& up,
-                   const ShaderLookup& shaders = {}) const;
+                   const ShaderLookup& shaders = {},
+                   const View* view = nullptr) const;
 
     // Wie lange läuft der Effekt insgesamt? Für die Wiederholung.
     float durationMs() const { return durationMs_; }
@@ -353,6 +460,9 @@ public:
 
 private:
     std::vector<Live> live_;
+    // Die Flaechen aus play(), fuer Decals: CG_ImpactMark projiziert den
+    // Abdruck auf die Flaeche, die hoechstens 20 Einheiten hinter ihm liegt.
+    std::vector<sim::Plane> planes_;
     int startedEffects_ = 0;
     int missingEffects_ = 0;
 
@@ -416,34 +526,67 @@ bool addOrientedQuad(scene::Mesh& mesh, const camera::Vec3& centre,
                      const camera::Vec3& normal, float halfSize,
                      float rotationDegrees, uint32_t colour);
 
-// Ein stehender Zylinder: Mantel aus Segmenten, unten `radius`, oben
-// `radius2`, `length` hoch. Ohne Deckel — die Engine zeichnet auch keine.
+// Ein Zylinder wie RB_SurfaceCylinder (tr_surface.cpp): Mantel aus Segmenten,
+// am Ursprung `baseRadius`, am anderen Ende (`base + axis*length`)
+// `topRadius`. Ohne Deckel — die Engine zeichnet auch keine.
+//
+// In der Engine sitzt am URSPRUNG size2 (`backlerp`) und am fernen Ende size
+// (`radius`); die Textur hat t = 1 am Ursprung und t = 0 am Ende. Der
+// Aufrufer gibt also (size2, size) herein. Ist genau ein Radius kleiner als
+// 0.3, wird es wie in der Engine ein Kegel (RB_SurfaceCone).
+//
+// Der Ring beginnt bei MakeNormalVectors(axis).up und dreht sich um die Achse
+// — dieselbe Lage wie im Spiel, sonst stuende die Textur verdreht.
 //
 // Gibt wie addBillboard zurueck, ob der Mantel Platz hatte: die Indizes sind
-// 16 Bit, und ein Zylinder braucht 4 * segments Eckpunkte auf einmal. Ein
-// leerer Zylinder (Laenge oder beide Radien null) zaehlt als gelungen.
+// 16 Bit. Ein leerer Zylinder (Laenge null, beide Radien null, weniger als
+// drei Segmente) zaehlt als gelungen.
 bool addCylinder(scene::Mesh& mesh, const camera::Vec3& base,
-                 const camera::Vec3& axis, float length, float radius,
-                 float radius2, uint32_t colour, int segments = 16);
+                 const camera::Vec3& axis, float length, float baseRadius,
+                 float topRadius, uint32_t colour, int segments = 16);
 
-// Der Blitz: eine Kette von Punkten zwischen zwei Enden, die vom geraden Weg
-// abweicht.
+// Wie viele Segmente die Engine einem Zylinder gibt: RB_SurfaceCylinder
+// rechnet `40 * (1 - Abstand * fovX/90 / 2048)`, begrenzt auf 8 bis 40.
+int cylinderSegments(float distanceToEye, float fovXDegrees = 90.0f);
+
+// Ein Band zwischen zwei Punkten, quer zur Sichtlinie — RB_SurfaceLine /
+// DoLine in tr_surface.cpp. `halfWidth` ist der Radius der Primitive (size),
+// das Band ist also 2*size breit. Textur: s quer (0..1), t von 0 am Anfang
+// bis 1 am Ende. `side` ist die normierte Querrichtung.
+bool addLineQuad(scene::Mesh& mesh, const camera::Vec3& start,
+                 const camera::Vec3& end, const camera::Vec3& side,
+                 float halfWidth, uint32_t colour);
+
+// Die Querrichtung eines Bandes: normalize(cross(start-eye, end-eye)), wie
+// in RB_SurfaceLine und RB_SurfaceElectricity.
+camera::Vec3 lineSide(const camera::Vec3& start, const camera::Vec3& end,
+                      const camera::Vec3& eye);
+
+// Der Blitz, wie RB_SurfaceElectricity / DoBoltSeg / ApplyShape (tr_surface.cpp,
+// SP-Fassung) ihn baut — als texturierte Baender, nicht als Linien.
 //
-// Aus `RB_SurfaceElectricity` in `tr_surface.cpp`, Zeile für Zeile:
+//   - alle 16 Einheiten ein Knick, hoechstens 2000 Einheiten weit;
+//   - Abweichung zufall*3 entlang, zufall*7*chaos quer, summiert, und auf
+//     die Gerade zurueckgezogen (beide Enden sitzen genau);
+//   - jedes Stueck bekommt per ApplyShape zwei Stufen Feinzacken;
+//   - `taper`: Radius * (1 - perc^2) zur Spitze hin;
+//   - `branch`: bis zu drei Abzweige in den ersten 20 % (Q_random > 0.93);
+//   - `grow`: der Blitz waechst ueber `growPerc` (0..1) vom Anfang zum Ende.
 //
-//     alle 20 Einheiten ein Punkt
-//     Abweichung  = zufall*3 entlang der Achse
-//                 + zufall*7*chaos quer dazu (zwei Richtungen)
-//     die Abweichungen **summieren sich** über die Kette
-//     danach wird auf die Gerade zurückgezogen: cur = start+off, dann
-//     linear nach end interpoliert
-//
-// Das Zurückziehen ist der Trick: die Abweichung wächst frei, aber beide
-// Enden sitzen trotzdem exakt. Ravens Kommentar dazu: *„by nature, we always
-// move from exactly start....to end"*.
-void addLightning(scene::LineSet& lines, const camera::Vec3& from,
-                  const camera::Vec3& to, float chaos, unsigned seed,
-                  uint32_t colour);
+// `boltSeed` ist mRefEnt.frame: aus ihm kommt die GROBE Form, fuer die ganze
+// Lebensdauer dieselbe. `jitterSeed` ersetzt Q_flrand in CreateShape — es
+// darf sich von Bild zu Bild aendern.
+struct BoltShape {
+    float radius = 1.0f;   // size
+    float chaos = 0.0f;    // elasticity
+    bool taper = false;
+    bool branch = false;
+    float growPerc = 1.0f;
+};
+bool addElectricity(scene::Mesh& mesh, const camera::Vec3& from,
+                    const camera::Vec3& to, const camera::Vec3& eye,
+                    const BoltShape& shape, int boltSeed, unsigned jitterSeed,
+                    uint32_t colour);
 
 // Ein einzelnes Billboard. Getrennt, weil hier die Rechnung sitzt, die man
 // prüfen will: vier Ecken, um `rotation` um die Blickachse gedreht.

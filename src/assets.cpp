@@ -219,6 +219,27 @@ std::vector<unsigned char> whiteImageTga() {
     return out;
 }
 
+// Das Ersatzbild der Engine, R_CreateDefaultImage in tr_image.cpp: 16x16,
+// alles 32 (dunkelgrau, auch das Alpha), der Rand 255 —
+// "the default image will be a box, to allow you to see the mapping coordinates".
+std::vector<unsigned char> defaultImageTga() {
+    constexpr int kSide = 16;
+    std::vector<unsigned char> out(18, 0);
+    out[2] = 2;
+    out[12] = kSide;
+    out[14] = kSide;
+    out[16] = 32;
+    out[17] = 0x28;
+    for (int y = 0; y < kSide; ++y) {
+        for (int x = 0; x < kSide; ++x) {
+            const bool edge = x == 0 || y == 0 || x == kSide - 1 || y == kSide - 1;
+            const unsigned char v = edge ? 255 : 32;
+            out.insert(out.end(), {v, v, v, v});
+        }
+    }
+    return out;
+}
+
 }  // namespace
 
 std::vector<std::string> readZipDirectory(const std::string& path,
@@ -416,23 +437,35 @@ ResolvedTexture findTexture(const Index& index, const std::string& basePath,
     ResolvedTexture out;
     if (name.empty()) return out;
 
+    // Ein Bildname aus einer Shaderstufe (kImagePrefix): keinen Shader fragen.
+    const std::string prefix = kImagePrefix;
+    const bool imageOnly = name.compare(0, prefix.size(), prefix) == 0;
+
     // Schritt 1 und 2: kennt der Shaderbestand diesen Namen? Dann die
     // map-Zeile seiner ersten Stufe nehmen.
-    std::string candidate = index.mapOf(name);
+    std::string candidate = imageOnly ? name.substr(prefix.size()) : index.mapOf(name);
     if (candidate.empty()) {
         // Schritt 3: kein Shader mit dem Namen — der Name gilt direkt als
         // Bildname. Die Engine baut sich daraus einen Ersatzshader.
         candidate = name;
     }
-    // Sonderwerte der Engine, hinter denen keine Datei steht.
+    // Sonderwerte der Engine, hinter denen keine Datei steht. `$lightmap`
+    // zeigt bei Effekten ebenfalls das weisse Bild: ParseStage nimmt
+    // tr.whiteImage, wenn der Shader keine Lichtkarte hat (lightmapIndex < 0).
     const std::string lower = toLower(candidate);
-    if (lower == "$whiteimage") {
+    if (lower == "$whiteimage" || lower == "$lightmap") {
         // Keine Datei, aber ein Bild: das eingebaute weisse (whiteImageTga).
         // Vorher galt der Shader als bildlos, und die Vorschau zeichnete den
         // weichen Ersatzfleck statt des weissen Vierecks — bei
         // gfx/effects/whiteFlash (GL_ONE GL_ONE) ein ganz anderer Blitz.
         out.path = lower;
         out.white = true;
+        out.found = true;
+        return out;
+    }
+    if (lower == "$default") {
+        out.path = lower;
+        out.defaultImage = true;
         out.found = true;
         return out;
     }
@@ -659,6 +692,10 @@ Index scanAll(const std::vector<std::string>& basePaths, jobs::Pool* pool,
         for (auto& entry : one.shaderAnims) {
             combined.shaderAnims.push_back(std::move(entry));
         }
+        // Erster Ordner zuerst: shaderOf nimmt den ersten Treffer.
+        for (auto& entry : one.shaderDefs) {
+            combined.shaderDefs.push_back(std::move(entry));
+        }
         for (auto& entry : one.effectSources) {
             combined.effectSources.push_back(std::move(entry));
         }
@@ -744,6 +781,7 @@ std::vector<unsigned char> readFile(const std::string& basePath,
         return {};
     }
     if (where.white) return whiteImageTga();
+    if (where.defaultImage) return defaultImageTga();
     if (!where.archive.empty()) {
         return readFromZip(where.archive, where.path, error);
     }
@@ -816,6 +854,15 @@ std::string Index::mapOf(const std::string& shaderName) const {
         if (entry.first == key) return entry.second;
     }
     return {};
+}
+
+const shader::Shader* Index::shaderOf(const std::string& shaderName) const {
+    // Wie die anderen Abfragen: ohne Endung, klein (R_FindShader).
+    const std::string key = shaderKey(shaderName);
+    for (const auto& entry : shaderDefs) {
+        if (entry.name == key) return &entry;
+    }
+    return nullptr;
 }
 
 const shader::WaveForm* Index::alphaWaveOf(const std::string& shaderName) const {
@@ -979,6 +1026,9 @@ void collectShaderInfo(Index& index, const shader::Library& library) {
         const std::string name = toLower(entry.name);
         index.shaders.push_back(name);
         if (!seen.insert(name).second) continue;
+        // Klein abgelegt: shaderOf vergleicht dann ohne Umwandeln.
+        index.shaderDefs.push_back(entry);
+        index.shaderDefs.back().name = name;
         for (const auto& stage : entry.stages) {
             // Nicht nur `map`.
             //
