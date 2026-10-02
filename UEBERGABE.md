@@ -111,6 +111,12 @@ lief über Hilfsskripte außerhalb des Projekts; die Ergebnisse stehen in
      danach `gh release upload … output/EffectsEd-Remake-win7-revNN.zip`.
      Der Name `…-win7-revNN` ist Absicht: GitHub listet nach Namen, und
      rev78 nimmt das erste .zip — das normale muss vorn stehen.
+  6. Den Quelltextstand markieren — der Commit, aus dem gebaut wurde:
+     `git tag -a v1.18.0-revNN -m "…" && git push origin v1.18.0-revNN`,
+     und in die Release-Notizen
+     `**Quelltext dieser Fassung:** https://github.com/DennisHerrm/EffectsEd-Remake/tree/v1.18.0-revNN`.
+     (Die Tags im Releases-Repo legt `gh release create` selbst an; sie
+     zeigen nur auf README-Stände.)
 - **Quelltext:** öffentlich in `DennisHerrm/EffectsEd-Remake` (Remote `origin`).
 - **Prüfen:** Selbsttest-Teil `update` (in `alles`, ohne Netz, Quelle aus
   `EFXED_UPDATE_QUELLE`), und `updatenetz` (nicht in `alles`): der echte Weg
