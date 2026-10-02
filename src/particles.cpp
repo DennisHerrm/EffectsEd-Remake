@@ -1675,8 +1675,9 @@ class GroupCollector {
 public:
     explicit GroupCollector(std::vector<DrawGroup>& groups) : groups_(groups) {}
 
-    DrawGroup& get(const std::string& shaderName, int stage, const std::string& image) {
-        const auto key = std::make_tuple(shaderName, stage, image);
+    DrawGroup& get(const std::string& shaderName, int stage, const std::string& image,
+                   bool depthHack = false) {
+        const auto key = std::make_tuple(shaderName, stage, image, depthHack);
         const auto found = index_.find(key);
         if (found != index_.end()) return groups_[found->second];
         int seen = 0;
@@ -1694,12 +1695,13 @@ public:
         group.stage = stage;
         group.image = image;
         group.firstSeen = seen;
+        group.depthHack = depthHack;
         return group;
     }
 
 private:
     std::vector<DrawGroup>& groups_;
-    std::map<std::tuple<std::string, int, std::string>, size_t> index_;
+    std::map<std::tuple<std::string, int, std::string, bool>, size_t> index_;
     std::map<std::string, int> firstSeen_;
 };
 
@@ -2274,11 +2276,12 @@ DrawList System::build(float nowMs, const camera::Vec3& right,
         }
 
         // Und die Gruppen, wie die Engine sie zeichnet.
+        const bool hacked = (item.flags & kFlagDepthHack) != 0;
         if (info.missing) {
             // RE_RegisterShader gibt fuer einen Shader ohne Bild 0 zurueck,
             // gezeichnet wird tr.defaultShader: das graue Kaestchen
             // (R_CreateDefaultImage), undurchsichtig, Farbe egal.
-            DrawGroup& group = groups.get(item.shader, 0, "$default");
+            DrawGroup& group = groups.get(item.shader, 0, "$default", hacked);
             group.sort = shader::kSortOpaque;
             const uint32_t white = 0xFFFFFFFFu;
             appendStage(group, raw, nullptr, nullptr, white, shaderSeconds);
@@ -2293,7 +2296,7 @@ DrawList System::build(float nowMs, const camera::Vec3& right,
                 const std::string image = stageImage(stage, shaderSeconds, clamp);
                 if (image.empty()) continue;
                 DrawGroup& group = groups.get(item.shader, static_cast<int>(s),
-                                              std::string(assets::kImagePrefix) + image);
+                                              std::string(assets::kImagePrefix) + image, hacked);
                 configureStageGroup(group, stage, sort, clamp);
                 appendStage(group, raw, &stage, &stage.texMods, rawColour, shaderSeconds);
             }
@@ -2302,7 +2305,7 @@ DrawList System::build(float nowMs, const camera::Vec3& right,
         // Kein Shaderblock: der Ersatzshader der Engine fuer ein nacktes Bild
         // (R_FindShader, LIGHTMAP_2D): rgbGen vertex, alphaGen vertex,
         // GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA, ohne Tiefentest.
-        DrawGroup& group = groups.get(item.shader, 0, item.shader);
+        DrawGroup& group = groups.get(item.shader, 0, item.shader, hacked);
         group.blended = true;
         group.src = shader::BlendFactor::SrcAlpha;
         group.dst = shader::BlendFactor::OneMinusSrcAlpha;
@@ -2346,6 +2349,44 @@ DrawList System::build(float nowMs, const camera::Vec3& right,
             }
             raw.indices = surface.indices;
 
+            // Die Windung der Flaeche nach ihren Normalen bestimmen, nicht
+            // raten: zeigt das Kreuzprodukt der Kanten ueberwiegend GEGEN die
+            // gespeicherten Normalen, laufen die Dreiecke im Uhrzeigersinn
+            // (so liegen sie in Quake-Modellen) und werden umgedreht. Danach
+            // ist die Vorderseite wie beim Raum gegen den Uhrzeigersinn.
+            static const ShaderDraw kNoShaderForCull = [] {
+                ShaderDraw draw;
+                draw.missing = true;
+                return draw;
+            }();
+            const ShaderDraw& cullInfo = name.empty() ? kNoShaderForCull : lookup(name);
+            const shader::Cull cull = cullInfo.definition ? cullInfo.definition->cull
+                                                          : shader::Cull::Front;
+            {
+                double agree = 0.0;
+                const auto& sv = surface.vertices;
+                for (size_t t = 0; t + 2 < surface.indices.size(); t += 3) {
+                    const md3::Vertex& a = sv[surface.indices[t]];
+                    const md3::Vertex& b = sv[surface.indices[t + 1]];
+                    const md3::Vertex& c = sv[surface.indices[t + 2]];
+                    const camera::Vec3 ab{b.pos[0] - a.pos[0], b.pos[1] - a.pos[1], b.pos[2] - a.pos[2]};
+                    const camera::Vec3 ac{c.pos[0] - a.pos[0], c.pos[1] - a.pos[1], c.pos[2] - a.pos[2]};
+                    const camera::Vec3 n = camera::cross(ab, ac);
+                    const camera::Vec3 stored{a.normal[0] + b.normal[0] + c.normal[0],
+                                              a.normal[1] + b.normal[1] + c.normal[1],
+                                              a.normal[2] + b.normal[2] + c.normal[2]};
+                    agree += camera::dot(n, stored) > 0.0f ? 1.0 : -1.0;
+                }
+                // "cull back" zeigt die Innenseite: dann andersherum ausrichten.
+                const bool flip = (agree < 0.0) != (cull == shader::Cull::Back);
+                if (flip) {
+                    for (size_t t = 0; t + 2 < raw.indices.size(); t += 3) {
+                        std::swap(raw.indices[t + 1], raw.indices[t + 2]);
+                    }
+                }
+            }
+            const bool cullBackFaces = cull != shader::Cull::None;
+
             scene::Mesh& existing = out.byTexture[name];
             if (existing.vertices.size() + raw.vertices.size() > 65535u) {
                 overflow = true;
@@ -2369,6 +2410,7 @@ DrawList System::build(float nowMs, const camera::Vec3& right,
                 // tr.defaultShader: das graue Kaestchen, undurchsichtig.
                 DrawGroup& group = groups.get(name, 0, "$default");
                 group.sort = shader::kSortOpaque;
+                group.cullBackFaces = cullBackFaces;
                 appendStage(group, raw, nullptr, nullptr, 0xFFFFFFFFu, pending.shaderSeconds);
                 continue;
             }
@@ -2383,6 +2425,7 @@ DrawList System::build(float nowMs, const camera::Vec3& right,
                     DrawGroup& group = groups.get(name, static_cast<int>(s),
                                                   std::string(assets::kImagePrefix) + image);
                     configureStageGroup(group, stage, sort, clamp);
+                    group.cullBackFaces = cullBackFaces;
 
                     // ComputeColors mit der Entity-Farbe der Emitter: null —
                     // CEffect() leert mRefEnt mit memset, und UpdateRGB/
@@ -2432,6 +2475,7 @@ DrawList System::build(float nowMs, const camera::Vec3& right,
             group.depthWrite = true;
             group.depthTest = true;
             group.sort = shader::kSortOpaque;
+            group.cullBackFaces = cullBackFaces;
             if (!appendVertexColoured(group, raw, nullptr, pending.shaderSeconds)) overflow = true;
         }
         if (overflow) ++out.skipped;

@@ -627,10 +627,13 @@ int App::drawParticleGroups(render::Renderer* renderer, const particles::DrawLis
         } else {
             renderer->setBlendFactors(group.blended ? factor(group.src) : render::BlendFactor::One,
                                       group.blended ? factor(group.dst) : render::BlendFactor::Zero);
-            renderer->setDepthTest(group.depthTest);
-            renderer->setDepthWrite(group.depthWrite);
+            // depthHack: vor der Welt (RF_DEPTHHACK) — gegen den Raum ohne
+            // Tiefentest und ohne Tiefe zu schreiben.
+            renderer->setDepthTest(group.depthTest && !group.depthHack);
+            renderer->setDepthWrite(group.depthWrite && !group.depthHack);
             renderer->setAlphaTest(group.alphaTest);
         }
+        renderer->setCulling(group.cullBackFaces ? render::Cull::BackFaces : render::Cull::None);
 
         // Ohne Textur und Farbe im Ueberzeichnungsmodus. Die umgefaerbte
         // Fassung liegt in einem Member: der Zeiger muss den Zeichenaufruf
