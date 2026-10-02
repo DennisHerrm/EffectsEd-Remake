@@ -126,6 +126,14 @@ const std::vector<Preset>& presets() {
          "C:/Program Files (x86)/Steam/steamapps/common/Jedi Outcast/GameData/base"},
         {"Movie Duels",
          "C:/Program Files (x86)/Steam/steamapps/common/Jedi Academy/GameData/MovieDuels/base"},
+        // Die eigenstaendige Movie-Duels-Fassung liegt NEBEN GameData und
+        // bringt die Original-.pk3 von Jedi Academy in ihrem base mit; der Mod
+        // selbst steht in MD (fs_game). Wie in der Engine gehoert MD vor base
+        // — Rechtsklick auf die zweite Vorlage nimmt base dazu.
+        {"Movie Duels (MD)",
+         "C:/Program Files (x86)/Steam/steamapps/common/Jedi Academy/GameData Movie Duels/MD"},
+        {"Movie Duels (base)",
+         "C:/Program Files (x86)/Steam/steamapps/common/Jedi Academy/GameData Movie Duels/base"},
 
         // Die Ladenfassungen auf CD. Sie legen NICHT unter Steam oder GOG ab,
         // sondern dorthin, wohin der Installer von LucasArts schreibt.
