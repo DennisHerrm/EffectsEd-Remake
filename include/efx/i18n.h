@@ -331,6 +331,8 @@ enum class Str {
     StartOpenPk3,
     StartNewEffect,
     FileOpenPk3,
+    ArchiveOpened,
+    ArchiveEmpty,
     Pk3Loaded,
     BrowserTitle,
     BrowserOpen,

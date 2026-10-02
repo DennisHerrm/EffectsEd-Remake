@@ -187,15 +187,19 @@ std::vector<Place> searchPlaces(const Index& index, const std::string& basePath)
         owner[a] = best;
     }
 
+    // Archive, die zu keinem Spielordner gehoeren, kommen ZUERST: das sind
+    // die per "Archiv oeffnen" geladenen, und deren Fassung soll gewinnen
+    // (mergeOpenedArchive). Vorher standen sie am Ende — eine Mod mit einem
+    // Effekt gleichen Namens zeigte dann die Fassung des Spiels.
     std::vector<Place> places;
+    for (size_t a = 0; a < index.archives.size(); ++a) {
+        if (owner[a] == none) places.push_back({index.archives[a], {}});
+    }
     for (size_t r = 0; r < roots.size(); ++r) {
         for (size_t a = 0; a < index.archives.size(); ++a) {
             if (owner[a] == r) places.push_back({index.archives[a], {}});
         }
         places.push_back({{}, roots[r]});
-    }
-    for (size_t a = 0; a < index.archives.size(); ++a) {
-        if (owner[a] == none) places.push_back({index.archives[a], {}});
     }
     return places;
 }
@@ -522,6 +526,32 @@ ResolvedTexture findTexture(const Index& index, const std::string& basePath,
         }
     }
     return out;
+}
+
+void mergeOpenedArchive(Index& into, const Index& archive) {
+    const auto prepend = [](auto& list, const auto& front) {
+        list.insert(list.begin(), front.begin(), front.end());
+    };
+    prepend(into.archives, archive.archives);
+    prepend(into.shaderMaps, archive.shaderMaps);
+    prepend(into.shaderBlends, archive.shaderBlends);
+    prepend(into.shaderDefs, archive.shaderDefs);
+    prepend(into.shaderAnims, archive.shaderAnims);
+    prepend(into.shaderTexMods, archive.shaderTexMods);
+    prepend(into.shaderRgbWaves, archive.shaderRgbWaves);
+    prepend(into.shaderAlphaWaves, archive.shaderAlphaWaves);
+    prepend(into.effectSources, archive.effectSources);
+    const auto merge = [](std::vector<std::string>& list, const std::vector<std::string>& more) {
+        list.insert(list.end(), more.begin(), more.end());
+        std::sort(list.begin(), list.end());
+        list.erase(std::unique(list.begin(), list.end()), list.end());
+    };
+    merge(into.shaders, archive.shaders);
+    merge(into.textures, archive.textures);
+    merge(into.models, archive.models);
+    merge(into.sounds, archive.sounds);
+    merge(into.effects, archive.effects);
+    into.pk3Count += archive.pk3Count;
 }
 
 std::string gamePathFromFile(const std::string& path) {

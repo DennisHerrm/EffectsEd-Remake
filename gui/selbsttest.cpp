@@ -1273,6 +1273,161 @@ public:
         return s;
     }
 
+    // --- Archiv: ein .pk3 oeffnen und daraus laden ------------------------
+    // Ein Zip ohne Kompression (Methode 0) — genau so legt auch das Spiel
+    // viele seiner Archive an, und es braucht keinen Packer im Test.
+    static std::vector<unsigned char> zipStored(
+        const std::vector<std::pair<std::string, std::string>>& files) {
+        uint32_t table[256];
+        for (uint32_t n = 0; n < 256; ++n) {
+            uint32_t c = n;
+            for (int k = 0; k < 8; ++k) c = (c & 1u) ? 0xEDB88320u ^ (c >> 1) : c >> 1;
+            table[n] = c;
+        }
+        auto crc32 = [&](const std::string& d) {
+            uint32_t c = 0xFFFFFFFFu;
+            for (unsigned char b : d) c = table[(c ^ b) & 0xFFu] ^ (c >> 8);
+            return c ^ 0xFFFFFFFFu;
+        };
+        std::vector<unsigned char> out, central;
+        auto u16 = [](std::vector<unsigned char>& v, uint32_t x) {
+            v.push_back(static_cast<unsigned char>(x & 0xFF));
+            v.push_back(static_cast<unsigned char>((x >> 8) & 0xFF));
+        };
+        auto u32 = [&](std::vector<unsigned char>& v, uint32_t x) {
+            u16(v, x & 0xFFFF);
+            u16(v, x >> 16);
+        };
+        for (const auto& [name, data] : files) {
+            const uint32_t crc = crc32(data);
+            const auto offset = static_cast<uint32_t>(out.size());
+            const auto size = static_cast<uint32_t>(data.size());
+            u32(out, 0x04034b50u); u16(out, 20); u16(out, 0); u16(out, 0); u16(out, 0); u16(out, 0);
+            u32(out, crc); u32(out, size); u32(out, size);
+            u16(out, static_cast<uint32_t>(name.size())); u16(out, 0);
+            out.insert(out.end(), name.begin(), name.end());
+            out.insert(out.end(), data.begin(), data.end());
+            u32(central, 0x02014b50u); u16(central, 20); u16(central, 20); u16(central, 0); u16(central, 0);
+            u16(central, 0); u16(central, 0); u32(central, crc); u32(central, size); u32(central, size);
+            u16(central, static_cast<uint32_t>(name.size())); u16(central, 0); u16(central, 0);
+            u16(central, 0); u16(central, 0); u32(central, 0); u32(central, offset);
+            central.insert(central.end(), name.begin(), name.end());
+        }
+        const auto centralAt = static_cast<uint32_t>(out.size());
+        out.insert(out.end(), central.begin(), central.end());
+        u32(out, 0x06054b50u); u16(out, 0); u16(out, 0);
+        u16(out, static_cast<uint32_t>(files.size())); u16(out, static_cast<uint32_t>(files.size()));
+        u32(out, static_cast<uint32_t>(central.size())); u32(out, centralAt); u16(out, 0);
+        return out;
+    }
+
+    static std::vector<Schritt> teilArchiv() {
+        std::vector<Schritt> s;
+        s.push_back(teil("archiv"));
+        frischesDokument(s);
+        s.push_back(tu("pk3 mit Effekt und Textur anlegen", [] {
+            // 2x2 rot, unkomprimiertes TGA (Typ 2, 32 Bit, BGRA).
+            std::string tga = {0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 2, 0, 32, 8};
+            for (int k = 0; k < 4; ++k) tga += std::string{0, 0, '\xff', '\xff'};
+            const std::string efx =
+                "Particle\n{\n\tflags\tuseAlpha\n\tlife\t1000\n\tsize\n\t{\n\t\tstart\t8\n\t}\n"
+                "\tshaders\n\t[\n\t\tgfx/pk3test/rot\n\t]\n}\n";
+            const auto bytes = zipStored({{"effects/pk3test/funke.efx", efx},
+                                          {"gfx/pk3test/rot.tga", tga}});
+            const std::string path = (fs::path(arbeitsOrdner) / "pk3test.pk3").string();
+            std::ofstream f(path, std::ios::binary);
+            f.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+            f.close();
+            dateiAntworten.push_back(path);
+            // Ein Suchtext von vorhin darf die Effekte des Archivs nicht verstecken.
+            std::snprintf(app->browserFilter_, sizeof(app->browserFilter_), "%s", "gibtesnicht");
+        }));
+        menue(s, Str::MenuFile, Str::FileOpenPk3);
+        s.push_back(warte(60));
+        s.push_back(pruefSchritt("Datei > PK3-Archiv oeffnen: der Effekt aus dem Archiv steht im Bestand", [] {
+            const auto& e = app->assets_.effects;
+            return std::find(e.begin(), e.end(), "pk3test/funke") != e.end();
+        }));
+        s.push_back(pruefSchritt("und die Bibliothek ist vorn", [] { return app->startTabActive_; }));
+        s.push_back(pruefSchritt("die Bibliothek zeigt nur dieses Archiv, mit Meldung", [] {
+            return app->browserSource_.find("pk3test.pk3") != std::string::npos &&
+                   app->screenshotMessage_.find("pk3test.pk3") != std::string::npos;
+        }));
+        s.push_back(warteBis("Kachel des Archiv-Effekts", [] {
+            for (const auto& e : app->browserEntries_) {
+                if (e.name == "pk3test/funke") return e.loaded && e.everDrawn;
+            }
+            return false;
+        }, 600));
+        s.push_back(pruefSchritt("die Kachel des Archiv-Effekts ist aufgebaut und gezeichnet", [] {
+            for (const auto& e : app->browserEntries_) {
+                if (e.name == "pk3test/funke") return e.loaded && e.everDrawn;
+            }
+            return false;
+        }));
+        s.push_back(fensterFoto("archiv_bibliothek"));
+        s.push_back(tu("Effekt aus dem Archiv oeffnen", [] {
+            App::BrowserEntry eintrag;
+            eintrag.name = "pk3test/funke";
+            app->openBrowserEntry(eintrag);
+        }));
+        s.push_back(warte(3));
+        s.push_back(pruefSchritt("Effekt aus dem pk3 geoeffnet: ein Particle mit dem Shader aus dem Archiv", [] {
+            return !app->startTabActive_ && effekt().primitives.size() == 1 &&
+                   !effekt().primitives[0].shaders.empty() &&
+                   effekt().primitives[0].shaders[0] == "gfx/pk3test/rot";
+        }));
+        s.push_back(pruefSchritt("die Textur wird im Archiv gefunden", [] {
+            return assets::findTexture(app->assets_, app->settings_.gamePath, "gfx/pk3test/rot").found;
+        }));
+        s.push_back(tu("abspielen", [] { app->pressPlay(); }));
+        s.push_back(warteBis("Textur geladen", [] {
+            return app->texturesInFlight_.empty() && app->readyTextures_.empty();
+        }, 600));
+        s.push_back(warte(5));
+        s.push_back(foto("archiv_effekt"));
+        s.push_back(pruefSchritt("das Teilchen wird gezeichnet", [] { return app->lastDrawn_ > 0; }));
+        s.push_back(tu("aufraeumen", [] {
+            app->pressStop();
+            doc().dirty = false;
+        }));
+        // Ein Archiv nur mit Bildern (etwa ein Texturpaket fuer eine Mod):
+        // wird geoeffnet, der Editor bleibt vorn, eine Meldung sagt was kam.
+        s.push_back(tu("pk3 nur mit einem Bild", [] {
+            std::string tga = {0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 32, 8};
+            tga += std::string{'\xff', 0, 0, '\xff'};
+            const auto bytes = zipStored({{"gfx/pk3test/blau.tga", tga}});
+            const std::string path = (fs::path(arbeitsOrdner) / "nurbilder.pk3").string();
+            std::ofstream f(path, std::ios::binary);
+            f.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+            f.close();
+            dateiAntworten.push_back(path);
+        }));
+        menue(s, Str::MenuFile, Str::FileOpenPk3);
+        s.push_back(warte(3));
+        s.push_back(pruefSchritt("Archiv nur mit Bildern: geoeffnet, Editor bleibt vorn, Meldung", [] {
+            return !app->startTabActive_ &&
+                   assets::findTexture(app->assets_, app->settings_.gamePath, "gfx/pk3test/blau").found &&
+                   app->screenshotMessage_.find("nurbilder.pk3") != std::string::npos;
+        }));
+        // Eine Datei, die gar nichts Brauchbares enthaelt: sichtbare Meldung.
+        s.push_back(tu("pk3 ohne Brauchbares", [] {
+            const auto bytes = zipStored({{"readme.txt", "nichts"}});
+            const std::string path = (fs::path(arbeitsOrdner) / "leer.pk3").string();
+            std::ofstream f(path, std::ios::binary);
+            f.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+            f.close();
+            dateiAntworten.push_back(path);
+        }));
+        menue(s, Str::MenuFile, Str::FileOpenPk3);
+        s.push_back(warte(3));
+        s.push_back(pruefSchritt("Archiv ohne Brauchbares: sichtbare Meldung statt Schweigen", [] {
+            return app->screenshotMessage_.find("leer.pk3") != std::string::npos && !app->startTabActive_;
+        }));
+        s.push_back(fensterFoto("archiv_leer_meldung"));
+        return s;
+    }
+
     static std::vector<Schritt> teilWiedergabe() {
         std::vector<Schritt> s;
         s.push_back(teil("wiedergabe"));
@@ -2700,6 +2855,7 @@ public:
             {"werkzeug", &teilWerkzeug},
             {"nachlegen", &teilNachlegen},
             {"spinner", &teilSpinner},
+            {"archiv", &teilArchiv},
             {"felder", &teilFelder},
         };
         // Nicht in "alles": dauert mit allen Effekten mehrere Minuten.

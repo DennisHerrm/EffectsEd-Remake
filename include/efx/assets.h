@@ -225,6 +225,13 @@ struct ResolvedTexture {
 //   2. Gesucht wird in ALLEN Spielpfaden und Archiven, nicht nur im ersten —
 //      wie bei Bildern auch.
 
+// Ein per "Archiv oeffnen" gelesenes .pk3 (scanArchive) in den Bestand
+// einmischen — mit VORRANG: wer ein Archiv ausdruecklich oeffnet, will dessen
+// Fassung sehen, auch wenn das Spiel einen Effekt, ein Bild oder einen Shader
+// gleichen Namens mitbringt (eine Mod ueberschreibt das Spiel). Alle
+// Abfragen nehmen den ersten Treffer, darum kommt alles nach vorn.
+void mergeOpenedArchive(Index& into, const Index& archive);
+
 // Der Spielpfad, unter dem eine Datei liegt: alles bis einschliesslich des
 // letzten Ordners "base" (gross/klein egal), mit Schraegstrichen. Leer, wenn
 // kein solcher Ordner im Pfad vorkommt. Das Original leitet so den Spielpfad

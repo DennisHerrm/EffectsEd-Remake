@@ -321,6 +321,8 @@ const Entry kTable[] = {
     {"Open .pk3 archive…", "PK3-Archiv öffnen…", "打开 .pk3 归档…", ".pk3 アーカイブを開く…"},  // StartOpenPk3
     {"New empty effect", "Neuer leerer Effekt", "新建空特效", "新しい空のエフェクト"},  // StartNewEffect
     {"Open .pk3 archive…", "PK3-Archiv öffnen…", "打开 .pk3 归档…", ".pk3 アーカイブを開く…"},  // FileOpenPk3
+    {"%s opened: %d effects, %d textures, %d sounds, %d models", "%s geöffnet: %d Effekte, %d Bilder, %d Klänge, %d Modelle", "已打开 %s：%d 个效果，%d 张图像，%d 个声音，%d 个模型", "%s を開きました: エフェクト %d、画像 %d、サウンド %d、モデル %d"},  // ArchiveOpened
+    {"%s contains nothing efxed can use (no effects, shaders, images, sounds or models).", "%s enthält nichts, was efxed verwenden kann (keine Effekte, Shader, Bilder, Klänge oder Modelle).", "%s 中没有 efxed 可用的内容（没有效果、着色器、图像、声音或模型）。", "%s には efxed で使えるものがありません（エフェクト、シェーダー、画像、サウンド、モデルなし）。"},  // ArchiveEmpty
     {"%d effects from the archive", "%d Effekte aus dem Archiv", "归档中的 %d 个特效", "アーカイブ内の %d 件のエフェクト"},  // Pk3Loaded
     {"Effect browser", "Effektbrowser", "特效浏览器", "エフェクトブラウザー"},  // BrowserTitle
     {"Effect browser…", "Effektbrowser…", "特效浏览器…", "エフェクトブラウザー…"},  // BrowserOpen

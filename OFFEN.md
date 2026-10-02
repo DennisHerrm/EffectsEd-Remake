@@ -6,9 +6,9 @@ Geprüft wird mit drei Läufen, alle grün:
 
 | Lauf | Ergebnis |
 |---|---|
-| `build\Release\efxtests.exe` (Kern) | 4424 Prüfungen, 0 Fehler |
-| Selbsttest `EFXED_SELBSTTEST=alles`, Direct3D 11 | 740 OK, 0 FEHLER |
-| derselbe Selbsttest mit `EFXED_RENDERER=gl3` | 740 OK, 0 FEHLER |
+| `build\Release\efxtests.exe` (Kern) | 4432 Prüfungen, 0 Fehler |
+| Selbsttest `EFXED_SELBSTTEST=alles`, Direct3D 11 | 749 OK, 0 FEHLER |
+| derselbe Selbsttest mit `EFXED_RENDERER=gl3` | 749 OK, 0 FEHLER |
 | Darstellungslauf `EFXED_SELBSTTEST=darstellung` | 376 Effekte aus Movie Duels, je 4 Zeitpunkte, kein Absturz |
 | `tools/lint_*.py` (12 Prüfer) | alle 0 |
 | `tools/check_menu.py <EffectsEd.exe>` | 49 Menübefehle: 44 umgesetzt, 5 bewusst ausgelassen, keiner fehlt |
