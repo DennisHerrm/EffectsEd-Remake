@@ -1635,9 +1635,19 @@ uint32_t stageColour(const shader::Stage& stage, uint32_t entity, float seconds)
 // Das Bild einer Stufe zu ihrer Shaderzeit — map, clampMap, das gerade
 // gueltige Bild einer Bildfolge (RB_ComputeAnimatedImage), oder das
 // eingebaute weisse. Leer: die Stufe hat kein Bild und wird uebergangen.
-std::string stageImage(const shader::Stage& stage, float seconds, bool& clamp) {
+//
+// `levelClock`: die Primitive hat kein `setShaderTime`. Dann ist ihre
+// Shaderzeit die Uhr der Karte (refdef.floatTime - 0), und eine
+// `oneshotanimMap` ist dort laengst abgelaufen — R_BindAnimatedImage bleibt
+// auf dem LETZTEN Bild stehen ("stick on last frame"). Die Vorschau hat keine
+// Kartenuhr; sie spielte die Folge ab dem Effektstart ab und zeigte damit
+// eine Explosion, die im Spiel nie zu sehen ist (mace/leviathanexplosion,
+// ships/heavydmg: letztes Bild gfx/colors/black, additiv = unsichtbar).
+std::string stageImage(const shader::Stage& stage, float seconds, bool& clamp,
+                       bool levelClock = false) {
     clamp = false;
     if (!stage.animMaps.empty()) {
+        if (levelClock && stage.animOneShot) return stage.animMaps.back();
         const int frame = shader::animFrameAt(static_cast<int>(stage.animMaps.size()),
                                               stage.animFrequency, stage.animOneShot,
                                               seconds);
@@ -2302,7 +2312,8 @@ DrawList System::build(float nowMs, const camera::Vec3& right,
             for (size_t s = 0; s < def.stages.size(); ++s) {
                 const shader::Stage& stage = def.stages[s];
                 bool clamp = false;
-                const std::string image = stageImage(stage, shaderSeconds, clamp);
+                const std::string image = stageImage(stage, shaderSeconds, clamp,
+                                                        (item.flags & kFlagSetShaderTime) == 0);
                 if (image.empty()) continue;
                 DrawGroup& group = groups.get(item.shader, static_cast<int>(s),
                                               std::string(assets::kImagePrefix) + image, hacked);
@@ -2429,7 +2440,9 @@ DrawList System::build(float nowMs, const camera::Vec3& right,
                 for (size_t s = 0; s < def.stages.size(); ++s) {
                     const shader::Stage& stage = def.stages[s];
                     bool clamp = false;
-                    const std::string image = stageImage(stage, pending.shaderSeconds, clamp);
+                    const std::string image = stageImage(
+                        stage, pending.shaderSeconds, clamp,
+                        (item.flags & kFlagSetShaderTime) == 0);
                     if (image.empty()) continue;
                     DrawGroup& group = groups.get(name, static_cast<int>(s),
                                                   std::string(assets::kImagePrefix) + image);
