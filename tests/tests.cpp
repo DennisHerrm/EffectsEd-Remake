@@ -526,6 +526,16 @@ void testUpdate() {
               "Windows-10-Fassung nimmt das Paket ohne -win7");
         check(old != nullptr && old->name == "EffectsEd-Remake-rev79-win7.zip",
               "Windows-7-Fassung nimmt das -win7-Paket");
+        // Die Namensregel der Pakete: GitHub sortiert nach Namen, und rev78
+        // nimmt das erste .zip. Das normale Paket muss also vorn stehen.
+        const std::string w10 = "EffectsEd-Remake-rev100.zip";
+        const std::string w7 = "EffectsEd-Remake-win7-rev100.zip";
+        check(w10 < w7, "Paketnamen: das Windows-10-Paket sortiert vor dem Windows-7-Paket");
+        Release named;
+        check(parseRelease(R"({"tag_name": "rev100", "assets": [{"name": "EffectsEd-Remake-win7-rev100.zip"}]})",
+                           named) &&
+                  zipAsset(named, true) != nullptr && zipAsset(named) == nullptr,
+              "Paketnamen: -win7- vor der Revision wird erkannt");
         Release onlyNormal;
         check(parseRelease(R"({"tag_name": "rev80", "assets": [{"name": "EffectsEd-Remake-rev80.zip"}]})",
                            onlyNormal) &&
