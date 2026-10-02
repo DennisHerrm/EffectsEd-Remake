@@ -104,6 +104,10 @@ struct Settings {
     bool showPlaybackToolbar = true;  // Abspielen, Pause, Stop, Ausrichtung
     bool showWorldToolbar = true;     // Achsen, Raum, Gitter, Darstellung
     bool resetRepeatRateOnStart = true;  // wie im Original voreingestellt
+    // Beim Start im Hintergrund bei GitHub nach einer neueren Fassung
+    // fragen (gui/update_win32.cpp). Gefragt wird nur; geladen und
+    // installiert wird erst auf Knopfdruck.
+    bool checkUpdates = true;
 
     // 0 ohne Textur, 1 Ziegel, 2 Erde, 3 Putz.
     //

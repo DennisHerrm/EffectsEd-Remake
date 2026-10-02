@@ -55,6 +55,7 @@
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "testmarke.h"
+#include "update.h"
 #include "theme_imgui.h"
 
 namespace fs = std::filesystem;
@@ -1323,6 +1324,127 @@ public:
         u16(out, static_cast<uint32_t>(files.size())); u16(out, static_cast<uint32_t>(files.size()));
         u32(out, static_cast<uint32_t>(central.size())); u32(out, centralAt); u16(out, 0);
         return out;
+    }
+
+    // --- Auto-Updater ----------------------------------------------------------
+    //
+    // Der ganze Ablauf ohne Netz: EFXED_UPDATE_QUELLE nennt einen Ordner mit
+    // der Antwort von GitHub (latest.json) und dem .zip des Releases. Geprueft
+    // wird Fragen, Anzeigen, Laden, Entpacken neben die .exe — und dass das
+    // Paket nichts anfasst, was ihm nicht gehoert. Nur der Neustart selbst
+    // bleibt aussen vor: er wuerde den Test beenden.
+    static std::string programmOrdner() {
+        wchar_t p[MAX_PATH] = {};
+        GetModuleFileNameW(nullptr, p, MAX_PATH);
+        return fs::path(p).parent_path().string();
+    }
+    static std::string liesDatei(const std::string& pfad) {
+        std::ifstream f(pfad, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    }
+    static std::vector<Schritt> teilUpdate() {
+        std::vector<Schritt> s;
+        s.push_back(teil("update"));
+        frischesDokument(s);
+        s.push_back(tu("Update-Quelle anlegen (Release rev99999 mit .zip)", [] {
+            const fs::path quelle = fs::path(arbeitsOrdner) / "updatequelle";
+            std::error_code ec;
+            fs::create_directories(quelle, ec);
+            const std::string json =
+                "{\"tag_name\": \"v1.18.0-rev99999\", \"name\": \"EffectsEd 1.18.0-rev99999\",\n"
+                " \"html_url\": \"https://github.com/x/y/releases/tag/v1.18.0-rev99999\",\n"
+                " \"body\": \"Neu:\\n- Updatetest\",\n"
+                " \"assets\": [{\"name\": \"efxed-test.zip\", \"size\": 100,\n"
+                "   \"browser_download_url\": \"https://github.com/x/y/releases/download/v1/efxed-test.zip\"}]}";
+            std::ofstream(quelle / "latest.json", std::ios::binary) << json;
+            const auto bytes = zipStored({{"efxed/LIESMICH-UPDATETEST.txt", "neue Fassung"},
+                                          {"efxed/efxed_settings.txt", "BOESE"},
+                                          {"efxed/../boese_updatetest.txt", "BOESE"}});
+            std::ofstream f(quelle / "efxed-test.zip", std::ios::binary);
+            f.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+            f.close();
+            fs::remove(fs::path(programmOrdner()) / "LIESMICH-UPDATETEST.txt", ec);
+            _putenv_s("EFXED_UPDATE_QUELLE", quelle.string().c_str());
+            _putenv_s("EFXED_UPDATE_LOKAL", "1.18.0-rev77");
+        }));
+        menue(s, Str::MenuHelp, Str::HelpCheckUpdates);
+        s.push_back(warteBis("Antwort ausgewertet", [] {
+            const auto z = updater::status().state;
+            return z != updater::UpdatePhase::Checking && z != updater::UpdatePhase::Idle;
+        }, 300));
+        s.push_back(pruefSchritt("Hilfe > Nach Updates suchen: rev99999 ist neuer als rev77", [] {
+            const auto z = updater::status();
+            return z.state == updater::UpdatePhase::Available && z.release.tag == "v1.18.0-rev99999";
+        }));
+        s.push_back(pruefSchritt("das Update-Fenster ist offen und zeigt die Notizen", [] {
+            return updater::windowOpen() && finde(tr(Str::UpdInstall), "###update") != nullptr;
+        }));
+        s.push_back(fensterFoto("update_verfuegbar"));
+        s.push_back(klick(tr(Str::UpdInstall), "###update"));
+        s.push_back(warteBis("installiert", [] {
+            const auto z = updater::status().state;
+            return z == updater::UpdatePhase::Installed || z == updater::UpdatePhase::Failed;
+        }, 300));
+        s.push_back(pruefSchritt("Herunterladen und installieren: eine Datei ersetzt", [] {
+            const auto z = updater::status();
+            if (z.state != updater::UpdatePhase::Installed) diag::info("update test: " + z.message);
+            return z.state == updater::UpdatePhase::Installed && z.files == 1;
+        }));
+        s.push_back(pruefSchritt("die neue Datei liegt neben der .exe (Ordner im Paket abgestreift)", [] {
+            return liesDatei((fs::path(programmOrdner()) / "LIESMICH-UPDATETEST.txt").string()) == "neue Fassung";
+        }));
+        s.push_back(pruefSchritt("die Einstellungen des Anwenders hat das Paket nicht angefasst", [] {
+            return liesDatei((fs::path(programmOrdner()) / "efxed_settings.txt").string()) != "BOESE";
+        }));
+        s.push_back(pruefSchritt("und ausserhalb des Programmordners nichts angelegt", [] {
+            std::error_code ec;
+            return !fs::exists(fs::path(programmOrdner()).parent_path() / "boese_updatetest.txt", ec);
+        }));
+        s.push_back(pruefSchritt("Jetzt neu starten wird angeboten", [] {
+            return finde(tr(Str::UpdRestart), "###update") != nullptr;
+        }));
+        s.push_back(fensterFoto("update_installiert"));
+        s.push_back(klick(tr(Str::UpdLater), "###update"));
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("Spaeter schliesst das Fenster", [] { return !updater::windowOpen(); }));
+
+        // Schon die neueste Fassung.
+        s.push_back(tu("eigene Fassung = rev99999", [] { _putenv_s("EFXED_UPDATE_LOKAL", "1.18.0-rev99999"); }));
+        menue(s, Str::MenuHelp, Str::HelpCheckUpdates);
+        s.push_back(warteBis("Antwort ausgewertet", [] {
+            const auto z = updater::status().state;
+            return z != updater::UpdatePhase::Checking && z != updater::UpdatePhase::Idle;
+        }, 300));
+        s.push_back(pruefSchritt("gleiche Fassung: \"Das ist die neueste Fassung\", kein Installieren", [] {
+            return updater::status().state == updater::UpdatePhase::Current &&
+                   finde(tr(Str::UpdInstall), "###update") == nullptr &&
+                   finde(tr(Str::UpdRetry), "###update") != nullptr;
+        }));
+        s.push_back(klick(tr(Str::UpdLater), "###update"));
+
+        // Noch kein Release (GitHub antwortet 404).
+        s.push_back(tu("Quelle ohne Antwort", [] {
+            std::error_code ec;
+            fs::remove(fs::path(arbeitsOrdner) / "updatequelle" / "latest.json", ec);
+        }));
+        menue(s, Str::MenuHelp, Str::HelpCheckUpdates);
+        s.push_back(warteBis("Antwort ausgewertet", [] {
+            const auto z = updater::status().state;
+            return z != updater::UpdatePhase::Checking && z != updater::UpdatePhase::Idle;
+        }, 300));
+        s.push_back(pruefSchritt("ohne Release: verstaendliche Meldung statt Absturz", [] {
+            const auto z = updater::status();
+            return z.state == updater::UpdatePhase::Failed && z.message == tr(Str::UpdNoRelease);
+        }));
+        s.push_back(klick(tr(Str::UpdLater), "###update"));
+        s.push_back(tu("aufraeumen", [] {
+            std::error_code ec;
+            fs::remove(fs::path(programmOrdner()) / "LIESMICH-UPDATETEST.txt", ec);
+            fs::remove_all(fs::path(arbeitsOrdner) / "updatequelle", ec);
+            _putenv_s("EFXED_UPDATE_QUELLE", "");
+            _putenv_s("EFXED_UPDATE_LOKAL", "");
+        }));
+        return s;
     }
 
     static std::vector<Schritt> teilArchiv() {
@@ -2871,6 +2993,7 @@ public:
             {"nachlegen", &teilNachlegen},
             {"spinner", &teilSpinner},
             {"archiv", &teilArchiv},
+            {"update", &teilUpdate},
             {"felder", &teilFelder},
         };
         // Nicht in "alles": dauert mit allen Effekten mehrere Minuten.

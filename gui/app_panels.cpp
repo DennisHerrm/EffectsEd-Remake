@@ -9,6 +9,7 @@
 // mehrere Dateien verteilt. app.cpp war mit 3524 Zeilen und einem Dutzend
 // Zustaendigkeiten die Stelle, an der ein Leser aufgibt.
 #include "app.h"
+#include "update.h"
 #include "efx/i18n.h"
 
 #include <algorithm>
@@ -329,6 +330,11 @@ void App::drawMenuBar() {
         // Ravens Originalhandbuch. Es steckt im Programm und wird beim
         // Oeffnen daneben geschrieben — siehe openUsersGuide().
         if (ImGui::MenuItem(tr(Str::HelpUsersGuide))) openUsersGuide();
+        ImGui::Separator();
+        // Nicht im Original. Laedt neue Fassungen aus dem oeffentlichen
+        // Release-Repository (gui/update_win32.cpp).
+        if (ImGui::MenuItem(tr(Str::HelpCheckUpdates))) updater::check(false);
+        ImGui::MenuItem(tr(Str::HelpUpdateOnStart), nullptr, &settings_.checkUpdates);
         ImGui::Separator();
         if (ImGui::MenuItem(tr(Str::HelpAbout))) showAboutDialog_ = true;
         hint(Str::HintAbout);
@@ -1185,6 +1191,8 @@ void App::drawStatusBar() {
         ImGui::SameLine();
     };
 
+    // Eine neue Fassung ist da (oder schon installiert): ganz links, klickbar.
+    updater::drawStatusHint();
     if (errors > 0) clickableCount(Severity::Error, errors, tr(Str::DiagError));
     if (warnings > 0) {
         clickableCount(Severity::Warning, warnings, tr(Str::DiagWarning));

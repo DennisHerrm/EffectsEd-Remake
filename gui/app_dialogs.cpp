@@ -7,6 +7,7 @@
 //
 // Teil der Klasse App aus app.h.
 #include "app.h"
+#include "update.h"
 #include <algorithm>
 #include <cctype>
 
@@ -960,6 +961,12 @@ void App::drawDriverInfoDialog() {
 }
 
 void App::drawDialogs() {
+    // "Jetzt neu starten" im Update-Fenster: erst regulaer beenden (mit der
+    // Frage nach ungespeicherten Aenderungen), dann startet main die neue .exe.
+    if (updater::drawWindow()) {
+        restartForUpdate_ = true;
+        requestQuit();
+    }
     drawSaveChangesDialog();
     drawConfirmDialog();
 
