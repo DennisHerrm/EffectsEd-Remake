@@ -13369,6 +13369,59 @@ bool near3(const efx::scene::Vertex& v, float x, float y, float z) {
            std::fabs(v.pos[2] - z) < 1e-3f;
 }
 
+void testModelCullAndDepthHack() {
+    std::cout << "== Modelle: Windung und Rueckseiten, depthHack ==\n";
+    using namespace efx::particles;
+    // Ein flaches Dreieck in der Ebene z = 0, Normalen nach oben (lat 0,
+    // lng 0). Einmal gegen, einmal im Uhrzeigersinn gespeichert — nach dem
+    // Aufbau muessen beide gleich ausgerichtet sein: Vorderseite gegen den
+    // Uhrzeigersinn um die Normale, wie der Raum (Cull::BackFaces).
+    ModelLibrary library;
+    library.add("models/test/ccw.md3",
+                makeMd3({{0, 0, 0, 0, 0, 0, 0}, {10, 0, 0, 0, 0, 1, 0}, {0, 10, 0, 0, 0, 0, 1}},
+                        {0, 1, 2}, "models/test/ccw.tga"));
+    library.add("models/test/cw.md3",
+                makeMd3({{0, 0, 0, 0, 0, 0, 0}, {0, 10, 0, 0, 0, 0, 1}, {10, 0, 0, 0, 0, 1, 0}},
+                        {0, 1, 2}, "models/test/cw.tga"));
+    Axis alongX;
+    alongX.forward = {1.0f, 0.0f, 0.0f};
+    alongX.right = {0.0f, 1.0f, 0.0f};
+    alongX.up = {0.0f, 0.0f, 1.0f};
+    for (const char* name : {"ccw", "cw"}) {
+        const std::string text = std::string("Emitter\n{\n\tlife\t1000\n\tmodels\n\t[\n\t\tmodels/test/") +
+                                 name + ".md3\n\t]\n}\n";
+        System system;
+        system.play(effectFrom(text), 1u, {}, alongX, {}, {}, false, {}, library.loader());
+        const DrawList list = system.build(0.0f, {1, 0, 0}, {0, 1, 0});
+        const DrawGroup* group = groupOf(list, std::string("models/test/") + name);
+        check(group != nullptr && group->mesh.indices.size() == 3, "Modellflaeche gezeichnet");
+        if (!group || group->mesh.indices.size() < 3) continue;
+        const auto& v = group->mesh.vertices;
+        const auto& ix = group->mesh.indices;
+        const efx::camera::Vec3 a{v[ix[0]].pos[0], v[ix[0]].pos[1], v[ix[0]].pos[2]};
+        const efx::camera::Vec3 b{v[ix[1]].pos[0], v[ix[1]].pos[1], v[ix[1]].pos[2]};
+        const efx::camera::Vec3 c{v[ix[2]].pos[0], v[ix[2]].pos[1], v[ix[2]].pos[2]};
+        const efx::camera::Vec3 n = efx::camera::cross(b - a, c - a);
+        check(n.z > 0.0f, std::string("Windung nach der Normale ausgerichtet (") + name + ")");
+        check(group->cullBackFaces, std::string("Modell blendet Rueckseiten aus wie cull front (") + name + ")");
+    }
+
+    // depthHack: eigenes Gruppenmerkmal, auch bei gleichem Shader.
+    const efx::Effect hacked = effectFrom(
+        "Particle\n{\n\tlife\t1000\n\tshaders\n\t[\n\t\tgfx/test/a\n\t]\n}\n"
+        "Particle\n{\n\tflags\tdepthHack\n\tlife\t1000\n\tshaders\n\t[\n\t\tgfx/test/a\n\t]\n}\n");
+    System hs;
+    hs.play(hacked, 1u);
+    const DrawList hl = hs.build(10.0f, {1, 0, 0}, {0, 1, 0});
+    int normal = 0, onTop = 0;
+    for (const auto& g : hl.groups) {
+        if (g.shader != "gfx/test/a") continue;
+        (g.depthHack ? onTop : normal) += 1;
+        check(!g.cullBackFaces, "Teilchen bleiben beidseitig");
+    }
+    check(normal == 1 && onTop == 1, "depthHack trennt die Gruppe: eine normale, eine vor der Welt");
+}
+
 void testEmitterModels() {
     std::cout << "== Emitter: md3-Modelle ==\n";
     using namespace efx::particles;
@@ -13652,6 +13705,7 @@ int main(int argc, char** argv) {
     // md3-Modelle der Emitter (useModel).
     testMd3Parser();
     testEmitterModels();
+    testModelCullAndDepthHack();
 
     std::cout << "\n" << g_checks << " Pruefungen, " << g_failures << " Fehler";
     if (g_dataFiles > 0) {

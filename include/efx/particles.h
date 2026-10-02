@@ -222,6 +222,20 @@ struct DrawGroup {
     // (NameToAFunc in tr_shader.cpp).
     int alphaTest = 0;
 
+    // Flag `depthHack` ("Always draw on top"): die Engine zeichnet solche
+    // Entities mit RF_DEPTHHACK, also mit verkuerztem Tiefenbereich
+    // (RB_RenderDrawSurfList: qglDepthRange(0, 0.3)) — vor der Welt. Ein
+    // eigenes Gruppenmerkmal, weil sich gehackte und normale Teilchen
+    // denselben Shader teilen koennen.
+    bool depthHack = false;
+
+    // Rueckseiten ausblenden. Nur Modellflaechen: die Engine blendet nach
+    // `cull` des Shaders aus (Voreinstellung front = Rueckseiten weg). Die
+    // Dreiecke sind dafuer so ausgerichtet, dass die Vorderseite gegen den
+    // Uhrzeigersinn um die nach aussen zeigende Normale laeuft — wie der
+    // Raum. Teilchen bleiben beidseitig.
+    bool cullBackFaces = false;
+
     // Sortierschluessel der Engine (shaderSort_t, oder der Zahlenwert hinter
     // `sort`). Gezeichnet wird aufsteigend.
     float sort = 0.0f;
