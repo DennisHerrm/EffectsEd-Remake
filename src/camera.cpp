@@ -152,19 +152,27 @@ void Orbit::orbit(float dx, float dy) {
 }
 
 void Orbit::dolly(float dy) {
-    // Verhaeltnismaessig, nicht in festen Schritten: aus der Ferne will man
-    // grosse Spruenge, aus der Naehe kleine. Ein fester Betrag macht das eine
-    // zaeh und das andere unbrauchbar.
-    distance_ *= std::exp(dy * 0.01f);
-    distance_ = clampf(distance_, 0.25f * worldScale_, 400.0f * worldScale_);
+    // Wie im Original (Mauscode @0x403817, Disassembly 2.10.2026): je
+    // Bildpunkt 0.04 x Massstab Einheiten, LINEAR, und nach OBEN ziehen faehrt
+    // ZURUECK (tz += (y - ref) * 0.04 * scale), begrenzt auf 100 x Massstab.
+    //
+    // Vorher: verhaeltnismaessig (Faktor e^(dy/100)) und andersherum — nach
+    // oben ziehen fuhr heran. Beim Herauszoomen fuehlte sich das "nicht
+    // richtig" an, und es war auch nicht richtig.
+    distance_ -= dy * 0.04f * worldScale_;
+    distance_ = clampf(distance_, 0.1f * worldScale_, 100.0f * worldScale_);
 }
 
-void Orbit::zoomWheel(float steps) { dolly(-steps * 12.0f); }
+// Das Rad gibt es im Original nicht (es schreibt nur "zDelta = %d" ins
+// Debugprotokoll). Bei uns: eine Raste wie 25 Bildpunkte Ziehen, nach vorn
+// gedreht faehrt heran.
+void Orbit::zoomWheel(float steps) { dolly(steps * 25.0f); }
 
 void Orbit::pan(float dx, float dy) {
-    // Am Abstand ausgerichtet, damit sich das Schieben aus jeder Entfernung
-    // gleich anfuehlt.
-    const float speed = distance_ * 0.0015f;
+    // Wie im Original (Alt+Ziehen): 0.04 x Massstab Einheiten je Bildpunkt,
+    // unabhaengig vom Abstand. Vorher an den Abstand gekoppelt (0.12 statt
+    // 0.4 Einheiten bei Abstand 80).
+    const float speed = 0.04f * worldScale_;
 
     const float yawRad = yaw_ * kDegToRad;
     const float pitchRad = pitch_ * kDegToRad;

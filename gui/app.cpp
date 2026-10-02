@@ -803,10 +803,14 @@ void App::drawViewport(render::Renderer* renderer, float width, float height) {
         // Die gemessene Grundfarbe der Wandart, nicht Weiss — siehe
         // scene::wallColourOf.
         const auto pixels =
-            scene::buildWallTexture(kind, 128, scene::wallColourOf(kind));
+            scene::buildWallTexture(kind, 256, scene::wallColourOf(kind));
         if (!pixels.empty()) {
-            wallTexture_ = renderer->createTexture(pixels.data(), 128, 128, false,
-                                                   true);
+            // Ohne Mipmaps, wie das Original (GL_LINEAR, keine Mipmaps,
+            // ROOM-GEOMETRY 4.1): mit ihnen verschwammen die Ziegel in der
+            // Ferne zu einer flachen Flaeche, und Wand und Boden wirkten
+            // unterschiedlich hell.
+            wallTexture_ = renderer->createTexture(pixels.data(), 256, 256, false,
+                                                   false);
         }
         wallTextureKind_ = settings_.roomTexture;
     }

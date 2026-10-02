@@ -1755,8 +1755,8 @@ public:
                          if (b == 9) io.AddMouseButtonEvent(1, false);
                          return b >= 11;
                      }});
-        s.push_back(pruefSchritt("Rechts ziehen faehrt vor oder zurueck",
-                                 [=] { return app->camera_.distance() != *abstand; }));
+        s.push_back(pruefSchritt("Rechts 70 Bildpunkte nach unten: 28 Einheiten heran (wie im Original)",
+                                 [=] { return std::fabs(app->camera_.distance() - (*abstand - 28.0f)) < 0.5f; }));
         s.push_back(tu("Abstand merken", [=] { *abstand = app->camera_.distance(); }));
         s.push_back({"Mausrad in der Ansicht", [=](int b) {
                          const Element* e = findeMarke("ansicht");
