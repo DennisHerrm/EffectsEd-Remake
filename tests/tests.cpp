@@ -4738,6 +4738,39 @@ void testParticles() {
         // Ein unbekannter Wert faellt auf "nach oben" zurueck statt auf null.
         check(efx::camera::length(axisFor(99).forward) > 0.9f,
               "ein unbekannter Wert ergibt trotzdem eine gueltige Achse");
+
+        // Rechts und oben baut die Engine mit MakeNormalVectors
+        // (CFxScheduler::PlayEffect( id, org, fwd )). Am Original mit der
+        // Sonde zprobe/achsen in allen drei Ausrichtungen nachgemessen.
+        const auto near = [](const efx::camera::Vec3& a, float x, float y, float z) {
+            return std::fabs(a.x - x) < 1e-5f && std::fabs(a.y - y) < 1e-5f &&
+                   std::fabs(a.z - z) < 1e-5f;
+        };
+        check(near(axisFor(0).right, 1, 0, 0) && near(axisFor(0).up, 0, -1, 0),
+              "nach oben: rechts +X, oben -Y (zur Kamera hin) wie MakeNormalVectors");
+        check(near(axisFor(1).right, 0, -1, 0) && near(axisFor(1).up, 0, 0, 1),
+              "seitwaerts: rechts -Y, oben +Z");
+        check(near(axisFor(2).right, -1, 0, 0) && near(axisFor(2).up, 0, -1, 0),
+              "nach unten: rechts -X, oben -Y");
+        const Axis plain;
+        check(near(plain.up, 0, -1, 0) && near(plain.right, 1, 0, 0),
+              "die Vorgabe-Achse (Kacheln) ist dieselbe wie nach oben");
+
+        // Ein Teilchen mit `origin 0 0 25` ("oben" 25) steht naeher an der
+        // Kamera (y < 0), nicht dahinter.
+        efx::Effect upOffset;
+        upOffset.primitives.push_back(efx::Primitive{});
+        efx::Primitive& u = upOffset.primitives.back();
+        u.type = efx::PrimitiveType::Particle;
+        u.life = efx::Range::single(1000.0f);
+        u.origin.set = true;
+        u.origin.min = {0.0f, 0.0f, 25.0f};
+        u.origin.max = u.origin.min;
+        System offsetSystem;
+        offsetSystem.play(upOffset, 1, {}, axisFor(0));
+        const auto placed = offsetSystem.live()[0].positionAt(0.0f);
+        check(std::fabs(placed.y + 25.0f) < 1e-4f && std::fabs(placed.z) < 1e-4f,
+              "origin 0 0 25 liegt bei y = -25");
     }
 
     // --- Gruppierung nach Shader -----------------------------------------
@@ -11171,17 +11204,30 @@ void testRepeatBuildUp() {
                     sounds, fromPast);
     }
 
-    // Ohne repeatDelay aendert das Flag nichts — sonst wuerde man beim
-    // Beurteilen eines einzelnen Segments hereingelegt.
+    // Ohne repeatDelay wiederholt die Engine alle 300 ms
+    // (CFxScheduler::GetNewEffectTemplate: mRepeatDelay = 300). Der Vorlauf
+    // muss also genauso aussehen wie mit `repeatDelay 300` — vorher gab es
+    // gar keinen, und ein Feuer ohne die Zeile (env/fire, env/fire_wall,
+    // ships/fire) lief in den Kacheln als einzelnes Aufflammen.
+    // Wer EINEN Durchlauf sehen will, ruft play ohne Vorlauf auf (der Editor
+    // tut das ohne die Zeile ohnehin: dort legt die Werkzeugleiste nach).
     {
-        efx::Effect once = effect;
-        once.repeatDelay = 0;
-        once.repeatDelaySet = false;
-        efx::particles::System a, b;
-        a.play(once, 7u, {}, {}, {}, {}, false);
-        b.play(once, 7u, {}, {}, {}, {}, true);
-        check(a.live().size() == b.live().size(),
-              "ohne repeatDelay bleibt alles wie zuvor");
+        efx::Effect unset = effect;
+        unset.repeatDelay = 0;
+        unset.repeatDelaySet = false;
+        efx::Effect explicit300 = effect;
+        explicit300.repeatDelay = 300;
+        explicit300.repeatDelaySet = true;
+        check(efx::effectiveRepeatDelay(unset) == 300 &&
+                  efx::effectiveRepeatDelay(explicit300) == 300,
+              "ohne repeatDelay gilt die Vorgabe der Engine: 300 ms");
+        efx::particles::System once, a, b;
+        once.play(unset, 7u, {}, {}, {}, {}, false);
+        a.play(unset, 7u, {}, {}, {}, {}, true);
+        b.play(explicit300, 7u, {}, {}, {}, {}, true);
+        check(a.live().size() == b.live().size() && a.live().size() > once.live().size(),
+              "ohne repeatDelay: Vorlauf wie bei repeatDelay 300");
+        check(a.durationMs() == b.durationMs(), "... und dieselbe Schleifenlaenge");
     }
 
     // Ein unsinnig kleiner Abstand darf nicht in zehntausende Teilchen laufen.
@@ -11978,6 +12024,29 @@ void testEmitterEmitsEmitFx() {
           "200 Einheiten Weg bei density 10: rund zwanzig Aussendungen der emitfx-Liste");
     std::printf("  Emitter mit emitfx: %d Aussendungen\n", emitting.startedEffects());
 
+    // Schnelle Brocken: CEmitter::Draw rechnet je Bild in 8-ms-Schritten ab
+    // der letzten Aussendung. Bei 1500 Einheiten je Sekunde und density 25
+    // sind das (60 Bilder je Sekunde, nachgerechnet) 61 Aussendungen in einer
+    // Sekunde; das fruehere Abschreiten der Bahn in 10-ms-Schritten kam auf
+    // 49 — jede Rauchspur der Schiffsexplosionen war um ein Fuenftel duenner.
+    const auto fast = efx::read(
+        "Emitter\n{\n\tlife\t1000\n\tvelocity\t1500 0 0\n\tdensity\t25\n"
+        "\tvariance\t0\n\temitfx\n\t[\n\t\tkind\n\t]\n}\n");
+    efx::particles::System fastEmitter;
+    fastEmitter.play(fast.effect, 1, {}, {}, library.loader());
+    check(fastEmitter.startedEffects() >= 59 && fastEmitter.startedEffects() <= 63,
+          "1500 Einheiten/s, density 25: rund 61 Aussendungen wie CEmitter::Draw");
+    std::printf("  schneller Emitter: %d Aussendungen (Engine bei 60 Bildern/s: 61)\n",
+                fastEmitter.startedEffects());
+    // Die Kinder beginnen im Bild der Aussendung, also auf dem 60-Hz-Raster.
+    bool onFrames = true;
+    for (const auto& l : fastEmitter.live()) {
+        if (l.type != efx::PrimitiveType::Particle) continue;
+        const float frames = l.spawnMs / (1000.0f / 60.0f);
+        if (std::fabs(frames - std::round(frames)) > 1e-3f) onFrames = false;
+    }
+    check(onFrames, "ausgesendete Effekte beginnen im aktuellen Bild (PlayEffect wirkt sofort)");
+
     // Ohne das Flag in der Datei: die Liste setzt es (ParseEmitterFxStrings).
     const auto noFlag = efx::read(
         "Emitter\n{\n\tlife\t1000\n\tvelocity\t0 0 200\n\temitfx\n\t[\n\t\tkind\n\t]\n}\n");
@@ -12654,6 +12723,33 @@ const efx::particles::DrawGroup* groupOf(const efx::particles::DrawList& list,
         if (g.shader == shader && g.stage == stage) return &g;
     }
     return nullptr;
+}
+
+// --- Einmalige Bildfolge ohne setShaderTime -----------------------------------
+// R_BindAnimatedImage: index = shaderTime * fps; oneshotanimMap bleibt auf dem
+// letzten Bild stehen. Ohne setShaderTime ist shaderTime die Uhr der Karte
+// (e.shaderTime = 0), die Folge ist im Spiel also laengst vorbei.
+void testOneShotWithoutShaderTime() {
+    std::cout << "== oneshotanimMap ohne setShaderTime ==\n";
+    using namespace efx::particles;
+    const ShaderBook book(
+        "gfx/exp/boom\n{\n\t{\n\t\toneshotanimmap 10 gfx/a.tga gfx/b.tga gfx/c.tga\n"
+        "\t\tblendFunc GL_ONE GL_ONE\n\t}\n}\n");
+    const auto frameAt = [&](const char* flags, float ms) {
+        System system;
+        system.play(effectFrom(std::string("Particle\n{\n") + flags +
+                               "\tlife\t5000\n\tshaders\n\t[\n\t\tgfx/exp/boom\n\t]\n}\n"),
+                    1u);
+        const auto list = system.build(ms, {1, 0, 0}, {0, 0, 1}, book.lookup());
+        const auto* group = groupOf(list, "gfx/exp/boom");
+        return group ? group->image : std::string("-");
+    };
+    const std::string prefix = efx::assets::kImagePrefix;
+    check(frameAt("\tflags\tsetShaderTime\n", 0.0f) == prefix + "gfx/a.tga" &&
+              frameAt("\tflags\tsetShaderTime\n", 150.0f) == prefix + "gfx/b.tga",
+          "mit setShaderTime: die Folge laeuft ab der Entstehung");
+    check(frameAt("", 0.0f) == prefix + "gfx/c.tga" && frameAt("", 150.0f) == prefix + "gfx/c.tga",
+          "ohne setShaderTime: von Anfang an das letzte Bild (Kartenuhr)");
 }
 
 // --- 1. Linie, Schweif, Blitz als Baender ------------------------------------
@@ -13765,6 +13861,7 @@ int main(int argc, char** argv) {
     testParserMatchesEngineLimits();
     // Darstellung gegen die Engine (Render-Audit).
     testRenderLinesAndBolts();
+    testOneShotWithoutShaderTime();
     testRenderSizeIsRadius();
     testRenderCylinderEnds();
     testRenderRandomPerFrame();

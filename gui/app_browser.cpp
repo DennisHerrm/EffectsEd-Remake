@@ -22,6 +22,7 @@
 #include "efx/assets.h"
 #include "efx/camera.h"
 #include "efx/diag.h"
+#include "efx/effect.h"
 #include "efx/i18n.h"
 #include "efx/shader.h"
 #include "efx/tiles.h"
@@ -474,7 +475,7 @@ void App::drawBrowser(render::Renderer* renderer, float dpiScale) {
         BrowserEntry& entry = *browserSlots_[i].entry;
         ensureBrowserEntry(entry);
         // Wie oben: ueber genau eine Wiederholung, sonst ueber das ganze Leben.
-        const float repeat = static_cast<float>(entry.effect.repeatDelay);
+        const float repeat = static_cast<float>(effectiveRepeatDelay(entry.effect));
         entry.clock.setDuration(repeat >= 1.0f ? repeat
                                                : entry.system.durationMs());
 
@@ -820,7 +821,7 @@ void App::ensureBrowserEntry(BrowserEntry& entry) {
     // `repeatDelay` sieht der Bestand wieder aus wie am Anfang, und die Kachel
     // laeuft nahtlos rund. Ohne das liefe ein Rauch mit 62 Sekunden
     // Lebensdauer eine Minute lang, bevor er sich wiederholt.
-    const float repeat = static_cast<float>(entry.effect.repeatDelay);
+    const float repeat = static_cast<float>(effectiveRepeatDelay(entry.effect));
     entry.clock.setDuration(repeat >= 1.0f ? repeat : entry.system.durationMs());
     entry.clock.setEndMode(timeline::EndMode::Repeat);
     entry.clock.play();
