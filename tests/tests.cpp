@@ -12702,6 +12702,33 @@ const efx::particles::DrawGroup* groupOf(const efx::particles::DrawList& list,
     return nullptr;
 }
 
+// --- Einmalige Bildfolge ohne setShaderTime -----------------------------------
+// R_BindAnimatedImage: index = shaderTime * fps; oneshotanimMap bleibt auf dem
+// letzten Bild stehen. Ohne setShaderTime ist shaderTime die Uhr der Karte
+// (e.shaderTime = 0), die Folge ist im Spiel also laengst vorbei.
+void testOneShotWithoutShaderTime() {
+    std::cout << "== oneshotanimMap ohne setShaderTime ==\n";
+    using namespace efx::particles;
+    const ShaderBook book(
+        "gfx/exp/boom\n{\n\t{\n\t\toneshotanimmap 10 gfx/a.tga gfx/b.tga gfx/c.tga\n"
+        "\t\tblendFunc GL_ONE GL_ONE\n\t}\n}\n");
+    const auto frameAt = [&](const char* flags, float ms) {
+        System system;
+        system.play(effectFrom(std::string("Particle\n{\n") + flags +
+                               "\tlife\t5000\n\tshaders\n\t[\n\t\tgfx/exp/boom\n\t]\n}\n"),
+                    1u);
+        const auto list = system.build(ms, {1, 0, 0}, {0, 0, 1}, book.lookup());
+        const auto* group = groupOf(list, "gfx/exp/boom");
+        return group ? group->image : std::string("-");
+    };
+    const std::string prefix = efx::assets::kImagePrefix;
+    check(frameAt("\tflags\tsetShaderTime\n", 0.0f) == prefix + "gfx/a.tga" &&
+              frameAt("\tflags\tsetShaderTime\n", 150.0f) == prefix + "gfx/b.tga",
+          "mit setShaderTime: die Folge laeuft ab der Entstehung");
+    check(frameAt("", 0.0f) == prefix + "gfx/c.tga" && frameAt("", 150.0f) == prefix + "gfx/c.tga",
+          "ohne setShaderTime: von Anfang an das letzte Bild (Kartenuhr)");
+}
+
 // --- 1. Linie, Schweif, Blitz als Baender ------------------------------------
 void testRenderLinesAndBolts() {
     std::cout << "== Linien, Schweife, Blitze als Baender ==\n";
@@ -13811,6 +13838,7 @@ int main(int argc, char** argv) {
     testParserMatchesEngineLimits();
     // Darstellung gegen die Engine (Render-Audit).
     testRenderLinesAndBolts();
+    testOneShotWithoutShaderTime();
     testRenderSizeIsRadius();
     testRenderCylinderEnds();
     testRenderRandomPerFrame();
