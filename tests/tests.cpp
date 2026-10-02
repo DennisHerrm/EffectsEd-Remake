@@ -12278,6 +12278,58 @@ void testSphereAndCylinderDefaults() {
     check(lo > 9.9f && hi < 11.2f, "orgOnCylinder ohne radius/height: auf dem Mantel, Radius 10");
 }
 
+// --- Ein geoeffnetes .pk3 hat Vorrang ---------------------------------------
+void testOpenedArchivePriority() {
+    std::cout << "== Geoeffnetes Archiv: Vorrang vor dem Spiel ==\n";
+    // Wer eine Mod oeffnet, will deren Fassung sehen — auch wenn das Spiel
+    // einen Effekt, ein Bild oder einen Shader gleichen Namens hat.
+    namespace fs = std::filesystem;
+    using namespace efx::assets;
+    const fs::path root = fs::temp_directory_path() / "efxed_opened_pk3";
+    fs::remove_all(root);
+    const fs::path base = root / "spiel" / "base";
+    fs::create_directories(base / "effects" / "blaster");
+    fs::create_directories(base / "gfx" / "fx");
+    { std::ofstream(base / "effects" / "blaster" / "shot.efx") << "SPIEL"; }
+    { std::ofstream(base / "gfx" / "fx" / "glow.tga") << "SPIEL"; }
+    writeStoredZip(base / "assets0.pk3",
+                   {{"shaders/fx.shader", "gfx/fx/s\n{\n\t{\n\t\tmap gfx/fx/spiel.tga\n\t}\n}\n"}});
+    fs::create_directories(root / "mods");
+    writeStoredZip(root / "mods" / "meinmod.pk3",
+                   {{"effects/blaster/shot.efx", "MOD"},
+                    {"effects/mod/neu.efx", "NEU"},
+                    {"gfx/fx/glow.tga", "MOD"},
+                    {"shaders/mod.shader",
+                     "gfx/fx/s\n{\n\t{\n\t\tanimMap 5 gfx/fx/a.tga gfx/fx/b.tga\n\t}\n}\n"}});
+
+    Index index = scan(base.string());
+    const auto content = [&](const ResolvedTexture& where) {
+        const auto bytes = readFile(base.string(), where);
+        return std::string(bytes.begin(), bytes.end());
+    };
+    check(content(findEffect(index, base.string(), "blaster/shot")) == "SPIEL",
+          "vor dem Oeffnen: die Fassung des Spiels");
+
+    const std::string modPath = (root / "mods" / "meinmod.pk3").string();
+    const Index mod = scanArchive(modPath);
+    mergeOpenedArchive(index, mod);
+    check(content(findEffect(index, base.string(), "blaster/shot")) == "MOD",
+          "nach dem Oeffnen: der Effekt aus dem Archiv gewinnt");
+    check(content(findTexture(index, base.string(), "gfx/fx/glow")) == "MOD",
+          "das Bild aus dem Archiv gewinnt");
+    check(index.sourceOf("blaster/shot") == modPath, "die Bibliothek nennt das Archiv als Quelle");
+    check(index.sourceOf("mod/neu") == modPath, "auch fuer neue Effekte");
+    check(std::find(index.effects.begin(), index.effects.end(), "mod/neu") != index.effects.end(),
+          "neue Effekte stehen im Bestand");
+    const Index::AnimatedShader* anim = index.animOf("gfx/fx/s");
+    check(anim != nullptr && anim->frames.size() == 2,
+          "Bildfolgen der Archiv-Shader kommen mit (vorher fehlten sie)");
+    const efx::shader::Shader* def = index.shaderOf("gfx/fx/s");
+    check(def != nullptr && !def->stages.empty() && !def->stages[0].animMaps.empty(),
+          "der Shaderblock des Archivs gewinnt gegen den des Spiels");
+    fs::remove_all(root);
+}
+
 // --- 8. Suchreihenfolge der Archive -----------------------------------------
 void testPk3SearchOrder() {
     std::cout << "== Suchreihenfolge der .pk3 ==\n";
@@ -13679,6 +13731,7 @@ int main(int argc, char** argv) {
     testListsSetTheirOwnFlags();
     testSphereAndCylinderDefaults();
     testPk3SearchOrder();
+    testOpenedArchivePriority();
     testShaderNameWithExtension();
     testSoundWithoutExtension();
     testCylinderIndexBudget();

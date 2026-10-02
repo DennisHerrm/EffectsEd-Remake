@@ -2,8 +2,8 @@
 
 Alles, was nötig ist, um ohne die alten Gespräche weiterzuarbeiten.
 
-Stand: **1.18.0-rev77 plus Nachtrunde vom 1./2. Oktober 2026**. 4424 Kernprüfungen,
-740 Oberflächenprüfungen (Direct3D 11 und OpenGL), zwölf Prüfwerkzeuge still.
+Stand: **1.18.0-rev77 plus Nachtrunde vom 1./2. Oktober 2026**. 4432 Kernprüfungen,
+749 Oberflächenprüfungen (Direct3D 11 und OpenGL), zwölf Prüfwerkzeuge still.
 Die Abschnitte ab 1 stammen aus früheren Runden; wo Zahlen abweichen, gilt
 Abschnitt 0.
 
@@ -57,6 +57,10 @@ und Zeichenzeit).
 - **md3-Modelle der Emitter** (Zweig `md3`, gemergt): Trümmer und Droidenteile
   werden gezeichnet, Lage/Taumeln/Größe/Licht wie `CEmitter` und
   `R_SetupEntityLighting`.
+- **pk3 öffnen** (Datei → PK3-Archiv öffnen… oder aufs Fenster ziehen): das
+  Archiv hat Vorrang vor dem Spiel (`assets::mergeOpenedArchive`), die
+  Bibliothek zeigt zuerst nur seine Effekte, Archive nur mit Bildern/Klängen/
+  Modellen werden ebenfalls geladen, eine Meldung sagt, was kam.
 - **Leerlauf:** ohne Wiedergabe und Eingabe wartet die Hauptschleife auf
   Nachrichten; minimiert schläft sie; OpenGL setzt das Swap-Intervall.
 - **Bedienung wie im Original:** Spinner-Pfeile an jedem Zahlenfeld (Schritt

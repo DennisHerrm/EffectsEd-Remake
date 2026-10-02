@@ -74,7 +74,7 @@ void App::openDroppedFile(const std::string& path) {
     if (dot != std::string::npos) extension = path.substr(dot + 1);
     for (char& c : extension) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     if (extension == "pk3") {
-        if (openArchive(path)) {
+        if (openArchive(path) && browserSource_ == path) {
             startTabActive_ = true;
             wantStartTab_ = true;
         }
@@ -107,7 +107,9 @@ void App::cmdOpenPk3() {
     if (!fileDialog_) return;
     const std::string picked =
         fileDialog_(false, "PK3 (*.pk3)\0*.pk3\0All files\0*.*\0", nullptr);
-    if (!picked.empty() && openArchive(picked)) {
+    if (!picked.empty() && openArchive(picked) && browserSource_ == picked) {
+        // Nur in die Bibliothek wechseln, wenn das Archiv Effekte hat — eines
+        // mit nur Bildern oder Klaengen ergaenzt den Bestand im Hintergrund.
         startTabActive_ = true;
         wantStartTab_ = true;
     }

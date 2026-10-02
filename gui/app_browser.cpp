@@ -54,32 +54,38 @@ bool App::openArchive(const std::string& path) {
     // Gleich wird in `assets_` eingemischt — erst die Arbeitsfaeden anhalten.
     settleTextureJobs();
     const auto index = assets::scanArchive(path);
-    if (index.effects.empty() && index.shaders.empty()) {
-        diag::warn("archive has no effects: " + path);
+    const size_t slash = path.find_last_of("/\\");
+    const std::string shortName = slash == std::string::npos ? path : path.substr(slash + 1);
+    const bool usable = !index.effects.empty() || !index.shaders.empty() ||
+                        !index.textures.empty() || !index.sounds.empty() || !index.models.empty();
+    char message[512];
+    if (!usable) {
+        // Sichtbar sagen, statt nur ins Protokoll zu schreiben.
+        diag::warn("archive has nothing usable: " + path);
+        std::snprintf(message, sizeof(message), tr(Str::ArchiveEmpty), shortName.c_str());
+        screenshotMessage_ = message;
+        screenshotMessageUntil_ = static_cast<float>(ImGui::GetTime()) + 6.0f;
         return false;
     }
 
-    // In den Bestand einmischen. Die Archivpfade kommen dazu, damit
-    // findTexture und readFile spaeter hineingreifen koennen.
-    for (const auto& archive : index.archives) assets_.archives.push_back(archive);
-    for (const auto& entry : index.shaderMaps) assets_.shaderMaps.push_back(entry);
-    for (const auto& entry : index.shaderBlends) {
-        assets_.shaderBlends.push_back(entry);
+    // In den Bestand einmischen — mit Vorrang (siehe mergeOpenedArchive).
+    assets::mergeOpenedArchive(assets_, index);
+    std::snprintf(message, sizeof(message), tr(Str::ArchiveOpened), shortName.c_str(),
+                  static_cast<int>(index.effects.size()), static_cast<int>(index.textures.size()),
+                  static_cast<int>(index.sounds.size()), static_cast<int>(index.models.size()));
+    screenshotMessage_ = message;
+    screenshotMessageUntil_ = static_cast<float>(ImGui::GetTime()) + 6.0f;
+    // Die Bibliothek zeigt zuerst nur dieses Archiv; "Alle Quellen" schaltet
+    // zurueck. Ohne Effekte darin bleibt die Auswahl, wie sie war.
+    // Den Suchtext leeren: stand dort noch etwas von vorhin, blendete er die
+    // Effekte des Archivs aus, und die Bibliothek wirkte leer.
+    if (!index.effects.empty()) {
+        browserSource_ = path;
+        browserFilter_[0] = '\0';
     }
-    // Die ganzen Shaderbloecke — daraus zeichnet die Vorschau alle Stufen.
-    for (const auto& entry : index.shaderDefs) assets_.shaderDefs.push_back(entry);
-    auto merge = [](std::vector<std::string>& into,
-                    const std::vector<std::string>& from) {
-        into.insert(into.end(), from.begin(), from.end());
-        std::sort(into.begin(), into.end());
-        into.erase(std::unique(into.begin(), into.end()), into.end());
-    };
-    merge(assets_.shaders, index.shaders);
-    merge(assets_.textures, index.textures);
-    merge(assets_.models, index.models);
-    merge(assets_.sounds, index.sounds);
-    merge(assets_.effects, index.effects);
-    assets_.pk3Count += 1;
+    // Texturen, die bisher als fehlend galten, koennen jetzt da sein.
+    textureCacheDirty_ = true;
+    missingTextures_.clear();
 
     archiveSources_.push_back(path);
     browserEntries_.clear();
@@ -774,6 +780,12 @@ void App::collectLoadedEffects() {
             entry.parseMessages = ready.parseMessages;
             entry.unreadable = ready.unreadable;
             entry.parsed = true;
+            // Die Kachel wurde beim Auftauchen schon einmal (leer) gezeichnet
+            // und kommt danach nur bei Zeigerkontakt wieder dran. Ohne diese
+            // Zeile blieb sie schwarz — in der grossen Bibliothek fiel es
+            // nicht auf, weil eintreffende Texturen anderer Kacheln zufaellig
+            // alle neu zeichnen liessen; ein einzelnes .pk3 zeigte es.
+            browserNeedsRedraw_ = true;
             break;
         }
         effectsInFlight_.erase(ready.name);

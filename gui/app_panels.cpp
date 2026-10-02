@@ -1222,19 +1222,32 @@ void App::drawStatusBar() {
                   tr(Str::StatusActive), lastAlive_, tr(Str::StatusDrawn), lastDrawn_,
                   tr(Str::StatusScheduled), lastScheduled_, tr(Str::StatusMarks), lastMarks_,
                   static_cast<double>(ImGui::GetIO().Framerate));
-    ImGui::SameLine(std::max(0.0f, ImGui::GetContentRegionAvail().x -
-                                       ImGui::CalcTextSize(counters).x - ImGui::GetStyle().ItemSpacing.x));
-    // Standen bis eben fest auf null — jetzt die tatsaechlichen Zahlen aus
-    // der laufenden Vorschau. "Aktiv" ist, was lebt; "Gezeichnet" ist, was
-    // davon ein Bild hat (ein Sound lebt, zeichnet aber nichts).
+    const float countersWidth = ImGui::CalcTextSize(counters).x;
+    const float countersX = ImGui::GetWindowContentRegionMax().x - countersWidth;
+    // Meldungen (Bildschirmfoto, Archiv geoeffnet ...) links von den
+    // Zaehlern, auf den freien Platz gekuerzt. Vorher standen sie davor und
+    // schoben die Zaehler aus dem Fenster.
     if (!screenshotMessage_.empty()) {
         if (static_cast<float>(ImGui::GetTime()) > screenshotMessageUntil_) {
             screenshotMessage_.clear();
         } else {
-            ImGui::TextUnformatted(screenshotMessage_.c_str());
             ImGui::SameLine();
+            const float left = ImGui::GetCursorPosX();
+            const float room = countersX - left - ImGui::GetStyle().ItemSpacing.x * 2.0f;
+            if (room > 20.0f) {
+                const ImVec2 at = ImGui::GetCursorScreenPos();
+                ImGui::PushClipRect(at, ImVec2(at.x + room, at.y + ImGui::GetTextLineHeightWithSpacing()), true);
+                ImGui::TextColored(ImGui::GetStyleColorVec4(ImGuiCol_PlotHistogram), "%s",
+                                   screenshotMessage_.c_str());
+                ImGui::PopClipRect();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", screenshotMessage_.c_str());
+            }
         }
     }
+    // Die Zaehler rechtsbuendig. Standen bis eben fest auf null — jetzt die
+    // tatsaechlichen Zahlen aus der laufenden Vorschau. "Aktiv" ist, was
+    // lebt; "Gezeichnet" ist, was davon ein Bild hat.
+    ImGui::SameLine(std::max(ImGui::GetCursorPosX(), countersX));
     ImGui::TextUnformatted(counters);
 }
 
