@@ -313,74 +313,168 @@ bool App::editChannel(const char* id, const char* label, Channel& channel,
 }
 
 bool App::editStringList(const char* id, const char* label,
-                         std::vector<std::string>& list, const char* hint) {
+                         std::vector<std::string>& list, const char* hint, float width,
+                         const std::function<std::string(const std::string&)>& describe,
+                         const std::function<void(const std::string&)>& play) {
+    // Wie im Original (Listenfeld 1009 mit Ordner 1010 und X 1012, bei Sound
+    // dazu der Lautsprecher 1013): links die Liste, rechts die Knoepfe.
+    // Vorher waren es Textfelder mit "Hinzufuegen" und "..." darunter.
     ImGui::PushID(id);
     testmarke::Bereich bereich(id);
     bool changed = false;
+    if (label && *label) ImGui::TextUnformatted(label);
 
-    ImGui::TextUnformatted(label);
-    ImGui::Indent();
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float button = ImGui::GetFrameHeight();
+    if (width <= 0.0f) width = ImGui::GetContentRegionAvail().x;
+    const float boxWidth = std::max(button * 3.0f, width - button - style.ItemSpacing.x);
+    const float boxHeight = ImGui::GetTextLineHeightWithSpacing() * 5.0f + style.FramePadding.y * 2.0f;
 
+    int& selected = listSelection_[&list];
+    if (selected >= static_cast<int>(list.size())) selected = -1;
+    const bool editingThis = listEditing_ == &list;
+
+    // Kein eigenes Unterfenster: das liesse sich nicht mit der Seite rollen
+    // (Selbsttest, 2.10.2026). Ein gezeichneter Rahmen, der mit den
+    // Eintraegen waechst — mindestens fuenf Zeilen hoch wie im Original.
+    const float line = ImGui::GetTextLineHeightWithSpacing();
+    const float inner = style.FramePadding.y;
+    const float rowsHeight = line * static_cast<float>(list.size() + 1) + inner * 2.0f;
+    const ImVec2 boxMin = ImGui::GetCursorScreenPos();
+    const ImVec2 boxMax(boxMin.x + boxWidth, boxMin.y + std::max(boxHeight, rowsHeight));
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    draw->AddRectFilled(boxMin, boxMax, ImGui::GetColorU32(ImGuiCol_FrameBg), style.FrameRounding);
+    draw->AddRect(boxMin, boxMax, ImGui::GetColorU32(ImGuiCol_Border), style.FrameRounding);
+    ImGui::BeginGroup();
+    const float rowWidth = boxWidth - style.FramePadding.x * 2.0f;
+    ImGui::SetCursorScreenPos(ImVec2(boxMin.x + style.FramePadding.x, boxMin.y + inner));
     int removeAt = -1;
     for (size_t i = 0; i < list.size(); ++i) {
+        ImGui::SetCursorScreenPos(ImVec2(boxMin.x + style.FramePadding.x,
+                                         boxMin.y + inner + line * static_cast<float>(i)));
         ImGui::PushID(static_cast<int>(i));
-        char buffer[256];
-        std::snprintf(buffer, sizeof(buffer), "%s", list[i].c_str());
-        ImGui::SetNextItemWidth(-90.0f);
-        const bool entryChanged = ImGui::InputText("##entry", buffer, sizeof(buffer));
-        testmarke::marke(("eintrag" + std::to_string(i)).c_str());
-        if (entryChanged) {
-            list[i] = buffer;
-            changed = true;
+        const std::string mark = "eintrag" + std::to_string(i);
+        if (editingThis && listEditRow_ == static_cast<int>(i)) {
+            // Eintippen (efxed-Zusatz: das Original kennt nur die Auswahl).
+            char buffer[256];
+            std::snprintf(buffer, sizeof(buffer), "%s", list[i].c_str());
+            if (listEditFocus_) {
+                ImGui::SetKeyboardFocusHere();
+                listEditFocus_ = false;
+            }
+            ImGui::SetNextItemWidth(rowWidth);
+            if (ImGui::InputText("##entry", buffer, sizeof(buffer))) {
+                list[i] = buffer;
+                changed = true;
+            }
+            testmarke::marke(mark.c_str());
+            if (ImGui::IsItemDeactivated()) {
+                listEditing_ = nullptr;
+                listEditRow_ = -1;
+            }
+        } else {
+            const bool isSelected = selected == static_cast<int>(i);
+            if (ImGui::Selectable(list[i].empty() ? "-" : list[i].c_str(), isSelected,
+                                  ImGuiSelectableFlags_AllowDoubleClick, ImVec2(rowWidth, 0.0f))) {
+                selected = static_cast<int>(i);
+                if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                    listEditing_ = &list;
+                    listEditRow_ = static_cast<int>(i);
+                    listEditFocus_ = true;
+                }
+            }
+            testmarke::marke(mark.c_str());
+            if (describe && ImGui::IsItemHovered()) {
+                const std::string text = describe(list[i]);
+                if (!text.empty()) ImGui::SetTooltip("%s", text.c_str());
+            }
+            if (isSelected && ImGui::IsItemFocused() &&
+                ImGui::IsKeyPressed(ImGuiKey_Delete, false)) {
+                removeAt = static_cast<int>(i);
+            }
         }
-        ImGui::SameLine();
-        if (ImGui::SmallButton("X")) removeAt = static_cast<int>(i);
-        testmarke::marke(("weg" + std::to_string(i)).c_str());
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr(Str::FieldRemoveEntry));
         ImGui::PopID();
     }
-    if (removeAt >= 0) {
-        list.erase(list.begin() + removeAt);
-        changed = true;
+    const float freeTop = boxMin.y + inner + line * static_cast<float>(list.size());
+    if (list.empty()) {
+        // Eine leere Liste ist der Absturzfall des alten Editors und laesst
+        // die Primitive im Spiel unsichtbar — deshalb steht es hier.
+        ImGui::SetCursorScreenPos(ImVec2(boxMin.x + style.FramePadding.x, freeTop));
+        // Fensterkoordinaten, nicht Bildschirm (PushTextWrapPos).
+        ImGui::PushTextWrapPos(boxMin.x + boxWidth - style.FramePadding.x - ImGui::GetWindowPos().x +
+                               ImGui::GetScrollX());
+        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        ImGui::TextWrapped("%s", tr(Str::FieldEmptyList));
+        ImGui::PopStyleColor();
+        ImGui::PopTextWrapPos();
     }
+    // Die freie Flaeche darunter: Doppelklick legt einen Eintrag zum
+    // Eintippen an.
+    {
+        ImGui::SetCursorScreenPos(ImVec2(boxMin.x + 1.0f, freeTop));
+        const ImVec2 rest(boxWidth - 2.0f, boxMax.y - freeTop - 1.0f);
+        ImGui::InvisibleButton("##frei", ImVec2(std::max(1.0f, rest.x), std::max(4.0f, rest.y)));
+        testmarke::marke("dazu");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", tr(Str::ListTypeHint));
+            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                list.emplace_back(hint ? hint : "");
+                selected = static_cast<int>(list.size()) - 1;
+                listEditing_ = &list;
+                listEditRow_ = selected;
+                listEditFocus_ = true;
+                changed = true;
+            }
+        }
+    }
+    ImGui::SetCursorScreenPos(boxMin);
+    ImGui::Dummy(ImVec2(boxWidth, boxMax.y - boxMin.y));
+    ImGui::EndGroup();
 
-    const bool addClicked = ImGui::SmallButton(tr(Str::FieldAddEntry));
-    testmarke::marke("dazu");
-    if (addClicked) {
-        list.emplace_back(hint ? hint : "");
-        changed = true;
-    }
-    // Auswahl aus dem Materialbestand — im Original der Ordnerknopf neben der
-    // Liste. Die Liste selbst fuellt erst der Materialsuchlauf.
-    const std::string listId = id;
-    const bool effectList = listId == "deathfx" || listId == "impactfx" ||
-                            listId == "emitfx" || listId == "playfx";
-    if (listId == "shaders" || listId == "models" || listId == "sounds" || effectList) {
-        ImGui::SameLine();
-        const bool chooseClicked = ImGui::SmallButton("...");
-        testmarke::marke("waehlen");
-        if (chooseClicked) {
+    ImGui::SameLine();
+    ImGui::BeginGroup();
+    {
+        // Ordner: Auswahl aus dem Materialbestand.
+        const std::string listId = id;
+        const bool effectList = listId == "deathfx" || listId == "impactfx" ||
+                                listId == "emitfx" || listId == "playfx";
+        if (iconButton("##choose", Icon::Open, tr(Str::ListChoose), false, button)) {
             pickerTarget_ = &list;
-            // Auch fuer Effektlisten: das Original hat dort einen
-            // Ordner-Knopf, der eine .efx aus dem Spielordner waehlt.
             pickerKind_ = listId == "models"   ? PickerKind::Models
                           : listId == "sounds" ? PickerKind::Sounds
                           : effectList         ? PickerKind::Effects
                                                : PickerKind::Shaders;
             showPicker_ = true;
         }
+        testmarke::marke("waehlen");
+        // X: den markierten Eintrag entfernen, ohne Rueckfrage, gesperrt ohne
+        // Markierung — wie im Original.
+        ImGui::BeginDisabled(selected < 0);
+        if (iconButton("##remove", Icon::DeleteSegment, tr(Str::FieldRemoveEntry), false, button)) {
+            removeAt = selected;
+        }
+        testmarke::marke("weg");
+        ImGui::EndDisabled();
+        if (play) {
+            ImGui::BeginDisabled(list.empty());
+            if (iconButton("##play", Icon::Speaker, tr(Str::SoundPlay), false, button) && !list.empty()) {
+                play(list[static_cast<size_t>(selected >= 0 ? selected : 0)]);
+            }
+            testmarke::marke("spielen");
+            ImGui::EndDisabled();
+        }
     }
-    if (list.empty()) {
-        // Eine leere Liste ist der Absturzfall des alten Editors und laesst
-        // die Primitive im Spiel unsichtbar. Deshalb steht es hier und nicht
-        // erst in der Pruefliste. Unter den Knoepfen und umgebrochen: in der
-        // schmalen Spalte lief der Satz sonst rechts aus dem Bild.
-        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-        ImGui::TextWrapped("%s", tr(Str::FieldEmptyList));
-        ImGui::PopStyleColor();
-    }
+    ImGui::EndGroup();
 
-    ImGui::Unindent();
+    if (removeAt >= 0 && removeAt < static_cast<int>(list.size())) {
+        list.erase(list.begin() + removeAt);
+        if (editingThis) {
+            listEditing_ = nullptr;
+            listEditRow_ = -1;
+        }
+        selected = list.empty() ? -1 : std::min(removeAt, static_cast<int>(list.size()) - 1);
+        changed = true;
+    }
     ImGui::PopID();
     return changed;
 }

@@ -30,6 +30,8 @@ enum class Icon {
     ViewFront, ViewBack, ViewLeft, ViewRight, ViewTop, ViewBottom, ViewReset,
     // Aus den Werkzeugleisten des Originals (RT_TOOLBAR 128/158).
     Clone, About, PlaybackSettings, OrientUp, OrientSide, OrientDown, SetOrigin,
+    // Lautsprecher neben der Klangliste (Sound-Seite des Originals).
+    Speaker,
 };
 
 // Ein Knopf mit Symbol. `active` zeichnet ihn eingedrückt — für Umschalter.

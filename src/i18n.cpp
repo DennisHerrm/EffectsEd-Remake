@@ -195,6 +195,8 @@ const Entry kTable[] = {
     {"Not evaluated for this type", "Wird bei diesem Typ nicht ausgewertet", "此类型不会读取", "この種類では読み取られません"},  // FieldNotUsed
     {"Add", "Hinzufügen", "添加", "追加"},  // FieldAddEntry
     {"Remove", "Entfernen", "移除", "削除"},  // FieldRemoveEntry
+    {"Choose from the game files", "Aus den Spieldateien wählen", "从游戏文件中选择", "ゲームファイルから選択"},  // ListChoose
+    {"Double-click an empty spot to type a name", "Doppelklick auf eine freie Stelle: Namen eintippen", "双击空白处：输入名称", "空いている所をダブルクリック: 名前を入力"},  // ListTypeHint
     {"Empty — the engine needs at least one entry", "Leer — die Engine braucht mindestens einen Eintrag", "为空 — 引擎至少需要一个条目", "空です — エンジンには少なくとも1つ必要です"},  // FieldEmptyList
     {"Flags", "Flags", "标志", "フラグ"},  // FlagsGroup
     {"Spawn Flags", "Spawn-Flags", "生成标志", "生成フラグ"},  // SpawnFlagsGroup

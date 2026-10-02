@@ -205,6 +205,8 @@ enum class Str {
     FieldNotUsed,
     FieldAddEntry,
     FieldRemoveEntry,
+    ListChoose,
+    ListTypeHint,
     FieldEmptyList,
     FlagsGroup,
     SpawnFlagsGroup,
