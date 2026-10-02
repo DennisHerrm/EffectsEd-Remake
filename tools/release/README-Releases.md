@@ -9,7 +9,8 @@ die Engine (OpenJK als Vorlage).
 
 1. Unter [Releases](https://github.com/DennisHerrm/EffectsEd-Remake-Releases/releases/latest)
    das neueste `EffectsEd-Remake-revNN.zip` herunterladen.
-2. Entpacken und `EffectsEd-Remake/efxed.exe` starten (Windows 10/11, 64 Bit).
+   Für **Windows 7 SP1 / 8.1** stattdessen `EffectsEd-Remake-revNN-win7.zip`.
+2. Entpacken und `EffectsEd-Remake/efxed.exe` starten (64 Bit).
 3. Unter **Edit → Set Game Path…** den `base`-Ordner des Spiels eintragen
    (z. B. `…/Jedi Academy/GameData/base`). Für Mods wie Movie Duels den
    Mod-Ordner vorn und `base` als weiteren Ordner. Wer eine `.efx` direkt aus
@@ -24,6 +25,8 @@ Das Programm sieht beim Start selbst hier nach, ob es eine neuere Fassung gibt,
 und zeigt dann unten in der Statuszeile einen grünen Hinweis. Ein Klick lädt und
 installiert sie (**Help → Check for Updates…** sucht von Hand). Ein GitHub-Konto
 ist dafür nicht nötig. Abschalten: **Help → Check for Updates at Startup**.
+Die Windows-7-Fassung lädt dabei nur Windows-7-Pakete. Unter Windows 7 braucht
+der Updater TLS 1.2 (Update KB3140245, auf gepflegten Rechnern vorhanden).
 
 ## „Der Computer wurde durch Windows geschützt“
 

@@ -622,6 +622,7 @@ enum class Str {
     UpdErrDownload,
     UpdErrZip,
     UpdErrWrite,
+    UpdErrTls,
     UpdErrReplace,
     Count,
 };

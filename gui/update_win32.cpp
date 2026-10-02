@@ -54,6 +54,14 @@ namespace fs = std::filesystem;
 using i18n::Str;
 using i18n::tr;
 
+// Die MinGW-Fassung ist die fuer Windows 7 (build_mingw.bat); sie laedt nur
+// Pakete mit "-win7" im Namen, siehe update::zipAsset.
+#if defined(__MINGW32__)
+constexpr bool kWin7Build = true;
+#else
+constexpr bool kWin7Build = false;
+#endif
+
 // Absichtlich nie freigegeben: der Hintergrundfaden kann beim Beenden noch
 // laufen, und dann darf sein Zustand nicht schon zerstoert sein.
 struct Shared {
@@ -190,6 +198,15 @@ Answer fetch(const std::wstring& url, const std::vector<std::wstring>& headers,
         return a;
     }
     WinHttpSetTimeouts(session, 10000, 10000, 15000, 30000);
+    // GitHub spricht nur TLS 1.2 und neuer. Windows 7 bietet das von sich aus
+    // nicht an, wohl aber auf ausdrueckliche Bitte (mit KB3140245, auf
+    // aktuellen Windows-7-Rechnern vorhanden). TLS 1.3 kennt erst Windows 11;
+    // wo das Setzen scheitert, bleibt es bei 1.2 bzw. bei der Voreinstellung.
+    DWORD protocols = 0x00000800 /* TLS1_2 */ | 0x00002000 /* TLS1_3 */;
+    if (!WinHttpSetOption(session, WINHTTP_OPTION_SECURE_PROTOCOLS, &protocols, sizeof(protocols))) {
+        protocols = 0x00000800;
+        WinHttpSetOption(session, WINHTTP_OPTION_SECURE_PROTOCOLS, &protocols, sizeof(protocols));
+    }
     // Umleitungen (GitHub schickt Downloads auf seinen Speicher) nur auf HTTPS.
     DWORD redirect = WINHTTP_OPTION_REDIRECT_POLICY_DISALLOW_HTTPS_TO_HTTP;
     WinHttpSetOption(session, WINHTTP_OPTION_REDIRECT_POLICY, &redirect, sizeof(redirect));
@@ -211,8 +228,14 @@ Answer fetch(const std::wstring& url, const std::vector<std::wstring>& headers,
                                0, 0, 0) &&
             WinHttpReceiveResponse(request, nullptr);
         if (!sent) {
-            a.error = format(Str::UpdErrNoAnswer, narrow(host).c_str(),
-                             static_cast<unsigned long>(GetLastError()));
+            const DWORD code = GetLastError();
+            // 12175 ERROR_WINHTTP_SECURE_FAILURE, 12157 ..._SECURE_CHANNEL_ERROR:
+            // fast immer ein Windows 7 ohne TLS 1.2. Das sagen, statt nur
+            // eine Nummer zu nennen.
+            a.error = (code == 12175 || code == 12157)
+                          ? std::string(tr(Str::UpdErrTls))
+                          : format(Str::UpdErrNoAnswer, narrow(host).c_str(),
+                                   static_cast<unsigned long>(code));
         } else {
             DWORD size = sizeof(a.status);
             WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
@@ -286,7 +309,7 @@ void checkJob() {
 }
 
 void installJob(const update::Release& release) {
-    const update::Asset* asset = update::zipAsset(release);
+    const update::Asset* asset = update::zipAsset(release, kWin7Build);
     if (asset == nullptr) return fail(tr(Str::UpdNoZip));
     const long long expected = asset->size;
     const auto progress = [expected](std::uint64_t n, std::uint64_t total) {

@@ -290,10 +290,12 @@ bool isNewer(const std::string& tag, const std::string& local) {
     return theirs >= 0 && ours >= 0 && theirs > ours;
 }
 
-const Asset* zipAsset(const Release& release) {
+const Asset* zipAsset(const Release& release, bool win7Build) {
     for (const Asset& asset : release.assets) {
         const std::string n = lower(asset.name);
-        if (n.size() > 4 && n.compare(n.size() - 4, 4, ".zip") == 0) return &asset;
+        if (n.size() <= 4 || n.compare(n.size() - 4, 4, ".zip") != 0) continue;
+        const bool forWin7 = n.find("-win7") != std::string::npos;
+        if (forWin7 == win7Build) return &asset;
     }
     return nullptr;
 }

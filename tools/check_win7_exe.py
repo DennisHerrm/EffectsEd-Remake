@@ -24,6 +24,8 @@ WIN7_DLLS = {
     "opengl32.dll", "imm32.dll", "shlwapi.dll", "version.dll", "ws2_32.dll",
     "dwmapi.dll", "dxgi.dll", "msvcrt.dll", "setupapi.dll", "uxtheme.dll",
     "psapi.dll", "crypt32.dll", "userenv.dll", "gdiplus.dll", "rpcrt4.dll",
+    # Auto-Updater (gui/update_win32.cpp); seit Windows XP SP1 vorhanden.
+    "winhttp.dll",
     # Die Universal CRT gibt es auf Windows 7 nur mit KB2999226. Deshalb
     # statisch binden — dann taucht sie hier gar nicht auf.
 }

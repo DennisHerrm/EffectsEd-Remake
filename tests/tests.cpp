@@ -1,4 +1,5 @@
 // Testlauf ohne Fremdbibliothek: jeder Test meldet sich selbst.
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -512,6 +513,25 @@ void testUpdate() {
     check(!parseRelease(std::string(200, '[') + std::string(200, ']'), none, &error),
           "zu tief verschachtelt abgelehnt (kein Stapelueberlauf)");
     Release noZip;
+    {
+        // Zwei Pakete: jede Fassung nimmt ihres, egal in welcher Reihenfolge.
+        Release both;
+        check(parseRelease(R"({"tag_name": "rev79", "assets": [
+            {"name": "EffectsEd-Remake-rev79-win7.zip", "browser_download_url": "https://x/w7.zip"},
+            {"name": "EffectsEd-Remake-rev79.zip", "browser_download_url": "https://x/w10.zip"}]})", both),
+              "Release mit zwei Paketen gelesen");
+        const Asset* normal = zipAsset(both);
+        const Asset* old = zipAsset(both, true);
+        check(normal != nullptr && normal->name == "EffectsEd-Remake-rev79.zip",
+              "Windows-10-Fassung nimmt das Paket ohne -win7");
+        check(old != nullptr && old->name == "EffectsEd-Remake-rev79-win7.zip",
+              "Windows-7-Fassung nimmt das -win7-Paket");
+        Release onlyNormal;
+        check(parseRelease(R"({"tag_name": "rev80", "assets": [{"name": "EffectsEd-Remake-rev80.zip"}]})",
+                           onlyNormal) &&
+                  zipAsset(onlyNormal, true) == nullptr,
+              "ohne -win7-Paket laedt die Windows-7-Fassung NICHT die Windows-10-exe");
+    }
     check(parseRelease(R"({"tag_name": "rev5", "assets": []})", noZip) && zipAsset(noZip) == nullptr,
           "Release ohne .zip: keins gefunden");
 
