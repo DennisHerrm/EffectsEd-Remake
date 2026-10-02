@@ -3,6 +3,10 @@
 Ein Editor für die Effektdateien von *Jedi Knight: Jedi Academy* — ein
 Nachbau von Ravens `EffectsEd` aus dem Jahr 2003, für heutige Rechner.
 
+**Fertiges Programm herunterladen:**
+[EffectsEd-Remake-Releases](https://github.com/DennisHerrm/EffectsEd-Remake-Releases/releases/latest)
+— entpacken, `efxed.exe` starten. Es aktualisiert sich danach selbst.
+
 ## Warum
 
 Das Original ist ein 32-Bit-Programm gegen OpenGL im unmittelbaren Modus. Es
@@ -82,4 +86,15 @@ Die Feldzuordnung, die Menübefehle und die Hilfetexte stammen aus den
 Ressourcen von `EffectsEd.exe`. Das Verhalten der Effekte ist aus dem
 OpenJK-Quelltext hergeleitet, mit Fundstelle je Regel.
 
-`third_party/minimp3.h` ist gemeinfrei (CC0) und die einzige fremde Datei.
+Fremde Dateien im Baum:
+
+- `third_party/minimp3.h` — gemeinfrei (CC0).
+- `data/help/Using_EffectsEd.html` — Ravens Handbuch zu EffectsEd aus dem
+  Jedi-Academy-SDK (2002), unverändert; das Programm zeigt es unter
+  *Help → Original manual (2002)*.
+- `data/*.efx`, `data/*.shader` — fünf kleine Dateien aus Jedi Academy, nur als
+  Prüfmaterial für die Tests.
+
+Diese Inhalte gehören Raven Software / Activision. Ein Fan-Projekt, nicht
+verbunden mit Raven Software, Activision oder Lucasfilm; auf Wunsch der
+Rechteinhaber werden die Dateien entfernt.
