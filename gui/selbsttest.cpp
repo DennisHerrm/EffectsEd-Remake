@@ -1254,6 +1254,22 @@ public:
             return std::fabs(gewaehlt()->alpha.start.min - 1.0f) < 1e-5f;
         }));
         s.push_back(fensterFoto("spinner_color"));
+        // Cull Distance: Up-Down mit Schritt 1 ab 0, wie im Original.
+        s.push_back(klick(tr(Str::TabGeneration), "properties"));
+        s.push_back(tu("Culling an, 500", [] {
+            gewaehlt()->cullRangeSet = true;
+            gewaehlt()->cullRange = 500;
+            app->recordChange("test");
+        }));
+        s.push_back(warte(2));
+        s.push_back(klickMarke("cull/min+"));
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("Cull Distance: Pfeil hoch 500 -> 501", [] { return gewaehlt()->cullRange == 501; }));
+        s.push_back(tu("Cull 0", [] { gewaehlt()->cullRange = 0; }));
+        s.push_back(warte(2));
+        s.push_back(klickMarke("cull/min-"));
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("Cull Distance bleibt bei 0 stehen", [] { return gewaehlt()->cullRange == 0; }));
         return s;
     }
 

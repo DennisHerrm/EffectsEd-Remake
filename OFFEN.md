@@ -6,9 +6,9 @@ Geprüft wird mit drei Läufen, alle grün:
 
 | Lauf | Ergebnis |
 |---|---|
-| `build\Release\efxtests.exe` (Kern) | 4415 Prüfungen, 0 Fehler |
-| Selbsttest `EFXED_SELBSTTEST=alles`, Direct3D 11 | 738 OK, 0 FEHLER |
-| derselbe Selbsttest mit `EFXED_RENDERER=gl3` | 738 OK, 0 FEHLER |
+| `build\Release\efxtests.exe` (Kern) | 4424 Prüfungen, 0 Fehler |
+| Selbsttest `EFXED_SELBSTTEST=alles`, Direct3D 11 | 740 OK, 0 FEHLER |
+| derselbe Selbsttest mit `EFXED_RENDERER=gl3` | 740 OK, 0 FEHLER |
 | Darstellungslauf `EFXED_SELBSTTEST=darstellung` | 376 Effekte aus Movie Duels, je 4 Zeitpunkte, kein Absturz |
 | `tools/lint_*.py` (12 Prüfer) | alle 0 |
 | `tools/check_menu.py <EffectsEd.exe>` | 49 Menübefehle: 44 umgesetzt, 5 bewusst ausgelassen, keiner fehlt |
@@ -25,18 +25,21 @@ Geprüft wird mit drei Läufen, alle grün:
 | Drucken, Druckvorschau | fehlt | Ein Partikeleffekt lässt sich nicht sinnvoll drucken |
 | „Entf" allein tut nichts, Strg+N/O/S stehen nur im Menütext | alle belegt | Bekannte Fehler des Originals |
 
-## Noch nicht nachgebaut
+## Bewusst nicht nachgebaut, weil das Spiel es so nicht zeigt
 
-- **`depthHack`** („Always draw on top"): das Flag wird gelesen und
-  geschrieben, die Vorschau zeichnet solche Segmente aber wie alle anderen
-  (verdeckt vom Raum). In der Engine liegen sie vor der Welt.
+- **Glow** (`glow` in Shaderstufen): die Engine zeichnet ihn nur mit
+  `r_DynamicGlow 1`. Voreinstellung der Engine ist 0, und in deinen
+  Movie-Duels-Konfigurationen (base und MD) steht `seta r_DynamicGlow "0"`.
+- **md3: weitere Animationsbilder, .skin-Dateien:** CEmitter setzt nie ein
+  Bild und keine Skin — gezeichnet wird Bild 0 mit den Flächenshadern des md3.
 
-- **Glow, reine MP-Unterschiede** in der Darstellung. Die md3-Modelle der
-  Emitter (`useModel`) zeichnen jetzt, samt Taumeln (`angle`/`angleDelta`);
-  offen daran: nur Bild 0, keine .skin-Dateien, Licht wie eine Karte ohne
-  Lichtgitter.
-- **Cull Distance** hat noch keine Spinner-Pfeile (alle anderen Zahlenfelder
-  haben sie seit dieser Runde).
+## Noch offen
+
+- **Modelllicht** wie auf einer Karte ohne Lichtgitter (Umgebung + Sonne +
+  Light-Segmente). Im Spiel kommt das Licht aus dem Lichtgitter der Karte —
+  das gibt es im Testraum nicht.
+- **Reine MP-Unterschiede** der Darstellung sind nicht einzeln geprüft
+  (Maßstab war der Singleplayer-Renderer `rd`).
 - **Klangausgabe** ist im Selbsttest nur bis zum Auslösen geprüft, nicht das
   Hören.
 

@@ -189,7 +189,8 @@ float spinStep(float value, int direction, const Spin& spin) {
                                          static_cast<double>(spin.hi)));
 }
 
-// Die beiden Pfeile rechts neben einem Feld. Gibt -1, 0 oder +1 zurueck.
+// Die beiden Pfeile rechts neben einem Feld. Gibt die Zahl der Schritte
+// zurueck (negativ nach unten, 0 ohne Klick, beim Halten beschleunigt).
 int spinner(const char* mark) {
     const float h = ImGui::GetFrameHeight();
     const float w = std::round(h * 0.6f);
@@ -203,7 +204,13 @@ int spinner(const char* mark) {
         const ImVec2 size(w, k == 0 ? half : h - half);
         ImGui::SetCursorScreenPos(pos);
         ImGui::PushID(k);
-        if (ImGui::InvisibleButton("##spin", size)) direction = k == 0 ? 1 : -1;
+        if (ImGui::InvisibleButton("##spin", size)) {
+            // Beschleunigung wie die Up-Down-Felder des Originals (UDM_SETACCEL,
+            // gemessen: 0 s -> 1 Schritt, 2 s -> 5, 5 s -> 20 beim Halten).
+            const float held = ImGui::GetIO().MouseDownDuration[ImGuiMouseButton_Left];
+            const int accel = held >= 5.0f ? 20 : (held >= 2.0f ? 5 : 1);
+            direction = (k == 0 ? 1 : -1) * accel;
+        }
         const std::string name = std::string(mark) + (k == 0 ? "+" : "-");
         testmarke::marke(name.c_str());
         const bool hot = ImGui::IsItemHovered();
@@ -719,12 +726,25 @@ void App::drawTab(fields::Tab tab, Primitive& p) {
                 ImGui::BeginDisabled(!p.cullRangeSet);
                 labelCell(tr(Str::FieldCullDistance));
                 ImGui::SetCursorScreenPos(ImVec2(minX(), ImGui::GetCursorScreenPos().y));
-                ImGui::SetNextItemWidth(g_page.field);
+                ImGui::SetNextItemWidth(g_page.field - spinnerWidth());
                 if (ImGui::DragInt("##cull", &p.cullRange, 10.0f, 0, 1000000)) {
                     p.cullRangeSet = true;
                     changed = true;
                 }
                 testmarke::marke("cull/min");
+                // Up-Down wie im Original: Schritt 1, ab 0 (gemessen,
+                // msctls_updown32 buddy 1055, range 0..2147483647).
+                ImGui::SameLine(0.0f, 0.0f);
+                ImGui::PushID("cullSpin");
+                {
+                    testmarke::Bereich spinArea("cull");
+                    if (const int d = spinner("min"); d != 0) {
+                        p.cullRange = std::max(0, p.cullRange + d);
+                        p.cullRangeSet = true;
+                        changed = true;
+                    }
+                }
+                ImGui::PopID();
                 ImGui::EndDisabled();
             }
 

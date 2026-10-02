@@ -2,8 +2,8 @@
 
 Alles, was nötig ist, um ohne die alten Gespräche weiterzuarbeiten.
 
-Stand: **1.18.0-rev77 plus Nachtrunde vom 1./2. Oktober 2026**. 4415 Kernprüfungen,
-738 Oberflächenprüfungen (Direct3D 11 und OpenGL), zwölf Prüfwerkzeuge still.
+Stand: **1.18.0-rev77 plus Nachtrunde vom 1./2. Oktober 2026**. 4424 Kernprüfungen,
+740 Oberflächenprüfungen (Direct3D 11 und OpenGL), zwölf Prüfwerkzeuge still.
 Die Abschnitte ab 1 stammen aus früheren Runden; wo Zahlen abweichen, gilt
 Abschnitt 0.
 
