@@ -12024,6 +12024,29 @@ void testEmitterEmitsEmitFx() {
           "200 Einheiten Weg bei density 10: rund zwanzig Aussendungen der emitfx-Liste");
     std::printf("  Emitter mit emitfx: %d Aussendungen\n", emitting.startedEffects());
 
+    // Schnelle Brocken: CEmitter::Draw rechnet je Bild in 8-ms-Schritten ab
+    // der letzten Aussendung. Bei 1500 Einheiten je Sekunde und density 25
+    // sind das (60 Bilder je Sekunde, nachgerechnet) 61 Aussendungen in einer
+    // Sekunde; das fruehere Abschreiten der Bahn in 10-ms-Schritten kam auf
+    // 49 — jede Rauchspur der Schiffsexplosionen war um ein Fuenftel duenner.
+    const auto fast = efx::read(
+        "Emitter\n{\n\tlife\t1000\n\tvelocity\t1500 0 0\n\tdensity\t25\n"
+        "\tvariance\t0\n\temitfx\n\t[\n\t\tkind\n\t]\n}\n");
+    efx::particles::System fastEmitter;
+    fastEmitter.play(fast.effect, 1, {}, {}, library.loader());
+    check(fastEmitter.startedEffects() >= 59 && fastEmitter.startedEffects() <= 63,
+          "1500 Einheiten/s, density 25: rund 61 Aussendungen wie CEmitter::Draw");
+    std::printf("  schneller Emitter: %d Aussendungen (Engine bei 60 Bildern/s: 61)\n",
+                fastEmitter.startedEffects());
+    // Die Kinder beginnen im Bild der Aussendung, also auf dem 60-Hz-Raster.
+    bool onFrames = true;
+    for (const auto& l : fastEmitter.live()) {
+        if (l.type != efx::PrimitiveType::Particle) continue;
+        const float frames = l.spawnMs / (1000.0f / 60.0f);
+        if (std::fabs(frames - std::round(frames)) > 1e-3f) onFrames = false;
+    }
+    check(onFrames, "ausgesendete Effekte beginnen im aktuellen Bild (PlayEffect wirkt sofort)");
+
     // Ohne das Flag in der Datei: die Liste setzt es (ParseEmitterFxStrings).
     const auto noFlag = efx::read(
         "Emitter\n{\n\tlife\t1000\n\tvelocity\t0 0 200\n\temitfx\n\t[\n\t\tkind\n\t]\n}\n");

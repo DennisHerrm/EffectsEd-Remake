@@ -965,25 +965,91 @@ void System::playInto(const Effect& effect, sim::Random& random,
                 if (!child) {
                     ++missingEffects_;
                 } else {
-                    // Die Bahn abschreiten und an jedem Schritt aussenden.
-                    // Feste Zeitschritte statt der Bildrate der Engine: sonst
-                    // haengt das Ergebnis davon ab, wie schnell der Rechner
-                    // ist, und die Vorschau sieht auf jedem Rechner anders aus.
-                    constexpr float kStepMs = 10.0f;
-                    camera::Vec3 last = item.positionAt(item.spawnMs);
-                    float step = density + random.range(-1.0f, 1.0f) * variance;
+                    // CEmitter::Draw, Schritt fuer Schritt nachgebaut — mit
+                    // festen 60 Bildern je Sekunde statt der Bildrate des
+                    // Rechners, damit die Vorschau ueberall gleich aussieht.
+                    //
+                    // Je Bild (Update setzt vorher mOldOrigin/mOldVelocity auf
+                    // den Stand vom Bildanfang):
+                    //
+                    //     step = density + flrand(-1,1) * variance;  step *= step;
+                    //     for ( t = mOldTime; t <= mTime; t += TRAIL_RATE ) {   // 8 ms
+                    //         dif += TRAIL_RATE;
+                    //         v = mOldVelocity + dif * 0.001 * mAccel;
+                    //         org = mOldOrigin + ftime * v + 0.5 * ftime^2 * v;
+                    //         (Physik: Strahl mOldOrigin -> org trifft -> return)
+                    //         if ( DistanceSquared( org, mOldOrigin ) >= step ) {
+                    //             PlayEffect( mEmitterFxID, org, mRefEnt.axis );
+                    //             mOldOrigin = org; mOldVelocity = v; dif = 0; mOldTime = t;
+                    //         }
+                    //     }
+                    //
+                    // Die Schleife beginnt bei der LETZTEN Aussendung, gemessen
+                    // wird aber ab der Lage am Bildanfang. Deshalb sendet die
+                    // Engine oefter aus, als `density` als Strecke vermuten
+                    // laesst. Hier stand ein Abschreiten der Bahn in 10-ms-
+                    // Schritten: bei schnellen Brocken (1000-1500 Einheiten je
+                    // Sekunde, density 20-30) kam nur etwa die Haelfte der
+                    // Rauch- und Feuerspuren heraus (ships/*_explosion: im
+                    // Original 170-290 lebende Primitive, bei uns 90-125).
+                    //
+                    // Der Kindeffekt beginnt im aktuellen Bild (PlayEffect
+                    // wirkt sofort), an der vorausgerechneten Stelle `org`, mit
+                    // den Achsen des Emitters: AnglesToAxis (vorwaerts, LINKS,
+                    // oben), bei useModel mit size skaliert (Draw: "ensure that
+                    // we are sized").
+                    constexpr float kFrameMs = 1000.0f / 60.0f;
+                    constexpr float kTrailRateMs = 8.0f;
+                    constexpr int kMaxEmitted = 256;
+                    const bool physics = (flags & kFlagApplyPhysics) != 0 && !planes.empty();
+                    const camera::Vec3 accel =
+                        item.acceleration + camera::Vec3{0.0f, 0.0f, item.gravity};
+                    const auto velocityAt = [&](float t) {
+                        // Aus der Bahn (mit Aufprallen) statt aus v0 + a*t.
+                        const float t0 = std::max(item.spawnMs, std::min(t, item.deathMs) - 1.0f);
+                        return (item.positionAt(t0 + 1.0f) - item.positionAt(t0)) * 1000.0f;
+                    };
+                    float oldTime = item.spawnMs;
                     int emitted = 0;
-                    for (float t = item.spawnMs; t < item.deathMs; t += kStepMs) {
-                        const camera::Vec3 at = item.positionAt(t);
-                        if (camera::length(at - last) >= std::fabs(step)) {
-                            playInto(*child, random, {}, ownContext, depth + 1, t, at);
-                            ++startedEffects_;
-                            last = at;
+                    for (float frame = item.spawnMs; frame < item.deathMs && emitted < kMaxEmitted;
+                         frame += kFrameMs) {
+                        const float previous = std::max(item.spawnMs, frame - kFrameMs);
+                        camera::Vec3 base = item.positionAt(previous);
+                        camera::Vec3 oldVelocity = velocityAt(previous);
+                        float step = density + random.range(-1.0f, 1.0f) * variance;
+                        float dif = 0.0f;
+                        for (float t = oldTime; t <= frame; t += kTrailRateMs) {
+                            dif += kTrailRateMs;
+                            const camera::Vec3 v = oldVelocity + accel * (dif * 0.001f);
+                            const float ftime = dif * 0.001f;
+                            const camera::Vec3 org = base + v * ftime + v * (ftime * ftime * 0.5f);
+                            if (physics && sim::trace(base, org, planes).hit) break;
+                            const camera::Vec3 moved = org - base;
+                            if (camera::dot(moved, moved) < step * step) continue;
                             step = density + random.range(-1.0f, 1.0f) * variance;
-                            // Eine Obergrenze: ein Emitter mit density 0.1 und
-                            // langer Lebensdauer wuerde sonst Tausende
-                            // Effekte starten und die Vorschau anhalten.
-                            if (++emitted >= 256) break;
+
+                            camera::Vec3 ax[3];
+                            anglesToAxis(item.anglesAt(frame), ax);
+                            if ((flags & kFlagAttachedModel) != 0) {
+                                const float scale = curve::evaluate(
+                                    item.size, frame, item.spawnMs, item.deathMs, item.sizeParm,
+                                    item.randomAt(Live::kRandomSize, frame));
+                                for (auto& a : ax) a = a * scale;
+                            }
+                            PlayContext emitContext = context;
+                            emitContext.axis.forward = ax[0];
+                            emitContext.axis.right = ax[1];
+                            emitContext.axis.up = ax[2];
+                            playInto(*child, random, {}, emitContext, depth + 1, frame, org);
+                            ++startedEffects_;
+
+                            base = org;
+                            oldVelocity = v;
+                            dif = 0.0f;
+                            oldTime = t;
+                            // Obergrenze: ein Emitter mit density 0.1 und langer
+                            // Lebensdauer wuerde sonst Tausende Effekte starten.
+                            if (++emitted >= kMaxEmitted) break;
                         }
                     }
                 }
