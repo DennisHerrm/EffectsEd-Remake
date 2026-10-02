@@ -300,7 +300,13 @@ const Asset* zipAsset(const Release& release) {
 
 std::string commonFolder(const std::vector<std::string>& entries) {
     std::string top;
-    for (const std::string& entry : entries) {
+    for (std::string entry : entries) {
+        // Windows PowerShell 5.1 (Compress-Archive) schreibt Rueckstriche in
+        // die Eintragsnamen. Ohne das hier gaebe es keinen gemeinsamen Ordner,
+        // und das Update landete in einem Unterordner statt auf der .exe.
+        for (char& c : entry) {
+            if (c == '\\') c = '/';
+        }
         const std::size_t slash = entry.find('/');
         // Eine Datei ganz oben: kein gemeinsamer Ordner.
         if (slash == std::string::npos) return {};

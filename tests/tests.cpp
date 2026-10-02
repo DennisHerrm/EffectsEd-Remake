@@ -528,6 +528,13 @@ void testUpdate() {
     check(commonFolder({"efxed/efxed.exe", "efxed/LIESMICH.txt"}) == "efxed/", "gemeinsamer Ordner");
     check(commonFolder({"efxed.exe", "efxed/LIESMICH.txt"}).empty(), "Datei ganz oben: kein gemeinsamer");
     check(commonFolder({"a/x", "b/y"}).empty(), "zwei Ordner: kein gemeinsamer");
+    {
+        // So schreibt Compress-Archive aus Windows PowerShell 5.1 die Namen.
+        const std::vector<std::string> ps = {"EffectsEd-Remake\\efxed.exe", "EffectsEd-Remake\\LIESMICH.txt"};
+        const std::string top = commonFolder(ps);
+        check(top == "EffectsEd-Remake/", "Rueckstriche: gemeinsamer Ordner trotzdem erkannt");
+        check(targetInFolder(ps[0], top) == "efxed.exe", "Rueckstriche: die exe landet auf der exe, nicht im Unterordner");
+    }
     check(targetInFolder("efxed/efxed.exe", "efxed/") == "efxed.exe", "Ordner abgestreift");
     check(targetInFolder("efxed\\docs\\a.txt", "efxed/") == "docs/a.txt", "Rueckstriche zu Schraegstrichen");
     check(targetInFolder("efxed/", "efxed/").empty(), "Ordnereintrag uebersprungen");
