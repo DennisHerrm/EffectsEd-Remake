@@ -27,6 +27,8 @@ Ablauf eines Releases (siehe UEBERGABE.md, "Releases"):
         --notes-file <Notizen>.md
     gh release upload v<Fassung>-rev<NN> output/EffectsEd-Remake-win7-rev<NN>.zip \\
         -R DennisHerrm/EffectsEd-Remake-Releases
+    git tag -a v<Fassung>-rev<NN> -m "..." && git push origin v<Fassung>-rev<NN>
+    (und in die Notizen: Quelltext dieser Fassung -> .../EffectsEd-Remake/tree/v<Fassung>-rev<NN>)
 """
 import re
 import shutil
