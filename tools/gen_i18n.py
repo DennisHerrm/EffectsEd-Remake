@@ -672,6 +672,7 @@ S = [
  ("UpdErrDownload","Download failed: %s","Herunterladen fehlgeschlagen: %s","下载失败：%s","ダウンロードに失敗しました：%s"),
  ("UpdErrZip","The download is not a readable .zip: %s","Der Download ist kein lesbares .zip: %s","下载的文件不是可读取的 .zip：%s","ダウンロードしたファイルは読み取れる .zip ではありません：%s"),
  ("UpdErrWrite","Could not write %s. Is the program folder write-protected (e.g. under Program Files)?","%s ließ sich nicht schreiben. Ist der Programmordner schreibgeschützt (etwa unter Programme)?","无法写入 %s。程序文件夹是否受写保护（例如位于 Program Files 下）？","%s を書き込めませんでした。プログラムフォルダーが書き込み禁止になっていませんか（Program Files の下など）？"),
+ ("UpdErrTls","No secure connection to GitHub. On Windows 7 install the update KB3140245 (TLS 1.2) and try again.","Keine sichere Verbindung zu GitHub. Unter Windows 7 das Update KB3140245 (TLS 1.2) installieren und erneut versuchen.","无法与 GitHub 建立安全连接。在 Windows 7 上请安装更新 KB3140245（TLS 1.2）后重试。","GitHub に安全に接続できません。Windows 7 では更新プログラム KB3140245（TLS 1.2）をインストールしてから再試行してください。"),
  ("UpdErrReplace","Could not replace %s (error %lu).","%s ließ sich nicht ersetzen (Fehler %lu).","无法替换 %s（错误 %lu）。","%s を置き換えられませんでした（エラー %lu）。"),
 ]
 

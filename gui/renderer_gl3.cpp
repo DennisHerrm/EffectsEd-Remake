@@ -90,7 +90,7 @@ EFX_GL_FUNCS(EFX_DECL)
 const char* load() {
 #define EFX_LOAD(ret, name, args) \
     name = reinterpret_cast<ret(APIENTRY*) args>( \
-        wglGetProcAddress("gl" #name)); \
+        reinterpret_cast<void (*)()>(wglGetProcAddress("gl" #name))); \
     if (!name) return "gl" #name;
     EFX_GL_FUNCS(EFX_LOAD)
 #undef EFX_LOAD
@@ -160,7 +160,8 @@ public:
         // Rechenzeit in 5 s bei einem untaetigen, sichtbaren Fenster. Die
         // Erweiterung WGL_EXT_swap_control gibt es auf jedem Treiber seit
         // Windows XP; fehlt sie, bleibt es beim Verhalten des Treibers.
-        swapInterval_ = reinterpret_cast<SwapIntervalProc>(wglGetProcAddress("wglSwapIntervalEXT"));
+        swapInterval_ = reinterpret_cast<SwapIntervalProc>(
+            reinterpret_cast<void (*)()>(wglGetProcAddress("wglSwapIntervalEXT")));
 
         // Mindestens OpenGL 3.3 verlangen — darunter fehlen die
         // Vertexpuffer-Objekte, auf denen die ImGui-Anbindung aufsetzt.

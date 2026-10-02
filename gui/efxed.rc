@@ -18,7 +18,13 @@ IDI_APPICON ICON "efxed.ico"
 
 // Das Anwendungsmanifest (Ressource 1, Typ 24 = RT_MANIFEST). Was darin
 // steht und warum, steht in der Datei selbst.
+//
+// Nicht im MinGW-Bau (Windows-7-Fassung): dessen Linker haengt immer sein
+// eigenes Manifest an (default-manifest.o: asInvoker, longPathAware) und
+// bricht bei einem zweiten mit "multiple non-default manifests" ab.
+#ifndef __MINGW32__
 1 24 "efxed.manifest"
+#endif
 
 // Die Versionsangaben.
 //
@@ -32,8 +38,8 @@ IDI_APPICON ICON "efxed.ico"
 // hier ein zweites Mal, weil der Ressourcenuebersetzer kein C++ liest —
 // deshalb prueft tools/lint_version.py, dass sie nicht auseinanderlaufen.
 1 VERSIONINFO
-FILEVERSION     1,18,0,78
-PRODUCTVERSION     1,18,0,78
+FILEVERSION     1,18,0,79
+PRODUCTVERSION     1,18,0,79
 FILEFLAGSMASK   0x3fL
 FILEFLAGS       0x0L
 FILEOS          0x40004L    // VOS_NT_WINDOWS32
@@ -47,22 +53,22 @@ BEGIN
             VALUE "CompanyName",     "EffectsEd Remake (github.com/DennisHerrm/EffectsEd-Remake-Releases)"
             VALUE "FileDescription", "EffectsEd - Editor fuer Jedi-Academy-Effektdateien"
             VALUE "LegalCopyright",  "Nachbau 2026. Nicht verbunden mit Raven Software oder Lucasfilm."
-            VALUE "FileVersion",     "1.18.0-rev78"
+            VALUE "FileVersion",     "1.18.0-rev79"
             VALUE "InternalName",    "efxed"
             VALUE "OriginalFilename","efxed.exe"
             VALUE "ProductName",     "EffectsEd"
-            VALUE "ProductVersion",  "1.18.0-rev78"
+            VALUE "ProductVersion",  "1.18.0-rev79"
         END
         BLOCK "040904b0"    // Englisch, Unicode
         BEGIN
             VALUE "CompanyName",     "EffectsEd Remake (github.com/DennisHerrm/EffectsEd-Remake-Releases)"
             VALUE "FileDescription", "EffectsEd - editor for Jedi Academy effect files"
             VALUE "LegalCopyright",  "Remake 2026. Not affiliated with Raven Software or Lucasfilm."
-            VALUE "FileVersion",     "1.18.0-rev78"
+            VALUE "FileVersion",     "1.18.0-rev79"
             VALUE "InternalName",    "efxed"
             VALUE "OriginalFilename","efxed.exe"
             VALUE "ProductName",     "EffectsEd"
-            VALUE "ProductVersion",  "1.18.0-rev78"
+            VALUE "ProductVersion",  "1.18.0-rev79"
         END
     END
     BLOCK "VarFileInfo"

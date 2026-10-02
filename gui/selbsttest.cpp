@@ -1354,15 +1354,20 @@ public:
                 "{\"tag_name\": \"v1.18.0-rev99999\", \"name\": \"EffectsEd 1.18.0-rev99999\",\n"
                 " \"html_url\": \"https://github.com/x/y/releases/tag/v1.18.0-rev99999\",\n"
                 " \"body\": \"Neu:\\n- Updatetest\",\n"
-                " \"assets\": [{\"name\": \"efxed-test.zip\", \"size\": 100,\n"
+                " \"assets\": [{\"name\": \"efxed-test-win7.zip\", \"size\": 100,\n"
+                "   \"browser_download_url\": \"https://github.com/x/y/releases/download/v1/efxed-test-win7.zip\"},\n"
+                "  {\"name\": \"efxed-test.zip\", \"size\": 100,\n"
                 "   \"browser_download_url\": \"https://github.com/x/y/releases/download/v1/efxed-test.zip\"}]}";
             std::ofstream(quelle / "latest.json", std::ios::binary) << json;
-            const auto bytes = zipStored({{"efxed/LIESMICH-UPDATETEST.txt", "neue Fassung"},
-                                          {"efxed/efxed_settings.txt", "BOESE"},
-                                          {"efxed/../boese_updatetest.txt", "BOESE"}});
-            std::ofstream f(quelle / "efxed-test.zip", std::ios::binary);
-            f.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-            f.close();
+            // Zwei Pakete wie im echten Release, mit verschiedenem Inhalt:
+            // so zeigt die Pruefung unten, dass jede Fassung IHRES nimmt.
+            for (const bool win7 : {false, true}) {
+                const auto bytes = zipStored({{"efxed/LIESMICH-UPDATETEST.txt", win7 ? "neue Fassung win7" : "neue Fassung"},
+                                              {"efxed/efxed_settings.txt", "BOESE"},
+                                              {"efxed/../boese_updatetest.txt", "BOESE"}});
+                std::ofstream f(quelle / (win7 ? "efxed-test-win7.zip" : "efxed-test.zip"), std::ios::binary);
+                f.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+            }
             fs::remove(fs::path(programmOrdner()) / "LIESMICH-UPDATETEST.txt", ec);
             _putenv_s("EFXED_UPDATE_QUELLE", quelle.string().c_str());
             _putenv_s("EFXED_UPDATE_LOKAL", "1.18.0-rev77");
@@ -1391,7 +1396,12 @@ public:
             return z.state == updater::UpdatePhase::Installed && z.files == 1;
         }));
         s.push_back(pruefSchritt("die neue Datei liegt neben der .exe (Ordner im Paket abgestreift)", [] {
-            return liesDatei((fs::path(programmOrdner()) / "LIESMICH-UPDATETEST.txt").string()) == "neue Fassung";
+#if defined(__MINGW32__)
+            const char* erwartet = "neue Fassung win7";  // Windows-7-Fassung: nur das -win7-Paket
+#else
+            const char* erwartet = "neue Fassung";
+#endif
+            return liesDatei((fs::path(programmOrdner()) / "LIESMICH-UPDATETEST.txt").string()) == erwartet;
         }));
         s.push_back(pruefSchritt("die Einstellungen des Anwenders hat das Paket nicht angefasst", [] {
             return liesDatei((fs::path(programmOrdner()) / "efxed_settings.txt").string()) != "BOESE";

@@ -53,8 +53,17 @@ struct Release {
 // Seite: nein — lieber kein Update als ein falsches.
 [[nodiscard]] bool isNewer(const std::string& tag, const std::string& local);
 
-// Das erste .zip unter den Dateien des Releases, sonst nullptr.
-[[nodiscard]] const Asset* zipAsset(const Release& release);
+// Das Paket fuer diese Fassung, sonst nullptr.
+//
+// Ein Release traegt zwei: "EffectsEd-Remake-revNN.zip" (Windows 10/11, MSVC)
+// und "EffectsEd-Remake-revNN-win7.zip" (MinGW, laeuft ab Windows 7). Die
+// Windows-7-Fassung nimmt nur ihr eigenes Paket — die andere .exe startet
+// dort gar nicht, und ein Update, das das Programm zerstoert, ist schlimmer
+// als keins. Die normale Fassung nimmt das erste .zip ohne "-win7".
+//
+// Fassungen bis rev78 kennen das nicht und nehmen das ERSTE .zip; deshalb
+// wird das normale Paket zuerst hochgeladen.
+[[nodiscard]] const Asset* zipAsset(const Release& release, bool win7Build = false);
 
 // Der gemeinsame oberste Ordner aller Eintraege ("efxed/"), oder leer.
 [[nodiscard]] std::string commonFolder(const std::vector<std::string>& entries);

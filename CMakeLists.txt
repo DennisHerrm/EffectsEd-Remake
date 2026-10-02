@@ -180,16 +180,6 @@ if(WIN32)
      winhttp)
     target_include_directories(efxed PRIVATE gui)
 
-# Die aelteste Windows-Fassung, auf die gezielt wird.
-#
-# 0x0601 ist Windows 7. Der Nutzen liegt nicht darin, etwas zu erlauben,
-# sondern darin, dass der Uebersetzer neuere Aufrufe MELDET, statt sie
-# stillschweigend anzunehmen — man findet sie also beim Bauen und nicht auf
-# dem Rechner eines Benutzers.
-#
-# Achtung: Visual Studio 2026 kann trotzdem nicht auf Windows 7 zielen, das
-# ist eine Entscheidung von Microsoft. Fuer eine lauffaehige Windows-7-Fassung
-# braucht es MinGW-w64 oder ein aelteres Toolset — siehe WINDOWS7.md.
 # Haertung, auch gegen Fehlalarme von Virenscannern.
 #
 # Scanner bewerten unsignierte Programme unter anderem danach, ob sie die
@@ -210,6 +200,28 @@ if(MSVC)
         /PDBALTPATH:efxed.pdb)
 endif()
 
+# MinGW (Windows-7-Fassung, build_mingw.bat):
+#   -municode     der Einstieg ist wWinMain, nicht WinMain
+#   -s            Symbole entfernen (Release) — 8,5 statt 3 MB
+#   dwmapi imm32  ImGuis Win32-Ruecken holt sie unter MSVC per
+#                 #pragma comment(lib) — das kennt der GNU-Linker nicht
+#   --dynamicbase, --nxcompat, --high-entropy-va setzt binutils von sich aus
+#   (ab 2.36); der Pruefschritt in UEBERGABE.md liest sie aus der fertigen exe.
+if(MINGW)
+    target_link_options(efxed PRIVATE -municode $<$<CONFIG:Release>:-s>)
+    target_link_libraries(imgui PUBLIC dwmapi imm32)
+endif()
+
+# Die aelteste Windows-Fassung, auf die gezielt wird.
+#
+# 0x0601 ist Windows 7. Der Nutzen liegt nicht darin, etwas zu erlauben,
+# sondern darin, dass der Uebersetzer neuere Aufrufe MELDET, statt sie
+# stillschweigend anzunehmen — man findet sie also beim Bauen und nicht auf
+# dem Rechner eines Benutzers.
+#
+# Achtung: Visual Studio 2026 kann trotzdem nicht auf Windows 7 zielen, das
+# ist eine Entscheidung von Microsoft. Fuer eine lauffaehige Windows-7-Fassung
+# braucht es MinGW-w64 oder ein aelteres Toolset — siehe WINDOWS7.md.
 target_compile_definitions(efxed PRIVATE
     _WIN32_WINNT=0x0601
     WINVER=0x0601
