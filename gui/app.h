@@ -622,6 +622,9 @@ private:
     int lastAlive_ = 0;
     int lastScheduled_ = 0;
     int lastMarks_ = 0;
+    // Wie viele Zeichengruppen im letzten Bild das graue Ersatzkaestchen der
+    // Engine zeigen (Shader und Bild nicht gefunden). Fuer den Selbsttest.
+    int lastDefaultGroups_ = 0;
     // Wie lange Aufbau und Zeichnen der Teilchen im letzten Bild brauchten.
     float lastBuildMs_ = 0.0f;
     float lastDrawMs_ = 0.0f;
