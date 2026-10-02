@@ -190,6 +190,9 @@ public:
     struct Schritt {
         std::string text;
         std::function<bool(int)> tun;
+        // Der Schritt bringt seine eigene Zeitgrenze mit (warteSekunden); der
+        // allgemeine Waechter nach 6000 Bildern greift dann nicht.
+        bool eigeneFrist = false;
     };
 
     static App* app;
@@ -556,6 +559,26 @@ public:
                     }
                     return false;
                 }};
+    }
+    // Wie warteBis, aber nach der Uhr statt nach Bildern. Fuer alles, was am
+    // Netz haengt: ausserhalb des Bildschirms rechnet die Testkopie zehntausend
+    // Bilder je Sekunde, und "60000 Bilder" waren dann vier Sekunden.
+    static Schritt warteSekunden(const std::string& was, std::function<bool()> bedingung,
+                                 double maxSekunden) {
+        auto start = std::make_shared<std::chrono::steady_clock::time_point>();
+        Schritt s{"Warte bis " + was, [=](int b) {
+                    if (b == 0) *start = std::chrono::steady_clock::now();
+                    if (bedingung()) return true;
+                    const double vergangen =
+                        std::chrono::duration<double>(std::chrono::steady_clock::now() - *start).count();
+                    if (vergangen >= maxSekunden) {
+                        meldeFehler("Zeitueberschreitung: " + was);
+                        return true;
+                    }
+                    return false;
+                }};
+        s.eigeneFrist = true;
+        return s;
     }
     static Schritt pruefSchritt(const std::string& text, std::function<bool()> bedingung) {
         return {"Pruefe " + text, [=](int) {
@@ -1373,10 +1396,10 @@ public:
             _putenv_s("EFXED_UPDATE_LOKAL", "1.18.0-rev77");
         }));
         menue(s, Str::MenuHelp, Str::HelpCheckUpdates);
-        s.push_back(warteBis("Antwort ausgewertet", [] {
+        s.push_back(warteSekunden("Antwort ausgewertet", [] {
             const auto z = updater::status().state;
             return z != updater::UpdatePhase::Checking && z != updater::UpdatePhase::Idle;
-        }, 300));
+        }, 20.0));
         s.push_back(pruefSchritt("Hilfe > Nach Updates suchen: rev99999 ist neuer als rev77", [] {
             const auto z = updater::status();
             return z.state == updater::UpdatePhase::Available && z.release.tag == "v1.18.0-rev99999";
@@ -1386,10 +1409,10 @@ public:
         }));
         s.push_back(fensterFoto("update_verfuegbar"));
         s.push_back(klick(tr(Str::UpdInstall), "###update"));
-        s.push_back(warteBis("installiert", [] {
+        s.push_back(warteSekunden("installiert", [] {
             const auto z = updater::status().state;
             return z == updater::UpdatePhase::Installed || z == updater::UpdatePhase::Failed;
-        }, 300));
+        }, 20.0));
         s.push_back(pruefSchritt("Herunterladen und installieren: eine Datei ersetzt", [] {
             const auto z = updater::status();
             if (z.state != updater::UpdatePhase::Installed) diag::info("update test: " + z.message);
@@ -1421,10 +1444,10 @@ public:
         // Schon die neueste Fassung.
         s.push_back(tu("eigene Fassung = rev99999", [] { _putenv_s("EFXED_UPDATE_LOKAL", "1.18.0-rev99999"); }));
         menue(s, Str::MenuHelp, Str::HelpCheckUpdates);
-        s.push_back(warteBis("Antwort ausgewertet", [] {
+        s.push_back(warteSekunden("Antwort ausgewertet", [] {
             const auto z = updater::status().state;
             return z != updater::UpdatePhase::Checking && z != updater::UpdatePhase::Idle;
-        }, 300));
+        }, 20.0));
         s.push_back(pruefSchritt("gleiche Fassung: \"Das ist die neueste Fassung\", kein Installieren", [] {
             return updater::status().state == updater::UpdatePhase::Current &&
                    finde(tr(Str::UpdInstall), "###update") == nullptr &&
@@ -1438,10 +1461,10 @@ public:
             fs::remove(fs::path(arbeitsOrdner) / "updatequelle" / "latest.json", ec);
         }));
         menue(s, Str::MenuHelp, Str::HelpCheckUpdates);
-        s.push_back(warteBis("Antwort ausgewertet", [] {
+        s.push_back(warteSekunden("Antwort ausgewertet", [] {
             const auto z = updater::status().state;
             return z != updater::UpdatePhase::Checking && z != updater::UpdatePhase::Idle;
-        }, 300));
+        }, 20.0));
         s.push_back(pruefSchritt("ohne Release: verstaendliche Meldung statt Absturz", [] {
             const auto z = updater::status();
             return z.state == updater::UpdatePhase::Failed && z.message == tr(Str::UpdNoRelease);
@@ -1468,20 +1491,20 @@ public:
             _putenv_s("EFXED_UPDATE_LOKAL", "1.18.0-rev1");
         }));
         menue(s, Str::MenuHelp, Str::HelpCheckUpdates);
-        s.push_back(warteBis("GitHub antwortet", [] {
+        s.push_back(warteSekunden("GitHub antwortet", [] {
             const auto z = updater::status().state;
             return z != updater::UpdatePhase::Checking && z != updater::UpdatePhase::Idle;
-        }, 30000));
+        }, 60.0));
         s.push_back(pruefSchritt("GitHub: das neueste Release ist neuer als rev1", [] {
             const auto z = updater::status();
             diag::info("update test: " + z.release.tag + " " + z.message);
             return z.state == updater::UpdatePhase::Available && update::zipAsset(z.release) != nullptr;
         }));
         s.push_back(klick(tr(Str::UpdInstall), "###update"));
-        s.push_back(warteBis("geladen und installiert", [] {
+        s.push_back(warteSekunden("geladen und installiert", [] {
             const auto z = updater::status().state;
             return z == updater::UpdatePhase::Installed || z == updater::UpdatePhase::Failed;
-        }, 60000));
+        }, 180.0));
         s.push_back(pruefSchritt("das Release ist geladen und neben die .exe gelegt", [] {
             const auto z = updater::status();
             diag::info("update test: " + std::to_string(z.files) + " files " + z.message);
@@ -3206,7 +3229,7 @@ void selbsttestNachBild(App& app, render::Renderer* renderer) {
         if (tun(T::imSchritt)) {
             ++T::schritt;
             T::imSchritt = 0;
-        } else if (++T::imSchritt > 6000) {
+        } else if (++T::imSchritt > 6000 && !T::schritte[T::schritt].eigeneFrist) {
             T::meldeFehler(T::schritte[T::schritt].text + ": haengt");
             ++T::schritt;
             T::imSchritt = 0;
