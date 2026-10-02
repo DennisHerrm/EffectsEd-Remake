@@ -56,13 +56,15 @@ struct Release {
 // Das Paket fuer diese Fassung, sonst nullptr.
 //
 // Ein Release traegt zwei: "EffectsEd-Remake-revNN.zip" (Windows 10/11, MSVC)
-// und "EffectsEd-Remake-revNN-win7.zip" (MinGW, laeuft ab Windows 7). Die
+// und "EffectsEd-Remake-win7-revNN.zip" (MinGW, laeuft ab Windows 7). Die
 // Windows-7-Fassung nimmt nur ihr eigenes Paket — die andere .exe startet
 // dort gar nicht, und ein Update, das das Programm zerstoert, ist schlimmer
 // als keins. Die normale Fassung nimmt das erste .zip ohne "-win7".
 //
-// Fassungen bis rev78 kennen das nicht und nehmen das ERSTE .zip; deshalb
-// wird das normale Paket zuerst hochgeladen.
+// Fassungen bis rev78 kennen das nicht und nehmen das ERSTE .zip. GitHub
+// listet die Dateien eines Releases nach NAMEN, nicht nach Hochladezeit —
+// deshalb "-win7-" VOR der Revision: "...-rev79.zip" < "...-win7-rev79.zip".
+// Mit "...-rev79-win7.zip" stand das Windows-7-Paket vorn ('-' < '.').
 [[nodiscard]] const Asset* zipAsset(const Release& release, bool win7Build = false);
 
 // Der gemeinsame oberste Ordner aller Eintraege ("efxed/"), oder leer.

@@ -6,7 +6,7 @@ aus Jedi Academy, Jedi Outcast und Movie Duels.
 
 Starten:  efxed.exe  (64 Bit, keine Installation noetig)
           EffectsEd-Remake-revNN.zip       fuer Windows 10/11
-          EffectsEd-Remake-revNN-win7.zip  fuer Windows 7 SP1 und 8.1
+          EffectsEd-Remake-win7-revNN.zip  fuer Windows 7 SP1 und 8.1
 
 Spielpfad: Edit > Set Game Path... und den base-Ordner des Spiels waehlen,
 z. B. ...\Jedi Academy\GameData\base. Fuer Movie Duels den Mod-Ordner (MD)

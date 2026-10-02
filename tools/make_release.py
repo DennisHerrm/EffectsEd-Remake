@@ -2,7 +2,7 @@
 """Baut die Pakete fuer ein GitHub-Release.
 
     output/EffectsEd-Remake-revNN.zip        build/Release/efxed.exe (MSVC, Windows 10/11)
-    output/EffectsEd-Remake-revNN-win7.zip   build-mingw/efxed.exe   (MinGW, ab Windows 7)
+    output/EffectsEd-Remake-win7-revNN.zip   build-mingw/efxed.exe   (MinGW, ab Windows 7)
 
 Inhalt jeweils: EffectsEd-Remake/efxed.exe und EffectsEd-Remake/LIESMICH.txt
 (aus tools/release/). Die Revision kommt aus include/efx/version.h. Fehlt der
@@ -25,7 +25,7 @@ Ablauf eines Releases (siehe UEBERGABE.md, "Releases"):
     gh release create v<Fassung>-rev<NN> output/EffectsEd-Remake-rev<NN>.zip \\
         -R DennisHerrm/EffectsEd-Remake-Releases --title "EffectsEd-Remake <Fassung>-rev<NN>" \\
         --notes-file <Notizen>.md
-    gh release upload v<Fassung>-rev<NN> output/EffectsEd-Remake-rev<NN>-win7.zip \\
+    gh release upload v<Fassung>-rev<NN> output/EffectsEd-Remake-win7-rev<NN>.zip \\
         -R DennisHerrm/EffectsEd-Remake-Releases
 """
 import re
@@ -78,7 +78,7 @@ def main() -> int:
 
     win7 = ROOT / "build-mingw" / "efxed.exe"
     if win7.exists():
-        if not package(win7, out_dir / f"EffectsEd-Remake-rev{revision}-win7.zip", readme, full):
+        if not package(win7, out_dir / f"EffectsEd-Remake-win7-rev{revision}.zip", readme, full):
             return 1
         shutil.copy2(win7, out_dir / "efxed-win7.exe")
     else:
