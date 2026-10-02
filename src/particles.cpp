@@ -299,26 +299,29 @@ Axis axisFromDirection(const camera::Vec3& direction) {
     return out;
 }
 
+// Die Effektachse zu „Orient Up / Sideways / Down".
+//
+// Nur die Vorwaertsachse ist frei gewaehlt (+Z, +X, -Z). Rechts und oben
+// ergaenzt die Engine selbst: `CFxScheduler::PlayEffect( id, org, fwd )`
+//
+//     VectorCopy( forward, axis[0] );
+//     MakeNormalVectors( forward, axis[1], axis[2] );
+//
+// — genau axisFromDirection. Hier standen von Hand gewaehlte Achsen mit oben =
+// +Y bei „nach oben". MakeNormalVectors ergibt (0,-1,0): alles, was eine
+// Datei unter „Up" angibt (origin, velocity, acceleration, origin2), lag bei
+// uns gespiegelt — von der Kamera weg statt zu ihr hin. Bei „seitwaerts" und
+// „nach unten" war ausserdem rechts gespiegelt. Am Original nachgemessen
+// (Sonde zprobe/achsen): „Up" kommt zur Kamera.
 Axis axisFor(int orientation) {
-    Axis axis;
     switch (orientation) {
-        case 1:  // seitwaerts, auf der X-Achse
-            axis.forward = {1.0f, 0.0f, 0.0f};
-            axis.right = {0.0f, 1.0f, 0.0f};
-            axis.up = {0.0f, 0.0f, 1.0f};
-            break;
-        case 2:  // nach unten
-            axis.forward = {0.0f, 0.0f, -1.0f};
-            axis.right = {1.0f, 0.0f, 0.0f};
-            axis.up = {0.0f, -1.0f, 0.0f};
-            break;
-        default:  // nach oben
-            axis.forward = {0.0f, 0.0f, 1.0f};
-            axis.right = {1.0f, 0.0f, 0.0f};
-            axis.up = {0.0f, 1.0f, 0.0f};
-            break;
+        case 1:  // seitwaerts, auf der X-Achse: rechts (0,-1,0), oben (0,0,1)
+            return axisFromDirection({1.0f, 0.0f, 0.0f});
+        case 2:  // nach unten: rechts (-1,0,0), oben (0,-1,0)
+            return axisFromDirection({0.0f, 0.0f, -1.0f});
+        default:  // nach oben: rechts (1,0,0), oben (0,-1,0)
+            return axisFromDirection({0.0f, 0.0f, 1.0f});
     }
-    return axis;
 }
 
 void System::play(const Effect& effect, unsigned seed,
@@ -369,7 +372,13 @@ void System::play(const Effect& effect, unsigned seed,
     // pulsiert. Mit Generationen bei -d, -2d, ... ist der Bestand schon beim
     // ersten Bild eingeschwungen, und nach genau `repeatDelay` sieht er
     // wieder genauso aus. Damit laeuft die Vorschau nahtlos rund.
-    const float delay = static_cast<float>(effect.repeatDelay);
+    //
+    // Ohne `repeatDelay` in der Datei wiederholt die Engine alle 300 ms
+    // (effectiveRepeatDelay). Hier stand `effect.repeatDelay`, also 0 — ein
+    // Feuer ohne die Zeile (env/fire, env/fire_wall, ships/fire, ...) bekam
+    // keinen Vorlauf und lief in den Kacheln als einzelnes Aufflammen mit
+    // anschliessender Leere statt als stehendes Feuer.
+    const float delay = static_cast<float>(effectiveRepeatDelay(effect));
     if (buildUpRepeats && delay >= 1.0f && !live_.empty()) {
         const float longest = durationMs_;
         // So viele Generationen, bis die aelteste gerade ausgestorben ist.
@@ -956,25 +965,91 @@ void System::playInto(const Effect& effect, sim::Random& random,
                 if (!child) {
                     ++missingEffects_;
                 } else {
-                    // Die Bahn abschreiten und an jedem Schritt aussenden.
-                    // Feste Zeitschritte statt der Bildrate der Engine: sonst
-                    // haengt das Ergebnis davon ab, wie schnell der Rechner
-                    // ist, und die Vorschau sieht auf jedem Rechner anders aus.
-                    constexpr float kStepMs = 10.0f;
-                    camera::Vec3 last = item.positionAt(item.spawnMs);
-                    float step = density + random.range(-1.0f, 1.0f) * variance;
+                    // CEmitter::Draw, Schritt fuer Schritt nachgebaut — mit
+                    // festen 60 Bildern je Sekunde statt der Bildrate des
+                    // Rechners, damit die Vorschau ueberall gleich aussieht.
+                    //
+                    // Je Bild (Update setzt vorher mOldOrigin/mOldVelocity auf
+                    // den Stand vom Bildanfang):
+                    //
+                    //     step = density + flrand(-1,1) * variance;  step *= step;
+                    //     for ( t = mOldTime; t <= mTime; t += TRAIL_RATE ) {   // 8 ms
+                    //         dif += TRAIL_RATE;
+                    //         v = mOldVelocity + dif * 0.001 * mAccel;
+                    //         org = mOldOrigin + ftime * v + 0.5 * ftime^2 * v;
+                    //         (Physik: Strahl mOldOrigin -> org trifft -> return)
+                    //         if ( DistanceSquared( org, mOldOrigin ) >= step ) {
+                    //             PlayEffect( mEmitterFxID, org, mRefEnt.axis );
+                    //             mOldOrigin = org; mOldVelocity = v; dif = 0; mOldTime = t;
+                    //         }
+                    //     }
+                    //
+                    // Die Schleife beginnt bei der LETZTEN Aussendung, gemessen
+                    // wird aber ab der Lage am Bildanfang. Deshalb sendet die
+                    // Engine oefter aus, als `density` als Strecke vermuten
+                    // laesst. Hier stand ein Abschreiten der Bahn in 10-ms-
+                    // Schritten: bei schnellen Brocken (1000-1500 Einheiten je
+                    // Sekunde, density 20-30) kam nur etwa die Haelfte der
+                    // Rauch- und Feuerspuren heraus (ships/*_explosion: im
+                    // Original 170-290 lebende Primitive, bei uns 90-125).
+                    //
+                    // Der Kindeffekt beginnt im aktuellen Bild (PlayEffect
+                    // wirkt sofort), an der vorausgerechneten Stelle `org`, mit
+                    // den Achsen des Emitters: AnglesToAxis (vorwaerts, LINKS,
+                    // oben), bei useModel mit size skaliert (Draw: "ensure that
+                    // we are sized").
+                    constexpr float kFrameMs = 1000.0f / 60.0f;
+                    constexpr float kTrailRateMs = 8.0f;
+                    constexpr int kMaxEmitted = 256;
+                    const bool physics = (flags & kFlagApplyPhysics) != 0 && !planes.empty();
+                    const camera::Vec3 accel =
+                        item.acceleration + camera::Vec3{0.0f, 0.0f, item.gravity};
+                    const auto velocityAt = [&](float t) {
+                        // Aus der Bahn (mit Aufprallen) statt aus v0 + a*t.
+                        const float t0 = std::max(item.spawnMs, std::min(t, item.deathMs) - 1.0f);
+                        return (item.positionAt(t0 + 1.0f) - item.positionAt(t0)) * 1000.0f;
+                    };
+                    float oldTime = item.spawnMs;
                     int emitted = 0;
-                    for (float t = item.spawnMs; t < item.deathMs; t += kStepMs) {
-                        const camera::Vec3 at = item.positionAt(t);
-                        if (camera::length(at - last) >= std::fabs(step)) {
-                            playInto(*child, random, {}, ownContext, depth + 1, t, at);
-                            ++startedEffects_;
-                            last = at;
+                    for (float frame = item.spawnMs; frame < item.deathMs && emitted < kMaxEmitted;
+                         frame += kFrameMs) {
+                        const float previous = std::max(item.spawnMs, frame - kFrameMs);
+                        camera::Vec3 base = item.positionAt(previous);
+                        camera::Vec3 oldVelocity = velocityAt(previous);
+                        float step = density + random.range(-1.0f, 1.0f) * variance;
+                        float dif = 0.0f;
+                        for (float t = oldTime; t <= frame; t += kTrailRateMs) {
+                            dif += kTrailRateMs;
+                            const camera::Vec3 v = oldVelocity + accel * (dif * 0.001f);
+                            const float ftime = dif * 0.001f;
+                            const camera::Vec3 org = base + v * ftime + v * (ftime * ftime * 0.5f);
+                            if (physics && sim::trace(base, org, planes).hit) break;
+                            const camera::Vec3 moved = org - base;
+                            if (camera::dot(moved, moved) < step * step) continue;
                             step = density + random.range(-1.0f, 1.0f) * variance;
-                            // Eine Obergrenze: ein Emitter mit density 0.1 und
-                            // langer Lebensdauer wuerde sonst Tausende
-                            // Effekte starten und die Vorschau anhalten.
-                            if (++emitted >= 256) break;
+
+                            camera::Vec3 ax[3];
+                            anglesToAxis(item.anglesAt(frame), ax);
+                            if ((flags & kFlagAttachedModel) != 0) {
+                                const float scale = curve::evaluate(
+                                    item.size, frame, item.spawnMs, item.deathMs, item.sizeParm,
+                                    item.randomAt(Live::kRandomSize, frame));
+                                for (auto& a : ax) a = a * scale;
+                            }
+                            PlayContext emitContext = context;
+                            emitContext.axis.forward = ax[0];
+                            emitContext.axis.right = ax[1];
+                            emitContext.axis.up = ax[2];
+                            playInto(*child, random, {}, emitContext, depth + 1, frame, org);
+                            ++startedEffects_;
+
+                            base = org;
+                            oldVelocity = v;
+                            dif = 0.0f;
+                            oldTime = t;
+                            // Obergrenze: ein Emitter mit density 0.1 und langer
+                            // Lebensdauer wuerde sonst Tausende Effekte starten.
+                            if (++emitted >= kMaxEmitted) break;
                         }
                     }
                 }
@@ -1626,9 +1701,19 @@ uint32_t stageColour(const shader::Stage& stage, uint32_t entity, float seconds)
 // Das Bild einer Stufe zu ihrer Shaderzeit — map, clampMap, das gerade
 // gueltige Bild einer Bildfolge (RB_ComputeAnimatedImage), oder das
 // eingebaute weisse. Leer: die Stufe hat kein Bild und wird uebergangen.
-std::string stageImage(const shader::Stage& stage, float seconds, bool& clamp) {
+//
+// `levelClock`: die Primitive hat kein `setShaderTime`. Dann ist ihre
+// Shaderzeit die Uhr der Karte (refdef.floatTime - 0), und eine
+// `oneshotanimMap` ist dort laengst abgelaufen — R_BindAnimatedImage bleibt
+// auf dem LETZTEN Bild stehen ("stick on last frame"). Die Vorschau hat keine
+// Kartenuhr; sie spielte die Folge ab dem Effektstart ab und zeigte damit
+// eine Explosion, die im Spiel nie zu sehen ist (mace/leviathanexplosion,
+// ships/heavydmg: letztes Bild gfx/colors/black, additiv = unsichtbar).
+std::string stageImage(const shader::Stage& stage, float seconds, bool& clamp,
+                       bool levelClock = false) {
     clamp = false;
     if (!stage.animMaps.empty()) {
+        if (levelClock && stage.animOneShot) return stage.animMaps.back();
         const int frame = shader::animFrameAt(static_cast<int>(stage.animMaps.size()),
                                               stage.animFrequency, stage.animOneShot,
                                               seconds);
@@ -2293,7 +2378,8 @@ DrawList System::build(float nowMs, const camera::Vec3& right,
             for (size_t s = 0; s < def.stages.size(); ++s) {
                 const shader::Stage& stage = def.stages[s];
                 bool clamp = false;
-                const std::string image = stageImage(stage, shaderSeconds, clamp);
+                const std::string image = stageImage(stage, shaderSeconds, clamp,
+                                                        (item.flags & kFlagSetShaderTime) == 0);
                 if (image.empty()) continue;
                 DrawGroup& group = groups.get(item.shader, static_cast<int>(s),
                                               std::string(assets::kImagePrefix) + image, hacked);
@@ -2420,7 +2506,9 @@ DrawList System::build(float nowMs, const camera::Vec3& right,
                 for (size_t s = 0; s < def.stages.size(); ++s) {
                     const shader::Stage& stage = def.stages[s];
                     bool clamp = false;
-                    const std::string image = stageImage(stage, pending.shaderSeconds, clamp);
+                    const std::string image = stageImage(
+                        stage, pending.shaderSeconds, clamp,
+                        (item.flags & kFlagSetShaderTime) == 0);
                     if (image.empty()) continue;
                     DrawGroup& group = groups.get(name, static_cast<int>(s),
                                                   std::string(assets::kImagePrefix) + image);
