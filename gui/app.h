@@ -274,9 +274,20 @@ private:
                        float speed = 1.0f);
     bool editChannel(const char* id, const char* label, Channel& channel,
                      float speed = 1.0f);
-    bool editColorChannel(ColorChannel& channel);
+    bool editColorChannel(ColorChannel& channel, Primitive& primitive);
+    // Eine Liste wie im Original: Listenfeld, rechts daneben Ordner (Auswahl
+    // aus dem Bestand) und X (markierten Eintrag entfernen), auf Wunsch ein
+    // Lautsprecher. `width`: ganze Breite einschliesslich der Knoepfe.
+    // `describe` liefert den Kurzhinweis je Eintrag, `play` spielt einen ab.
     bool editStringList(const char* id, const char* label,
-                        std::vector<std::string>& list, const char* hint);
+                        std::vector<std::string>& list, const char* hint, float width = 0.0f,
+                        const std::function<std::string(const std::string&)>& describe = {},
+                        const std::function<void(const std::string&)>& play = {});
+    // Welcher Eintrag je Liste markiert ist, und welcher gerade getippt wird.
+    std::map<const void*, int> listSelection_;
+    const void* listEditing_ = nullptr;
+    int listEditRow_ = -1;
+    bool listEditFocus_ = false;
     bool editFlags(Primitive& primitive);
 
     // Ein Gruppenrahmen wie im Original: Titel oben links, Inhalt eingerueckt,

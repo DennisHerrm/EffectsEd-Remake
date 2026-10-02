@@ -55,19 +55,35 @@ namespace {
 struct Page {
     float x0 = 0.0f;      // linker Rand der Seite (Bildschirm)
     float label = 0.0f;   // Breite der Beschriftungsspalte
-    float field = 0.0f;   // Breite eines Zahlenfelds
+    float field = 0.0f;   // Breite eines Zahlenfelds (mit Pfeilen)
     float gap = 0.0f;
-    float right() const { return x0 + label + field * 2.0f + gap; }
+    float pad = 0.0f;     // Luft zwischen Max-Feld und rechter Rahmenlinie
+    // Rechte Rahmenkante: hinter dem Max-Feld. Vorher lag sie einen Abstand
+    // zu weit links und schnitt durch die Pfeile des Max-Felds.
+    float right() const { return x0 + label + gap * 2.0f + field * 2.0f + pad; }
 };
 Page g_page;
 
 void beginPage() {
-    const float avail = ImGui::GetContentRegionAvail().x;
+    // Wie im Original: Beschriftung rechtsbuendig, zwei schmale Felder mit
+    // Pfeilen, alles innerhalb der Rahmen. Die Felder wachsen nicht mehr bis
+    // zum Rand (das Original hat feste Breiten); die Bildlaufleiste ist
+    // eingerechnet, damit nichts springt, wenn sie erscheint.
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float avail = ImGui::GetContentRegionAvail().x - style.ScrollbarSize;
     const float em = ImGui::GetFontSize();
     g_page.x0 = ImGui::GetCursorScreenPos().x;
-    g_page.gap = ImGui::GetStyle().ItemSpacing.x;
-    g_page.label = std::clamp(avail * 0.40f, em * 6.0f, em * 10.0f);
-    g_page.field = std::max(em * 3.5f, (avail - g_page.label - g_page.gap * 2.0f) * 0.5f);
+    g_page.gap = style.ItemSpacing.x;
+    g_page.pad = em * 0.6f;
+    g_page.label = std::clamp(avail * 0.36f, em * 6.0f, em * 9.0f);
+    g_page.field = std::clamp((avail - g_page.label - g_page.gap * 2.0f - g_page.pad) * 0.5f,
+                              em * 4.0f, em * 6.5f);
+}
+
+// Breite einer Liste im Rahmen: von der Einrueckung bis zur rechten Kante.
+float listWidth() {
+    return std::max(ImGui::GetFontSize() * 8.0f,
+                    g_page.right() - g_page.pad - ImGui::GetCursorScreenPos().x);
 }
 
 float minX() { return g_page.x0 + g_page.label + g_page.gap; }
@@ -345,6 +361,19 @@ bool rowsVector(const char* id, Vec3Range& v, Str a, Str b, Str c, float fallbac
 bool flagBox(const char* label, uint32_t& bits, uint32_t mask, bool invert = false,
              const char* mark = nullptr) {
     bool on = ((bits & mask) != 0) != invert;
+    // Passt die Beschriftung nicht mehr bis zur rechten Rahmenkante, rueckt
+    // der Haken nach links, statt ueber den Rahmen zu laufen ("Set effect
+    // axis to offset direc..." in schmalen Spalten).
+    {
+        const ImGuiStyle& style = ImGui::GetStyle();
+        const ImVec2 at = ImGui::GetCursorScreenPos();
+        const float needed = ImGui::GetFrameHeight() + style.ItemInnerSpacing.x +
+                             ImGui::CalcTextSize(label, nullptr, true).x;
+        const float limit = g_page.right() - g_page.pad;
+        if (at.x + needed > limit && at.x > g_page.x0) {
+            ImGui::SetCursorScreenPos(ImVec2(std::max(g_page.x0 + ImGui::GetFontSize() * 0.6f, limit - needed), at.y));
+        }
+    }
     const bool clicked = ImGui::Checkbox(label, &on);
     if (mark) testmarke::marke(mark);
     if (clicked) {
@@ -417,22 +446,18 @@ bool randomBox(int& flags, std::vector<std::string>& words) {
     return clicked;
 }
 
-// Eine Kurvengruppe: Haekchen im Titel, Start, End, Transition, Parameter,
-// Zufall. End ist nur bei einem Uebergang belegbar, Parameter nur bei
-// nonlinear/wave/clamp — wie im Original.
+// Eine Kurvengruppe: Start, End, Transition, Parameter, Zufall. End ist nur
+// bei einem Uebergang belegbar, Parameter nur bei nonlinear/wave/clamp —
+// wie im Original. Ohne Haken im Titel (das Original hat keinen): wer ein
+// Feld anfasst, nimmt die Gruppe in die Datei; unberuehrt zeigt sie grau die
+// Vorgaben der Engine.
 bool channelGroup(const char* id, Str title, Channel& c, Str startLabel, Str endLabel,
                   float fallback, float speed, bool enabled = true) {
     ImGui::PushID(id);
     testmarke::Bereich bereich(id);
     bool changed = false;
     if (!enabled) ImGui::BeginDisabled();
-    bool present = c.present;
-    bool toggled = false;
-    const bool open = frameBegin("frame", tr(title), &present, &toggled);
-    if (toggled) {
-        c.present = present;
-        changed = true;
-    }
+    const bool open = frameBegin("frame", tr(title));
     changed |= rowRange("start", tr(startLabel), c.start, fallback, speed);
     const bool hasTransition = (c.curveFlags & (kCurveClamp | kCurveLinear)) != 0;
     ImGui::BeginDisabled(!hasTransition && (c.curveFlags & kCurveRandom) == 0);
@@ -449,7 +474,7 @@ bool channelGroup(const char* id, Str title, Channel& c, Str startLabel, Str end
     frameEnd(open);
     if (!enabled) ImGui::EndDisabled();
     // Wer ein Feld anfasst, will die Gruppe auch in der Datei haben.
-    if (changed && !toggled) c.present = true;
+    if (changed) c.present = true;
     ImGui::PopID();
     return changed;
 }
@@ -563,23 +588,23 @@ bool colourRow(const char* id, Str label, Vec3Range& v) {
 
 }  // namespace
 
-bool App::editColorChannel(ColorChannel& c) {
+bool App::editColorChannel(ColorChannel& c, Primitive& p) {
+    // Aufbau wie die Color-Seite des Originals: Start, End, "Pick start/end
+    // in color cube", Transition, Parameter, Zufall, "Modulate RGB value
+    // using alpha value" — alles in EINEM Rahmen, ohne Haken im Titel.
     ImGui::PushID("rgb");
     testmarke::Bereich bereich("rgb");
     bool changed = false;
-    bool present = c.present;
-    bool toggled = false;
-    const bool open = frameBegin("frame", tr(Str::GroupRgbColor), &present, &toggled);
-    if (toggled) {
-        c.present = present;
-        changed = true;
-    }
-    minMaxHeader();
+    const bool open = frameBegin("frame", tr(Str::GroupRgbColor));
     changed |= colourRow("start", Str::FieldStartColor, c.start);
     const bool hasTransition = (c.curveFlags & (kCurveClamp | kCurveLinear)) != 0;
     ImGui::BeginDisabled(!hasTransition && (c.curveFlags & kCurveRandom) == 0);
     changed |= colourRow("end", Str::FieldEndColor, c.end);
     ImGui::EndDisabled();
+    ImGui::SetCursorScreenPos(ImVec2(minX(), ImGui::GetCursorScreenPos().y));
+    // Wie Modulate: ein Schalter der Primitive, keine Aenderung der Farbkurve.
+    const bool cube = flagBox(tr(Str::ColorPickCube), p.spawnFlags, kSpawnRgbComponentInterp, true,
+                              "farbwuerfel");
     changed |= transitionRow(c.curveFlags, c.curveWords);
     ImGui::BeginDisabled((c.curveFlags & kCurveClamp) == 0);
     {
@@ -588,10 +613,16 @@ bool App::editColorChannel(ColorChannel& c) {
     }
     ImGui::EndDisabled();
     changed |= randomBox(c.curveFlags, c.curveWords);
+    // Modulate steht im selben Rahmen, gehoert aber nicht zur Farbkurve: es
+    // macht die Gruppe nicht "vorhanden".
+    ImGui::BeginDisabled(!fields::applies(p.type, fields::Field::Alpha));
+    const bool modulate = flagBox(tr(Str::ColorModulateAlpha), p.flags, kFlagUseAlpha, true,
+                                  "modulate");
+    ImGui::EndDisabled();
     frameEnd(open);
-    if (changed && !toggled) c.present = true;
+    if (changed) c.present = true;
     ImGui::PopID();
-    return changed;
+    return changed || modulate || cube;
 }
 
 void App::drawProperties(float width, float height) {
@@ -656,27 +687,50 @@ void App::drawProperties(float width, float height) {
                 }
             }
             first = false;
+            // Wie ein Reiter im Eigenschaftsblatt: der gewaehlte hat die
+            // Farbe der Seite und keine Unterkante, die anderen liegen etwas
+            // tiefer und dunkler.
             const bool active = tab == propertyTab_;
-            ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(
-                                                        active ? ImGuiCol_TabSelected : ImGuiCol_Tab));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-                                  ImGui::GetStyleColorVec4(ImGuiCol_TabHovered));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive,
-                                  ImGui::GetStyleColorVec4(ImGuiCol_TabSelected));
             ImGui::PushID(fields::tabName(tab));
-            if (ImGui::Button(text, ImVec2(w, 0.0f))) propertyTab_ = tab;
+            const float h = ImGui::GetFrameHeight();
+            if (ImGui::InvisibleButton(text, ImVec2(w, h))) propertyTab_ = tab;
+            const bool hot = ImGui::IsItemHovered();
+            const ImVec2 a = ImGui::GetItemRectMin();
+            const ImVec2 b = ImGui::GetItemRectMax();
+            const float lift = active ? 0.0f : std::round(h * 0.12f);
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const ImU32 fill = ImGui::GetColorU32(active ? ImGuiCol_ChildBg
+                                                  : hot  ? ImGuiCol_TabHovered
+                                                         : ImGuiCol_Tab);
+            dl->AddRectFilled(ImVec2(a.x, a.y + lift), b, active ? ImGui::GetColorU32(ImGuiCol_WindowBg) : fill,
+                              style.TabRounding, ImDrawFlags_RoundCornersTop);
+            const ImU32 edge = ImGui::GetColorU32(ImGuiCol_Border);
+            dl->AddLine(ImVec2(a.x, b.y), ImVec2(a.x, a.y + lift), edge);
+            dl->AddLine(ImVec2(a.x, a.y + lift), ImVec2(b.x, a.y + lift), edge);
+            dl->AddLine(ImVec2(b.x, a.y + lift), ImVec2(b.x, b.y), edge);
+            if (!active) dl->AddLine(ImVec2(a.x, b.y - 1.0f), ImVec2(b.x, b.y - 1.0f), edge);
+            const ImVec2 ts = ImGui::CalcTextSize(text);
+            dl->AddText(ImVec2(a.x + (w - ts.x) * 0.5f, a.y + lift * 0.5f + (h - ts.y) * 0.5f),
+                        ImGui::GetColorU32(active ? ImGuiCol_Text : ImGuiCol_TextDisabled), text);
             ImGui::PopID();
-            ImGui::PopStyleColor(3);
             x = ImGui::GetItemRectMax().x;
         }
         ImGui::PopID();
         ImGui::Separator();
     }
+    // Kompakt wie die Win32-Seite des Originals: niedrige Felder, kleine
+    // Haken und Optionsknoepfe. Vorher hatten Haken die volle Feldhoehe des
+    // Themas und wirkten wie Knoepfe.
+    const float em = ImGui::GetFontSize();
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(std::round(em * 0.35f), std::round(em * 0.12f)));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(std::round(em * 0.45f), std::round(em * 0.32f)));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemInnerSpacing, ImVec2(std::round(em * 0.35f), std::round(em * 0.25f)));
     ImGui::BeginChild("tabbody", ImVec2(0, 0), ImGuiChildFlags_None,
                       ImGuiWindowFlags_HorizontalScrollbar);
     beginPage();
     drawTab(propertyTab_, p);
     ImGui::EndChild();
+    ImGui::PopStyleVar(3);
 
     ImGui::EndChild();
 }
@@ -765,7 +819,7 @@ void App::drawTab(fields::Tab tab, Primitive& p) {
                     changed = true;
                 }
                 ImGui::BeginDisabled(!on);
-                changed |= editStringList("deathfx", "", p.deathFx, "");
+                changed |= editStringList("deathfx", "", p.deathFx, "", listWidth());
                 ImGui::EndDisabled();
                 frameEnd(open);
             }
@@ -773,10 +827,20 @@ void App::drawTab(fields::Tab tab, Primitive& p) {
 
             // Alles, was das Original nicht als Haekchen kennt (MP-Flags,
             // seltene Bits) — fuer Fortgeschrittene, eingeklappt.
-            if (ImGui::CollapsingHeader(tr(Str::PropAdvancedFlags))) {
+            // efxed-Zusaetze am Seitenende, unauffaellig: das Original hat sie
+            // nicht. Vorher ein breiter Balken und ein Hinweis, der rechts
+            // abgeschnitten wurde und eine waagerechte Bildlaufleiste erzwang.
+            ImGui::Dummy(ImVec2(0.0f, ImGui::GetTextLineHeight() * 0.5f));
+            if (ImGui::TreeNode(tr(Str::PropAdvancedFlags))) {
                 changed |= editFlags(p);
+                ImGui::TreePop();
             }
-            ImGui::TextDisabled("%s", tr(Str::PropDefaultHint));
+            // Fensterkoordinaten, nicht Bildschirm (PushTextWrapPos).
+            ImGui::PushTextWrapPos(g_page.right() - ImGui::GetWindowPos().x + ImGui::GetScrollX());
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            ImGui::TextWrapped("%s", tr(Str::PropDefaultHint));
+            ImGui::PopStyleColor();
+            ImGui::PopTextWrapPos();
             break;
         }
 
@@ -790,9 +854,8 @@ void App::drawTab(fields::Tab tab, Primitive& p) {
                 ImGui::SetCursorScreenPos(ImVec2(minX(), ImGui::GetCursorScreenPos().y));
                 changed |= flagBox(tr(Str::OriginRelativeAxis), p.spawnFlags, kSpawnCheapOrgCalc,
                                    true, "origin/relativ");
-                frameEnd(open);
-            }
-            // Besondere Verteilung: Kugel oder Zylinder.
+            // Besondere Verteilung: Kugel oder Zylinder — im Original IM
+            // Origin-Rahmen, unter "Relative to effect axis".
             const bool canSpecial = applies(fields::Field::Radius) || applies(fields::Field::Height) ||
                                     type == PrimitiveType::Particle;
             ImGui::BeginDisabled(type == PrimitiveType::ScreenFlash || type == PrimitiveType::Light ||
@@ -839,6 +902,8 @@ void App::drawTab(fields::Tab tab, Primitive& p) {
                 ImGui::EndDisabled();
             }
             ImGui::EndDisabled();
+                frameEnd(open);
+            }
 
             {
                 const SpinScope spin(1.0f, 0.0f);
@@ -952,7 +1017,7 @@ void App::drawTab(fields::Tab tab, Primitive& p) {
                 }
                 testmarke::marke("impact/an");
                 ImGui::BeginDisabled(!play);
-                changed |= editStringList("impactfx", "", p.impactFx, "");
+                changed |= editStringList("impactfx", "", p.impactFx, "", listWidth());
                 ImGui::EndDisabled();
                 frameEnd(open);
             }
@@ -997,33 +1062,32 @@ void App::drawTab(fields::Tab tab, Primitive& p) {
                 ImGui::Separator();
             }
             if (applies(fields::Field::Shaders)) {
+                // Wie im Original: Liste mit Ordner und X, darunter im selben
+                // Rahmen "Set Shader Time for animating textures".
                 const bool open = frameBegin("shadersFrame", tr(Str::FieldShaders));
-                changed |= editStringList("shaders", "", p.shaders, "gfx/");
-                // Welche Mischung jeder Shader hat — das Original sagt es nicht,
-                // und ohne das ist "warum ist mein Rauch so hell" nicht zu klaeren.
-                for (const std::string& name : p.shaders) {
+                // Welche Mischung jeder Shader hat — das Original sagt es
+                // nicht; bei uns als Kurzhinweis am Eintrag.
+                const auto describe = [this](const std::string& name) {
                     const bool known = assets_.hasShader(name);
                     const shader::BlendMode mode = assets_.blendOf(name);
-                    const char* modeText =
-                        mode == shader::BlendMode::Additive    ? tr(Str::BlendAdditive)
-                        : mode == shader::BlendMode::AlphaBlend ? tr(Str::BlendAlpha)
-                                                                : tr(Str::BlendOpaque);
-                    const theme::Palette& pal = activeTheme(settings_).palette;
-                    ImGui::TextColored(toImGui(known ? pal.textDim : pal.warning), "%s: %s%s%s",
-                                       name.c_str(), modeText, known ? "" : " - ",
-                                       known ? "" : tr(Str::ShaderFallback));
-                }
-                frameEnd(open);
+                    std::string text = name + ": ";
+                    text += mode == shader::BlendMode::Additive    ? tr(Str::BlendAdditive)
+                            : mode == shader::BlendMode::AlphaBlend ? tr(Str::BlendAlpha)
+                                                                    : tr(Str::BlendOpaque);
+                    if (!known) {
+                        text += " - ";
+                        text += tr(Str::ShaderFallback);
+                    }
+                    return text;
+                };
+                changed |= editStringList("shaders", "", p.shaders, "gfx/", listWidth(), describe);
                 changed |= flagBox(tr(Str::ColorShaderTime), p.flags, kFlagSetShaderTime, false,
                                    "shadertime");
+                frameEnd(open);
             }
-            changed |= editColorChannel(p.rgb);
-            changed |= flagBox(tr(Str::ColorPickCube), p.spawnFlags, kSpawnRgbComponentInterp, true,
-                               "farbwuerfel");
-            ImGui::BeginDisabled(!applies(fields::Field::Alpha));
-            changed |= flagBox(tr(Str::ColorModulateAlpha), p.flags, kFlagUseAlpha, true,
-                               "modulate");
             minMaxHeader();
+            changed |= editColorChannel(p.rgb, p);
+            ImGui::BeginDisabled(!applies(fields::Field::Alpha));
             {
                 const SpinScope spin(0.1f, 0.0f, 1.0f);
                 changed |= channelGroup("alpha", Str::GroupAlphaTransparency, p.alpha, Str::FieldStartAlpha,
@@ -1071,7 +1135,7 @@ void App::drawTab(fields::Tab tab, Primitive& p) {
                 }
                 testmarke::marke("endfx/an");
                 ImGui::BeginDisabled(!traceFx);
-                changed |= editStringList("impactfx", "", p.impactFx, "");
+                changed |= editStringList("impactfx", "", p.impactFx, "", listWidth());
                 ImGui::EndDisabled();
                 frameEnd(open);
             }
@@ -1129,7 +1193,7 @@ void App::drawTab(fields::Tab tab, Primitive& p) {
             {
                 const bool open = frameBegin("modelsFrame", tr(Str::FieldModels));
                 changed |= flagBox(tr(Str::ModelAttach), p.flags, kFlagAttachedModel, false, "attach");
-                changed |= editStringList("models", "", p.models, "models/");
+                changed |= editStringList("models", "", p.models, "models/", listWidth());
                 frameEnd(open);
             }
             break;
@@ -1147,7 +1211,7 @@ void App::drawTab(fields::Tab tab, Primitive& p) {
                 }
                 testmarke::marke("emit/an");
                 ImGui::BeginDisabled(!emit);
-                changed |= editStringList("emitfx", "", p.emitFx, "");
+                changed |= editStringList("emitfx", "", p.emitFx, "", listWidth());
                 ImGui::EndDisabled();
                 frameEnd(open);
             }
@@ -1159,33 +1223,12 @@ void App::drawTab(fields::Tab tab, Primitive& p) {
 
         // --- Sound ----------------------------------------------------------------
         case fields::Tab::Sound: {
+            // Wie im Original: Liste mit Ordner, X und Lautsprecher.
             const bool open = frameBegin("soundsFrame", tr(Str::FieldSounds));
-            changed |= editStringList("sounds", "", p.sounds, "sound/");
+            changed |= editStringList("sounds", "", p.sounds, "sound/", listWidth(), {},
+                                      [this](const std::string& name) { playSoundNow(name); });
             frameEnd(open);
-            if (ImGui::Button(tr(Str::SoundBrowse)) && fileDialog_) {
-                const std::string picked = fileDialog_(
-                    false, "Sound files (*.wav; *.mp3)\0*.wav;*.mp3\0All files\0*.*\0",
-                    settings_.gamePath.c_str());
-                if (!picked.empty()) {
-                    const std::string relative = toGameRelative(picked);
-                    if (relative.empty()) {
-                        diag::warn("sound outside game path: " + picked);
-                    } else {
-                        p.sounds.push_back(relative);
-                        changed = true;
-                    }
-                }
-            }
-            ImGui::SameLine();
-            const bool empty = p.sounds.empty();
-            ImGui::BeginDisabled(empty);
-            if (ImGui::Button(tr(Str::SoundPlay)) && !empty) playSoundNow(p.sounds.front());
-            ImGui::EndDisabled();
-            if (empty) {
-                ImGui::SameLine();
-                ImGui::TextDisabled("%s", tr(Str::SoundPlayNone));
-            } else if (!settings_.playSounds) {
-                ImGui::SameLine();
+            if (!p.sounds.empty() && !settings_.playSounds) {
                 ImGui::TextDisabled("%s", tr(Str::SoundPlayOff));
             }
             break;
@@ -1196,7 +1239,7 @@ void App::drawTab(fields::Tab tab, Primitive& p) {
             changed |= flagBox(tr(Str::FxRunnerRandomRotation), p.spawnFlags, kSpawnRandRotAroundFwd,
                                false, "randrot");
             const bool open = frameBegin("spawned", tr(Str::GroupSpawnedEffects));
-            changed |= editStringList("playfx", "", p.playFx, "");
+            changed |= editStringList("playfx", "", p.playFx, "", listWidth());
             frameEnd(open);
             break;
         }

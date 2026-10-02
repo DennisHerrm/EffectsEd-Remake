@@ -131,6 +131,15 @@ void draw(const Canvas& c, Icon icon) {
         case Icon::Play:
             c.triangle(0.30f, 0.18f, 0.30f, 0.82f, 0.82f, 0.50f);
             break;
+        case Icon::Speaker:
+            c.filled(0.16f, 0.38f, 0.32f, 0.62f);
+            c.triangle(0.32f, 0.38f, 0.54f, 0.18f, 0.54f, 0.82f);
+            c.triangle(0.32f, 0.38f, 0.54f, 0.82f, 0.32f, 0.62f);
+            c.line(0.66f, 0.36f, 0.72f, 0.50f);
+            c.line(0.72f, 0.50f, 0.66f, 0.64f);
+            c.line(0.76f, 0.24f, 0.86f, 0.50f);
+            c.line(0.86f, 0.50f, 0.76f, 0.76f);
+            break;
         case Icon::Pause:
             c.filled(0.28f, 0.20f, 0.44f, 0.80f);
             c.filled(0.56f, 0.20f, 0.72f, 0.80f);

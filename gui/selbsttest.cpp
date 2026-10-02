@@ -2055,10 +2055,8 @@ public:
         s.push_back(taste(ImGuiKey_Z, true));
         s.push_back(pruefSchritt("Auswahl ist rueckgaengig machbar",
                                  [] { return gewaehlt() && gewaehlt()->shaders.empty(); }));
-        // Farbknopf: die zwanzig Felder des Originals, Rot waehlen. Erst
-        // "RGB Color" anhaken — ohne Haken sind die Knoepfe gesperrt.
-        s.push_back(klickMarke("rgb/an"));
-        s.push_back(pruefSchritt("RGB Color angehakt", [] { return gewaehlt() && gewaehlt()->rgb.present; }));
+        // Farbknopf: die zwanzig Felder des Originals, Rot waehlen. Ohne
+        // Haken im Titel (wie im Original): die Knoepfe sind gleich bedienbar.
         s.push_back(klickMarke("rgb/start/farbe_min"));
         s.push_back(warte(2));
         s.push_back(fensterFoto("farbwahl_palette"));
@@ -2067,13 +2065,11 @@ public:
         s.push_back(pruefSchritt("Farbfeld Rot (255,0,0) setzt die Startfarbe und schliesst", [] {
             const auto& c = gewaehlt()->rgb.start;
             return gewaehlt() && c.set && c.min[0] == 1.0f && c.min[1] == 0.0f && c.min[2] == 0.0f &&
-                   !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
+                   gewaehlt()->rgb.present && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);
         }));
         s.push_back(taste(ImGuiKey_Z, true));
-        s.push_back(pruefSchritt("Farbwahl ist rueckgaengig machbar",
-                                 [] { return gewaehlt() && !gewaehlt()->rgb.start.set; }));
-        s.push_back(taste(ImGuiKey_Z, true));
-        s.push_back(pruefSchritt("und der Haken auch", [] { return gewaehlt() && !gewaehlt()->rgb.present; }));
+        s.push_back(pruefSchritt("Farbwahl ist rueckgaengig machbar (Farbe und Gruppe)",
+                                 [] { return gewaehlt() && !gewaehlt()->rgb.start.set && !gewaehlt()->rgb.present; }));
         // Teure Physik: Rueckfrage, Nein laesst es aus, Ja schaltet ein.
         s.push_back(klick(tr(Str::TabPhysics), "properties"));
         s.push_back(warteBis("Reiter Physics", [] { return app->propertyTab_ == fields::Tab::Physics; }, 30));
@@ -2713,7 +2709,9 @@ public:
                         if (e.marke.size() < 5 || e.marke.substr(e.marke.size() - 5) != "/dazu") continue;
                         const std::string liste = e.marke.substr(0, e.marke.size() - 5);
                         std::vector<Schritt> a;
-                        a.push_back(klickMarke(e.marke));
+                        // Doppelklick auf die freie Flaeche der Liste legt
+                        // einen Eintrag zum Eintippen an.
+                        a.push_back(klickMarke(e.marke, 0, true));
                         a.push_back(warte(2));
                         mitAenderung(neu, reiter + ": " + liste + " Eintrag dazu", std::move(a));
                         std::vector<Schritt> b2;
