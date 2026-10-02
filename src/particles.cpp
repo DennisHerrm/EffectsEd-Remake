@@ -299,26 +299,29 @@ Axis axisFromDirection(const camera::Vec3& direction) {
     return out;
 }
 
+// Die Effektachse zu „Orient Up / Sideways / Down".
+//
+// Nur die Vorwaertsachse ist frei gewaehlt (+Z, +X, -Z). Rechts und oben
+// ergaenzt die Engine selbst: `CFxScheduler::PlayEffect( id, org, fwd )`
+//
+//     VectorCopy( forward, axis[0] );
+//     MakeNormalVectors( forward, axis[1], axis[2] );
+//
+// — genau axisFromDirection. Hier standen von Hand gewaehlte Achsen mit oben =
+// +Y bei „nach oben". MakeNormalVectors ergibt (0,-1,0): alles, was eine
+// Datei unter „Up" angibt (origin, velocity, acceleration, origin2), lag bei
+// uns gespiegelt — von der Kamera weg statt zu ihr hin. Bei „seitwaerts" und
+// „nach unten" war ausserdem rechts gespiegelt. Am Original nachgemessen
+// (Sonde zprobe/achsen): „Up" kommt zur Kamera.
 Axis axisFor(int orientation) {
-    Axis axis;
     switch (orientation) {
-        case 1:  // seitwaerts, auf der X-Achse
-            axis.forward = {1.0f, 0.0f, 0.0f};
-            axis.right = {0.0f, 1.0f, 0.0f};
-            axis.up = {0.0f, 0.0f, 1.0f};
-            break;
-        case 2:  // nach unten
-            axis.forward = {0.0f, 0.0f, -1.0f};
-            axis.right = {1.0f, 0.0f, 0.0f};
-            axis.up = {0.0f, -1.0f, 0.0f};
-            break;
-        default:  // nach oben
-            axis.forward = {0.0f, 0.0f, 1.0f};
-            axis.right = {1.0f, 0.0f, 0.0f};
-            axis.up = {0.0f, 1.0f, 0.0f};
-            break;
+        case 1:  // seitwaerts, auf der X-Achse: rechts (0,-1,0), oben (0,0,1)
+            return axisFromDirection({1.0f, 0.0f, 0.0f});
+        case 2:  // nach unten: rechts (-1,0,0), oben (0,-1,0)
+            return axisFromDirection({0.0f, 0.0f, -1.0f});
+        default:  // nach oben: rechts (1,0,0), oben (0,-1,0)
+            return axisFromDirection({0.0f, 0.0f, 1.0f});
     }
-    return axis;
 }
 
 void System::play(const Effect& effect, unsigned seed,

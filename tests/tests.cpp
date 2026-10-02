@@ -4738,6 +4738,39 @@ void testParticles() {
         // Ein unbekannter Wert faellt auf "nach oben" zurueck statt auf null.
         check(efx::camera::length(axisFor(99).forward) > 0.9f,
               "ein unbekannter Wert ergibt trotzdem eine gueltige Achse");
+
+        // Rechts und oben baut die Engine mit MakeNormalVectors
+        // (CFxScheduler::PlayEffect( id, org, fwd )). Am Original mit der
+        // Sonde zprobe/achsen in allen drei Ausrichtungen nachgemessen.
+        const auto near = [](const efx::camera::Vec3& a, float x, float y, float z) {
+            return std::fabs(a.x - x) < 1e-5f && std::fabs(a.y - y) < 1e-5f &&
+                   std::fabs(a.z - z) < 1e-5f;
+        };
+        check(near(axisFor(0).right, 1, 0, 0) && near(axisFor(0).up, 0, -1, 0),
+              "nach oben: rechts +X, oben -Y (zur Kamera hin) wie MakeNormalVectors");
+        check(near(axisFor(1).right, 0, -1, 0) && near(axisFor(1).up, 0, 0, 1),
+              "seitwaerts: rechts -Y, oben +Z");
+        check(near(axisFor(2).right, -1, 0, 0) && near(axisFor(2).up, 0, -1, 0),
+              "nach unten: rechts -X, oben -Y");
+        const Axis plain;
+        check(near(plain.up, 0, -1, 0) && near(plain.right, 1, 0, 0),
+              "die Vorgabe-Achse (Kacheln) ist dieselbe wie nach oben");
+
+        // Ein Teilchen mit `origin 0 0 25` ("oben" 25) steht naeher an der
+        // Kamera (y < 0), nicht dahinter.
+        efx::Effect upOffset;
+        upOffset.primitives.push_back(efx::Primitive{});
+        efx::Primitive& u = upOffset.primitives.back();
+        u.type = efx::PrimitiveType::Particle;
+        u.life = efx::Range::single(1000.0f);
+        u.origin.set = true;
+        u.origin.min = {0.0f, 0.0f, 25.0f};
+        u.origin.max = u.origin.min;
+        System offsetSystem;
+        offsetSystem.play(upOffset, 1, {}, axisFor(0));
+        const auto placed = offsetSystem.live()[0].positionAt(0.0f);
+        check(std::fabs(placed.y + 25.0f) < 1e-4f && std::fabs(placed.z) < 1e-4f,
+              "origin 0 0 25 liegt bei y = -25");
     }
 
     // --- Gruppierung nach Shader -----------------------------------------
