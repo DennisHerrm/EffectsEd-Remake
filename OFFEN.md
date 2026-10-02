@@ -42,6 +42,14 @@ Geprüft wird mit drei Läufen, alle grün:
   (Maßstab war der Singleplayer-Renderer `rd`).
 - **Klangausgabe** ist im Selbsttest nur bis zum Auslösen geprüft, nicht das
   Hören.
+- **Code-Signatur:** die exe ist gehärtet (Manifest, CFG, CET, VERSIONINFO,
+  kein Bau-Pfad), aber nicht signiert. SmartScreen warnt deshalb bei jeder
+  neuen Fassung, bis sie genug Downloads hat. Abhilfe nur mit Zertifikat
+  (OV/EV oder Azure Trusted Signing). Meldet Defender eine Fassung als Virus:
+  unter https://www.microsoft.com/wdsi/filesubmission als „Fehlalarm“
+  einreichen.
+- **Selbsttest-Teil `updatenetz`** braucht Netz und ein veröffentlichtes
+  Release; er läuft deshalb nicht in `alles`.
 
 ## Ergebnisse des Bildvergleichs mit dem Original
 
