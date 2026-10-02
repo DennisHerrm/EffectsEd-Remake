@@ -383,4 +383,17 @@ struct Effect {
     std::vector<ForeignGroup> foreignGroups;
 };
 
+// Der Abstand, in dem die Engine einen wiederholten Effekt nachlegt.
+//
+// Ohne `repeatDelay` in der Datei sind es 300 ms, nicht null:
+// CFxScheduler::GetNewEffectTemplate setzt `effect->mRepeatDelay = 300`, und
+// nur eine `repeatDelay`-Zeile ueberschreibt das. 263 der 648 Dateien von
+// Movie Duels haben keine — darunter env/fire, env/fire_wall, ships/fire und
+// die emitter/flames*. `repeatDelay` (das Feld) bleibt, was in der Datei
+// steht; das hier ist, was die Engine daraus macht.
+inline constexpr int kDefaultRepeatDelayMs = 300;
+inline int effectiveRepeatDelay(const Effect& effect) {
+    return effect.repeatDelaySet ? effect.repeatDelay : kDefaultRepeatDelayMs;
+}
+
 }  // namespace efx
