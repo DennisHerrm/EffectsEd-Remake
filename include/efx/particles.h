@@ -315,10 +315,17 @@ struct DrawList {
 //
 // Ohne sie liegt der Effekt immer so, wie er in der Datei steht, und man
 // müsste jede Zahl umrechnen, um ihn von der Seite zu sehen.
+//
+// Die Vorgabe ist, was die Engine fuer „vorwaerts = +Z" baut:
+// `PlayEffect( id, org, fwd )` (FxScheduler.cpp) ergaenzt die beiden anderen
+// mit MakeNormalVectors — rechts (1,0,0), oben (0,-1,0). Oben zeigt also zur
+// Kamera des Editors hin, nicht von ihr weg. Am Original nachgemessen: ein
+// Teilchen mit `origin 0 0 25` steht naeher an der Kamera (groesser) als eins
+// im Ursprung.
 struct Axis {
     camera::Vec3 forward{0.0f, 0.0f, 1.0f};
     camera::Vec3 right{1.0f, 0.0f, 0.0f};
-    camera::Vec3 up{0.0f, 1.0f, 0.0f};
+    camera::Vec3 up{0.0f, -1.0f, 0.0f};
 };
 
 // 0 nach oben, 1 seitwärts, 2 nach unten — wie die Einstellung.
