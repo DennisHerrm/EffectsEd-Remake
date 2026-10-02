@@ -1447,6 +1447,50 @@ public:
         return s;
     }
 
+    // Der echte Weg ueber GitHub — nicht in "alles", weil er Netz braucht und
+    // die .exe der Testkopie durch das Release ersetzt. Die Testkopie gibt
+    // sich als rev1 aus, findet also jedes Release neuer.
+    static std::vector<Schritt> teilUpdateNetz() {
+        std::vector<Schritt> s;
+        s.push_back(teil("updatenetz"));
+        s.push_back(tu("eigene Fassung = rev1, echte Quelle", [] {
+            _putenv_s("EFXED_UPDATE_QUELLE", "");
+            _putenv_s("EFXED_UPDATE_LOKAL", "1.18.0-rev1");
+        }));
+        menue(s, Str::MenuHelp, Str::HelpCheckUpdates);
+        s.push_back(warteBis("GitHub antwortet", [] {
+            const auto z = updater::status().state;
+            return z != updater::UpdatePhase::Checking && z != updater::UpdatePhase::Idle;
+        }, 30000));
+        s.push_back(pruefSchritt("GitHub: das neueste Release ist neuer als rev1", [] {
+            const auto z = updater::status();
+            diag::info("update test: " + z.release.tag + " " + z.message);
+            return z.state == updater::UpdatePhase::Available && update::zipAsset(z.release) != nullptr;
+        }));
+        s.push_back(klick(tr(Str::UpdInstall), "###update"));
+        s.push_back(warteBis("geladen und installiert", [] {
+            const auto z = updater::status().state;
+            return z == updater::UpdatePhase::Installed || z == updater::UpdatePhase::Failed;
+        }, 60000));
+        s.push_back(pruefSchritt("das Release ist geladen und neben die .exe gelegt", [] {
+            const auto z = updater::status();
+            diag::info("update test: " + std::to_string(z.files) + " files " + z.message);
+            return z.state == updater::UpdatePhase::Installed && z.files >= 1;
+        }));
+        s.push_back(pruefSchritt("die laufende .exe wurde beiseitegelegt (.alt) und ersetzt", [] {
+            wchar_t p[MAX_PATH] = {};
+            GetModuleFileNameW(nullptr, p, MAX_PATH);
+            std::error_code ec;
+            const fs::path exe(p);
+            fs::path alt = exe;
+            alt += L".alt";
+            return fs::exists(alt, ec) && fs::exists(exe, ec) && fs::file_size(exe, ec) > 100000;
+        }));
+        s.push_back(klick(tr(Str::UpdLater), "###update"));
+        s.push_back(tu("aufraeumen", [] { _putenv_s("EFXED_UPDATE_LOKAL", ""); }));
+        return s;
+    }
+
     static std::vector<Schritt> teilArchiv() {
         std::vector<Schritt> s;
         s.push_back(teil("archiv"));
@@ -2999,6 +3043,7 @@ public:
         // Nicht in "alles": dauert mit allen Effekten mehrere Minuten.
         const Teil extra[] = {
             {"darstellung", &teilDarstellung},
+            {"updatenetz", &teilUpdateNetz},
         };
         std::vector<Schritt> s;
         for (const Teil& t : teile) {

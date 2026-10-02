@@ -44,7 +44,7 @@ BEGIN
     BEGIN
         BLOCK "040704b0"    // Deutsch, Unicode
         BEGIN
-            VALUE "CompanyName",     "EffectsEd Remake (github.com/DennisHerrm/EffectsEd-Remake)"
+            VALUE "CompanyName",     "EffectsEd Remake (github.com/DennisHerrm/EffectsEd-Remake-Releases)"
             VALUE "FileDescription", "EffectsEd - Editor fuer Jedi-Academy-Effektdateien"
             VALUE "LegalCopyright",  "Nachbau 2026. Nicht verbunden mit Raven Software oder Lucasfilm."
             VALUE "FileVersion",     "1.18.0-rev78"
@@ -55,7 +55,7 @@ BEGIN
         END
         BLOCK "040904b0"    // Englisch, Unicode
         BEGIN
-            VALUE "CompanyName",     "EffectsEd Remake (github.com/DennisHerrm/EffectsEd-Remake)"
+            VALUE "CompanyName",     "EffectsEd Remake (github.com/DennisHerrm/EffectsEd-Remake-Releases)"
             VALUE "FileDescription", "EffectsEd - editor for Jedi Academy effect files"
             VALUE "LegalCopyright",  "Remake 2026. Not affiliated with Raven Software or Lucasfilm."
             VALUE "FileVersion",     "1.18.0-rev78"

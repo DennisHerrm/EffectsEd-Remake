@@ -18,9 +18,10 @@
 
 namespace efx::update {
 
-// Das OEFFENTLICHE Repository, aus dem die Updates kommen. Darin liegen nur
+// Das OEFFENTLICHE Repository, aus dem die Updates kommen (Muster wie beim
+// BehavEd-Nachbau: Quelltext privat, "-Releases" oeffentlich). Darin liegen nur
 // die fertigen Programme; jeder bekommt sie ohne GitHub-Konto.
-inline constexpr const char* kRepo = "DennisHerrm/EffectsEd-Remake";
+inline constexpr const char* kRepo = "DennisHerrm/EffectsEd-Remake-Releases";
 
 struct Asset {
     std::string name;         // "efxed-1.18.0-rev78.zip"
