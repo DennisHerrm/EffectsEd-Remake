@@ -107,6 +107,7 @@ std::string Settings::toIni() const {
     out << "showPlaybackToolbar=" << (showPlaybackToolbar ? 1 : 0) << "\n";
     out << "showWorldToolbar=" << (showWorldToolbar ? 1 : 0) << "\n";
     out << "resetRepeatRate=" << (resetRepeatRateOnStart ? 1 : 0) << "\n";
+    out << "checkUpdates=" << (checkUpdates ? 1 : 0) << "\n";
     out << "openLibraryOnStart=" << (openLibraryOnStart ? 1 : 0) << "\n";
     out << "segmentRowHeight=" << segmentRowHeight << "\n";
     out << "preRoll=" << (preRoll ? 1 : 0) << "\n";
@@ -193,6 +194,7 @@ Settings Settings::fromIni(const std::string& text) {
         else if (key == "showPlaybackToolbar") s.showPlaybackToolbar = toBool();
         else if (key == "showWorldToolbar") s.showWorldToolbar = toBool();
         else if (key == "resetRepeatRate") s.resetRepeatRateOnStart = toBool();
+        else if (key == "checkUpdates") s.checkUpdates = toBool();
         else if (key == "openLibraryOnStart") s.openLibraryOnStart = toBool();
         else if (key == "segmentRowHeight") s.segmentRowHeight = toFloat();
         else if (key == "preRoll") s.preRoll = toBool();

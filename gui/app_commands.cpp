@@ -193,6 +193,8 @@ void App::drawSaveChangesDialog() {
         ImGui::IsKeyPressed(ImGuiKey_Escape)) {
         pendingClose_ = -1;
         pendingQuit_ = false;
+        // Wer das Beenden abbricht, bricht auch den Neustart fuer das Update ab.
+        restartForUpdate_ = false;
         ImGui::CloseCurrentPopup();
     }
     ImGui::EndPopup();

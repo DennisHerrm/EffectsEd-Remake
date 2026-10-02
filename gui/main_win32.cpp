@@ -35,6 +35,7 @@
 
 #include "app.h"
 #include "selbsttest.h"
+#include "update.h"
 #include "efx/diag.h"
 #include "efx/i18n.h"
 #include "efx/jobs.h"
@@ -1187,6 +1188,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR commandLine, int) {
         nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     efx::diag::info(SUCCEEDED(comReady) ? "COM ready" : "COM unavailable");
 
+    // Nach einem Update: warten, bis die alte Instanz ihre Einstellungen
+    // fertig geschrieben hat — sonst liest diese hier den halben Stand.
+    if (commandLine && *commandLine) {
+        efx::gui::updater::waitForPredecessor(toUtf8(commandLine));
+    }
+
     efx::gui::App app;
 
     app.startup();
@@ -1205,8 +1212,14 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR commandLine, int) {
         if (path.size() >= 2 && path.front() == '"' && path.back() == '"') {
             path = path.substr(1, path.size() - 2);
         }
-        app.openFile(path);
+        // Nach einem Update startet die alte Fassung die neue mit
+        // "--nach-update=<pid>". Das ist keine Datei; gewartet wurde schon
+        // vor startup() (siehe oben).
+        if (path.rfind("--nach-update=", 0) != 0) app.openFile(path);
     }
+    // Reste eines frueheren Updates wegraeumen und — wenn eingeschaltet —
+    // im Hintergrund nachsehen, ob es eine neuere Fassung gibt.
+    efx::gui::updater::atStartup(app.settings().checkUpdates);
 
     efx::render::Backend preferred = efx::render::Backend::Direct3D11;
     efx::render::backendFromCode(app.settings().rendererCode, preferred);
@@ -1231,6 +1244,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR commandLine, int) {
     }
 
     app.shutdown();
+    // "Jetzt neu starten" im Update-Fenster: die Einstellungen sind
+    // geschrieben, jetzt die neue Fassung starten.
+    if (app.restartForUpdate()) efx::gui::updater::launchNewVersion();
     if (SUCCEEDED(comReady)) CoUninitialize();
     efx::diag::close();
     return 0;

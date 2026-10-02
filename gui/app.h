@@ -102,6 +102,8 @@ public:
 
     // Der Nutzer hat Beenden gewaehlt oder das Fenster geschlossen.
     bool wantsQuit() const { return wantsQuit_; }
+    // Nach dem Beenden die frisch installierte Fassung starten.
+    bool restartForUpdate() const { return restartForUpdate_; }
     // Muss gerade jedes Bild gezeichnet werden? Nein, wenn nichts laeuft,
     // nichts weht, nichts laedt — dann darf die Hauptschleife auf die
     // naechste Eingabe warten.
@@ -570,6 +572,7 @@ private:
     // hundertmal da.
 
     bool wantsQuit_ = false;
+    bool restartForUpdate_ = false;
     bool rendererChangePending_ = false;
     render::Backend rendererTarget_ = render::Backend::Direct3D11;
 

@@ -33,6 +33,8 @@
 #include "efx/diag.h"
 #include "efx/jobs.h"
 #include "efx/md3.h"
+#include "efx/update.h"
+#include "efx/version.h"
 #include <map>
 #include <numeric>
 #include <set>
@@ -463,6 +465,80 @@ void testWindIsDead() {
         check(d.id != efx::i18n::Str::VWindDead,
               "ohne Wind keine Windmeldung");
     }
+}
+
+void testUpdate() {
+    std::cout << "== Auto-Updater (ohne Netz) ==\n";
+    using namespace efx::update;
+
+    // Eine echte, gekuerzte Antwort von /releases/latest — mit verschachtelten
+    // Objekten (uploader), damit der Leser nicht beim ersten "}" aufhoert.
+    const std::string json = R"({
+      "url": "https://api.github.com/repos/x/y/releases/1",
+      "html_url": "https://github.com/x/y/releases/tag/v1.18.0-rev78",
+      "tag_name": "v1.18.0-rev78",
+      "name": "EffectsEd 1.18.0-rev78",
+      "draft": false, "prerelease": false, "id": 123,
+      "author": {"login": "DennisHerrm", "site_admin": false},
+      "assets": [
+        {"name": "notes.txt", "size": 10, "uploader": {"login": "a"},
+         "browser_download_url": "https://github.com/x/y/releases/download/v1/notes.txt"},
+        {"name": "efxed-1.18.0-rev78.ZIP", "size": 2345678, "uploader": {"login": "a"},
+         "browser_download_url": "https://github.com/x/y/releases/download/v1/efxed.zip"}
+      ],
+      "body": "Neu:\n- \"Flammen\" \u00fcberarbeitet \ud83d\udd25\n- Pfad C:\\Spiele"
+    })";
+    Release r;
+    std::string error;
+    check(parseRelease(json, r, &error), "Release-Antwort gelesen");
+    check(r.tag == "v1.18.0-rev78", "tag_name");
+    check(r.name == "EffectsEd 1.18.0-rev78", "name");
+    check(r.htmlUrl == "https://github.com/x/y/releases/tag/v1.18.0-rev78", "html_url");
+    check(r.assets.size() == 2, "zwei Dateien im Release");
+    check(r.body.find("\"Flammen\" \xC3\xBC" "berarbeitet") != std::string::npos,
+          "Notizen: Anfuehrungszeichen und \\u00fc als UTF-8");
+    check(r.body.find("\xF0\x9F\x94\xA5") != std::string::npos, "Notizen: Ersatzpaar (Emoji) als UTF-8");
+    check(r.body.find("C:\\Spiele") != std::string::npos, "Notizen: Rueckstrich");
+    const Asset* zip = zipAsset(r);
+    check(zip != nullptr && zip->name == "efxed-1.18.0-rev78.ZIP", "das .zip gefunden (Grossschreibung egal)");
+    check(zip != nullptr && zip->size == 2345678, "Groesse des .zip");
+    check(zip != nullptr && zip->downloadUrl.find("efxed.zip") != std::string::npos, "Download-Adresse");
+
+    Release none;
+    check(!parseRelease(R"({"message": "Not Found", "status": "404"})", none, &error) && error == "Not Found",
+          "Fehlerantwort: GitHubs Meldung kommt durch");
+    check(!parseRelease("{\"tag_name\": \"v1\"", none, &error), "abgeschnittenes JSON abgelehnt");
+    check(!parseRelease("[1,2]", none, &error), "eine Liste ist kein Release");
+    check(!parseRelease(std::string(200, '[') + std::string(200, ']'), none, &error),
+          "zu tief verschachtelt abgelehnt (kein Stapelueberlauf)");
+    Release noZip;
+    check(parseRelease(R"({"tag_name": "rev5", "assets": []})", noZip) && zipAsset(noZip) == nullptr,
+          "Release ohne .zip: keins gefunden");
+
+    check(revisionOf("v1.18.0-rev78") == 78, "Revision aus dem Tag");
+    check(revisionOf("1.18.0-REV9") == 9, "Revision: Grossschreibung egal");
+    check(revisionOf("v1.18.0") == -1, "ohne rev keine Revision");
+    check(revisionOf("rev") == -1, "rev ohne Zahl");
+    check(isNewer("v1.18.0-rev78", efx::versionWithRevision()) == (78 > efx::kRevision),
+          "Vergleich gegen die eigene Fassung");
+    check(isNewer("v1.18.0-rev100", "1.18.0-rev99"), "rev100 ist neuer als rev99 (Zahl, nicht Text)");
+    check(!isNewer("v1.19.0-rev77", "1.18.0-rev77"), "gleiche Revision: kein Update");
+    check(!isNewer("v2.0.0", "1.18.0-rev77"), "Tag ohne Revision: lieber kein Update");
+
+    check(commonFolder({"efxed/efxed.exe", "efxed/LIESMICH.txt"}) == "efxed/", "gemeinsamer Ordner");
+    check(commonFolder({"efxed.exe", "efxed/LIESMICH.txt"}).empty(), "Datei ganz oben: kein gemeinsamer");
+    check(commonFolder({"a/x", "b/y"}).empty(), "zwei Ordner: kein gemeinsamer");
+    check(targetInFolder("efxed/efxed.exe", "efxed/") == "efxed.exe", "Ordner abgestreift");
+    check(targetInFolder("efxed\\docs\\a.txt", "efxed/") == "docs/a.txt", "Rueckstriche zu Schraegstrichen");
+    check(targetInFolder("efxed/", "efxed/").empty(), "Ordnereintrag uebersprungen");
+    check(targetInFolder("../evil.exe", "").empty(), "'..' uebersprungen");
+    check(targetInFolder("a/../../evil.exe", "").empty(), "'..' in der Mitte uebersprungen");
+    check(targetInFolder("/abs.exe", "").empty(), "absoluter Pfad uebersprungen");
+    check(targetInFolder("C:/Windows/x.dll", "").empty(), "Laufwerkspfad uebersprungen");
+    check(targetInFolder("efxed_settings.txt", "").empty(), "Einstellungen des Anwenders bleiben");
+    check(targetInFolder("efxed/EFXED_PORTABLE.TXT", "efxed/").empty(), "Schalter fuer tragbar bleibt");
+    check(targetInFolder("efxed_start.log", "").empty() && targetInFolder("x/crash.log", "").empty(),
+          "Protokolle bleiben");
 }
 
 void testGamePathFromFile() {
@@ -13791,6 +13867,7 @@ int main(int argc, char** argv) {
     testNumberText();
     testDiagnosticSegment();
     testGamePathFromFile();
+    testUpdate();
     testFlags();
     testTolerance();
     testKnownRavenBugs();

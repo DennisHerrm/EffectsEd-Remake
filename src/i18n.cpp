@@ -586,6 +586,33 @@ const Entry kTable[] = {
     {"Save", "Speichern", "保存", "保存"},  // SaveChangesYes
     {"Don't Save", "Nicht speichern", "不保存", "保存しない"},  // SaveChangesNo
     {"Screenshot copied to clipboard", "Bildschirmfoto in der Zwischenablage", "截图已复制到剪贴板", "スクリーンショットをクリップボードにコピーしました"},  // MsgScreenshotClipboard
+    {"Check for Updates...", "Nach Updates suchen...", "检查更新...", "更新を確認..."},  // HelpCheckUpdates
+    {"Check for Updates at Startup", "Beim Start nach Updates suchen", "启动时检查更新", "起動時に更新を確認"},  // HelpUpdateOnStart
+    {"Update", "Update", "更新", "更新"},  // UpdTitle
+    {"Installed: %s", "Installiert: %s", "已安装：%s", "インストール済み：%s"},  // UpdInstalled
+    {"Asking GitHub for a newer version...", "Frage GitHub nach einer neueren Fassung...", "正在向 GitHub 查询新版本...", "GitHub で新しいバージョンを確認しています..."},  // UpdChecking
+    {"This is the newest version.", "Das ist die neueste Fassung.", "已是最新版本。", "最新バージョンです。"},  // UpdCurrent
+    {"New version available: %s", "Neue Fassung verfügbar: %s", "有新版本：%s", "新しいバージョンがあります：%s"},  // UpdAvailable
+    {"What's new:", "Neu darin:", "更新内容：", "変更点："},  // UpdNotes
+    {"Installed (%d files). Restart to use the new version.", "Installiert (%d Dateien). Nach dem Neustart läuft die neue Fassung.", "已安装（%d 个文件）。重新启动后使用新版本。", "インストールしました（%d ファイル）。再起動すると新しいバージョンになります。"},  // UpdDone
+    {"Update failed: %s", "Update fehlgeschlagen: %s", "更新失败：%s", "更新に失敗しました：%s"},  // UpdError
+    {"Download and Install", "Herunterladen und installieren", "下载并安装", "ダウンロードしてインストール"},  // UpdInstall
+    {"Restart Now", "Jetzt neu starten", "立即重新启动", "今すぐ再起動"},  // UpdRestart
+    {"Check Again", "Erneut prüfen", "重新检查", "再確認"},  // UpdRetry
+    {"Open Release Page", "Release-Seite öffnen", "打开发布页面", "リリースページを開く"},  // UpdOpenPage
+    {"Later", "Später", "稍后", "後で"},  // UpdLater
+    {"Update %s available", "Update %s verfügbar", "有可用更新 %s", "更新 %s があります"},  // UpdStatusAvail
+    {"Update installed - restart to use it", "Update installiert - Neustart nötig", "更新已安装 - 需要重新启动", "更新をインストールしました - 再起動が必要です"},  // UpdStatusDone
+    {"There is no release on GitHub yet.", "Auf GitHub gibt es noch kein Release.", "GitHub 上还没有发布版本。", "GitHub にはまだリリースがありません。"},  // UpdNoRelease
+    {"GitHub refused the request (too many requests from this network?). Try again later.", "GitHub hat die Anfrage abgelehnt (zu viele Anfragen aus diesem Netz?). Später erneut versuchen.", "GitHub 拒绝了请求（此网络请求过多？）。请稍后再试。", "GitHub がリクエストを拒否しました（このネットワークからのリクエストが多すぎる？）。後でもう一度お試しください。"},  // UpdNoAccess
+    {"The release contains no .zip file.", "Das Release enthält keine .zip-Datei.", "该发布版本不包含 .zip 文件。", "リリースに .zip ファイルがありません。"},  // UpdNoZip
+    {"No connection to %s.", "Keine Verbindung zu %s.", "无法连接到 %s。", "%s に接続できません。"},  // UpdErrConnect
+    {"%s did not answer (error %lu).", "%s antwortet nicht (Fehler %lu).", "%s 没有响应（错误 %lu）。", "%s から応答がありません（エラー %lu）。"},  // UpdErrNoAnswer
+    {"Unexpected answer from GitHub (HTTP %d): %s", "Unerwartete Antwort von GitHub (HTTP %d): %s", "GitHub 返回了意外的响应（HTTP %d）：%s", "GitHub から予期しない応答がありました（HTTP %d）：%s"},  // UpdErrBadAnswer
+    {"Download failed: %s", "Herunterladen fehlgeschlagen: %s", "下载失败：%s", "ダウンロードに失敗しました：%s"},  // UpdErrDownload
+    {"The download is not a readable .zip: %s", "Der Download ist kein lesbares .zip: %s", "下载的文件不是可读取的 .zip：%s", "ダウンロードしたファイルは読み取れる .zip ではありません：%s"},  // UpdErrZip
+    {"Could not write %s. Is the program folder write-protected (e.g. under Program Files)?", "%s ließ sich nicht schreiben. Ist der Programmordner schreibgeschützt (etwa unter Programme)?", "无法写入 %s。程序文件夹是否受写保护（例如位于 Program Files 下）？", "%s を書き込めませんでした。プログラムフォルダーが書き込み禁止になっていませんか（Program Files の下など）？"},  // UpdErrWrite
+    {"Could not replace %s (error %lu).", "%s ließ sich nicht ersetzen (Fehler %lu).", "无法替换 %s（错误 %lu）。", "%s を置き換えられませんでした（エラー %lu）。"},  // UpdErrReplace
 };
 
 static_assert(sizeof(kTable) / sizeof(kTable[0]) == static_cast<size_t>(Str::Count),

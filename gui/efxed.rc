@@ -16,6 +16,10 @@
 
 IDI_APPICON ICON "efxed.ico"
 
+// Das Anwendungsmanifest (Ressource 1, Typ 24 = RT_MANIFEST). Was darin
+// steht und warum, steht in der Datei selbst.
+1 24 "efxed.manifest"
+
 // Die Versionsangaben.
 //
 // Was das bringt — und was nicht: SmartScreen nimmt es NICHT weg, dafuer
@@ -40,7 +44,9 @@ BEGIN
     BEGIN
         BLOCK "040704b0"    // Deutsch, Unicode
         BEGIN
+            VALUE "CompanyName",     "EffectsEd Remake (github.com/DennisHerrm/EffectsEd-Remake)"
             VALUE "FileDescription", "EffectsEd - Editor fuer Jedi-Academy-Effektdateien"
+            VALUE "LegalCopyright",  "Nachbau 2026. Nicht verbunden mit Raven Software oder Lucasfilm."
             VALUE "FileVersion",     "1.18.0-rev77"
             VALUE "InternalName",    "efxed"
             VALUE "OriginalFilename","efxed.exe"
@@ -49,7 +55,9 @@ BEGIN
         END
         BLOCK "040904b0"    // Englisch, Unicode
         BEGIN
+            VALUE "CompanyName",     "EffectsEd Remake (github.com/DennisHerrm/EffectsEd-Remake)"
             VALUE "FileDescription", "EffectsEd - editor for Jedi Academy effect files"
+            VALUE "LegalCopyright",  "Remake 2026. Not affiliated with Raven Software or Lucasfilm."
             VALUE "FileVersion",     "1.18.0-rev77"
             VALUE "InternalName",    "efxed"
             VALUE "OriginalFilename","efxed.exe"

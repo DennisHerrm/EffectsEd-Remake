@@ -64,6 +64,7 @@ add_library(efxcore STATIC
     src/timeline.cpp
     src/tiles.cpp
     src/sound.cpp
+    src/update.cpp
     src/particles.cpp
     src/md3.cpp
     src/inflate.cpp
@@ -149,6 +150,8 @@ if(WIN32)
     gui/app_browser.cpp
         gui/renderer_d3d11.cpp
         gui/registry_win32.cpp
+        # Auto-Updater: GitHub-Releases ueber WinHTTP.
+        gui/update_win32.cpp
         # Das Symbol. Windows liest es aus der .exe, bevor eine Zeile laeuft —
         # dafuer muss es in der Ressourcentabelle stehen, nicht im Quelltext.
         gui/efxed.rc
@@ -172,7 +175,9 @@ if(WIN32)
         d3d11 d3dcompiler dxgi opengl32
      comdlg32 winmm
      # shell32/ole32 fuer die Ordnerauswahl (SHBrowseForFolder, CoTaskMemFree)
-     shell32 ole32 uuid)
+     shell32 ole32 uuid
+     # WinHTTP fuer den Auto-Updater (gui/update_win32.cpp)
+     winhttp)
     target_include_directories(efxed PRIVATE gui)
 
 # Die aelteste Windows-Fassung, auf die gezielt wird.
@@ -185,6 +190,26 @@ if(WIN32)
 # Achtung: Visual Studio 2026 kann trotzdem nicht auf Windows 7 zielen, das
 # ist eine Entscheidung von Microsoft. Fuer eine lauffaehige Windows-7-Fassung
 # braucht es MinGW-w64 oder ein aelteres Toolset — siehe WINDOWS7.md.
+# Haertung, auch gegen Fehlalarme von Virenscannern.
+#
+# Scanner bewerten unsignierte Programme unter anderem danach, ob sie die
+# Schutzmechanismen von Windows mitmachen. Was MSVC ohnehin setzt
+# (/DYNAMICBASE, /NXCOMPAT, /HIGHENTROPYVA), steht hier nicht noch einmal.
+#   /guard:cf     Control Flow Guard: Spruenge nur an gueltige Ziele
+#   /CETCOMPAT    Schattenstapel (Intel CET / AMD) — Ruecksprungadressen geschuetzt
+#   /PDBALTPATH   nur der Dateiname der .pdb in der .exe, nicht der Pfad auf
+#                 dem Bau-Rechner (darin stuende der Benutzername)
+#   /MANIFEST:NO  MSVC legt sonst ein eigenes Manifest an, und mit unserem
+#                 (gui/efxed.manifest ueber efxed.rc) gaebe es zwei:
+#                 CVT1100 "Doppelte Ressource. type:MANIFEST, name:1".
+if(MSVC)
+    target_compile_options(efxed PRIVATE /guard:cf)
+    target_compile_options(efxcore PRIVATE /guard:cf)
+    target_compile_options(imgui PRIVATE /guard:cf)
+    target_link_options(efxed PRIVATE /guard:cf /CETCOMPAT /MANIFEST:NO
+        /PDBALTPATH:efxed.pdb)
+endif()
+
 target_compile_definitions(efxed PRIVATE
     _WIN32_WINNT=0x0601
     WINVER=0x0601
