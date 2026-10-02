@@ -98,9 +98,20 @@ lief über Hilfsskripte außerhalb des Projekts; die Ergebnisse stehen in
 - **Ein Release machen:**
   1. `python tools/bump_revision.py` (zieht `gui/efxed.rc` mit)
   2. bauen, `efxtests`, Selbsttest `alles` unter d3d11 und gl3
-  3. `python tools/make_release.py` → `output/EffectsEd-Remake-revNN.zip`
+  3. Windows-7-Fassung: MinGW-w64 (WinLibs, **MSVCRT**-Variante, nicht UCRT)
+     in einen KURZEN Pfad legen — unter einem langen Pfad findet GCC seine
+     eigenen Köpfe nicht (260-Zeichen-Grenze, `bits/os_defines.h`). Dann
+     `cmake -S . -B build-mingw -G Ninja -DCMAKE_BUILD_TYPE=Release` mit den
+     Schaltern aus `build_mingw.bat`, `cmake --build build-mingw`,
+     `python tools/check_win7_exe.py build-mingw/efxed.exe`.
+  4. `python tools/make_release.py` → `output/EffectsEd-Remake-revNN.zip` und
+     `output/EffectsEd-Remake-win7-revNN.zip`
      (NICHT Compress-Archive: PowerShell 5.1 schreibt Rückstriche ins zip)
-  4. `gh release create v1.18.0-revNN output/EffectsEd-Remake-revNN.zip -R DennisHerrm/EffectsEd-Remake-Releases --title "EffectsEd-Remake 1.18.0-revNN" --notes-file notizen.md`
+  5. `gh release create v1.18.0-revNN output/EffectsEd-Remake-revNN.zip -R DennisHerrm/EffectsEd-Remake-Releases --title "EffectsEd-Remake 1.18.0-revNN" --notes-file notizen.md`,
+     danach `gh release upload … output/EffectsEd-Remake-win7-revNN.zip`.
+     Der Name `…-win7-revNN` ist Absicht: GitHub listet nach Namen, und
+     rev78 nimmt das erste .zip — das normale muss vorn stehen.
+- **Quelltext:** öffentlich in `DennisHerrm/EffectsEd-Remake` (Remote `origin`).
 - **Prüfen:** Selbsttest-Teil `update` (in `alles`, ohne Netz, Quelle aus
   `EFXED_UPDATE_QUELLE`), und `updatenetz` (nicht in `alles`): der echte Weg
   über GitHub — die Testkopie gibt sich als rev1 aus und ersetzt sich durch das
