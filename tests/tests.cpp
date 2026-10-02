@@ -1851,23 +1851,31 @@ void testCamera() {
                     static_cast<double>(crossover), static_cast<double>(nearPlane));
     }
 
-    // Heranfahren ist verhaeltnismaessig und begrenzt.
+    // Fahren wie im Original: linear 0.04 x Massstab je Bildpunkt, nach oben
+    // ziehen (negatives dy) faehrt zurueck, begrenzt auf 100 x Massstab.
     cam.reset(16.0f);
     const float start = cam.distance();
     cam.dolly(-100.0f);
-    check(cam.distance() < start, "negativ faehrt heran");
+    check(std::fabs(cam.distance() - (start + 64.0f)) < 0.01f,
+          "100 Bildpunkte nach oben: 64 Einheiten zurueck (0.04 x 16, wie im Original)");
     cam.dolly(100.0f);
     check(std::fabs(cam.distance() - start) < 0.01f, "und zurueck auf denselben Wert");
-    for (int i = 0; i < 500; ++i) cam.dolly(-100.0f);
-    check(cam.distance() > 0.0f, "Abstand wird nie null oder negativ");
     for (int i = 0; i < 500; ++i) cam.dolly(100.0f);
-    check(cam.distance() < 1e6f, "und laeuft nicht ins Unendliche");
+    check(cam.distance() > 0.0f, "Abstand wird nie null oder negativ");
+    for (int i = 0; i < 500; ++i) cam.dolly(-100.0f);
+    check(std::fabs(cam.distance() - 1600.0f) < 0.01f, "und hoechstens 100 x Massstab");
+    cam.reset(10.0f);
+    const float beforeWheel = cam.distance();
+    cam.zoomWheel(1.0f);
+    check(cam.distance() < beforeWheel, "Rad nach vorn faehrt heran");
 
     // Schieben bewegt den Zielpunkt, nicht den Abstand.
     cam.reset(16.0f);
     const float distanceBefore = cam.distance();
     cam.pan(50.0f, 30.0f);
     check(length(cam.target()) > 0.0f, "Schieben bewegt den Zielpunkt");
+    check(std::fabs(length(cam.target()) - std::sqrt(50.0f * 50.0f + 30.0f * 30.0f) * 0.64f) < 0.01f,
+          "Schieben: 0.04 x Massstab Einheiten je Bildpunkt wie im Original");
     check(std::fabs(cam.distance() - distanceBefore) < 1e-4f,
           "aendert aber den Abstand nicht");
 }
@@ -8417,6 +8425,22 @@ void testFinishingTouches() {
 
         check(buildWallTexture(WallTexture::None, 64, base).empty(),
               "keine Textur ergibt nichts");
+        {
+            // Ziegel wie Ravens brick.jpg: 16 Reihen auf 256 Bildpunkten
+            // (vorher 8 — jeder Ziegel doppelt so gross, der Raum wirkte klein).
+            const auto bricks = buildWallTexture(WallTexture::Brick, 256, base);
+            int jointRows = 0;
+            for (int y = 0; y < 256; ++y) {
+                int dark = 0;
+                for (int x = 0; x < 256; ++x) {
+                    const size_t at = (static_cast<size_t>(y) * 256 + static_cast<size_t>(x)) * 4;
+                    if (bricks.size() > at && bricks[at] < 120u) ++dark;
+                }
+                if (dark > 250) ++jointRows;
+            }
+            check(jointRows == 32, "Ziegel: 16 Reihen mit 2 Bildpunkte breiten Fugen wie brick.jpg");
+            std::printf("  Ziegel: %d Fugenzeilen auf 256 (erwartet 32)\n", jointRows);
+        }
         check(buildWallTexture(WallTexture::Brick, 0, base).empty(),
               "Groesse null ebenso");
         check(buildWallTexture(WallTexture::Brick, 4096, base).empty(),

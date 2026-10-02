@@ -450,17 +450,20 @@ std::vector<unsigned char> buildWallTexture(WallTexture kind, int size,
                 // Original sind es 21.7 bei einer mittleren Helligkeit von
                 // 138 — also deutlich rauer und dunkler, als wir es hatten.
                 case WallTexture::Brick: {
-                    // Acht Reihen, jede zweite um eine halbe Ziegellaenge
-                    // versetzt. Der Versatz ist das, was es wie Mauerwerk
-                    // aussehen laesst — ohne ihn sieht es aus wie Fliesen.
-                    const int rowHeight = size / 8;
+                    // Sechzehn Reihen zu acht Ziegeln, jede zweite um eine
+                    // halbe Ziegellaenge versetzt — wie Ravens brick.jpg
+                    // (256x256, Ziegel 32x16). Vorher acht Reihen zu vier:
+                    // jeder Ziegel doppelt so gross, und der Raum wirkte
+                    // daneben klein (Vergleich mit dem Original, 2.10.2026).
+                    const int rowHeight = size / 16;
                     const int row = y / rowHeight;
-                    const int brickWidth = size / 4;
+                    const int brickWidth = size / 8;
                     const int offset = (row & 1) ? brickWidth / 2 : 0;
                     const int inRow = (x + offset) % brickWidth;
                     const int inColumn = y % rowHeight;
 
-                    const bool mortar = inRow < 2 || inColumn < 2;
+                    const int joint = size >= 256 ? 2 : 1;   // Fuge wie im Original (2 px bei 256)
+                    const bool mortar = inRow < joint || inColumn < joint;
                     // Dunkler als vorher: Ravens Ziegel liegen bei einer
                     // mittleren Helligkeit von 103, unsere kamen auf 236.
                     shade = mortar ? 0.48f : 0.84f + valueNoise(x / 3, y / 3, 1) * 0.42f;
