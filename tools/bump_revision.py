@@ -17,10 +17,11 @@ import sys
 from pathlib import Path
 
 HEADER = Path(__file__).resolve().parent.parent / "include" / "efx" / "version.h"
+RESOURCE = Path(__file__).resolve().parent.parent / "gui" / "efxed.rc"
 
 
 def main() -> int:
-    text = HEADER.read_text(encoding="utf-8")
+    text = open(HEADER, encoding="utf-8", newline="").read()
 
     version = re.search(r'kVersion\s*=\s*"([^"]+)"', text)
     revision = re.search(r"kRevision\s*=\s*(\d+)", text)
@@ -34,7 +35,19 @@ def main() -> int:
         return 0
 
     text = text.replace(f"kRevision = {current};", f"kRevision = {current + 1};", 1)
-    HEADER.write_text(text, encoding="utf-8")
+    HEADER.write_text(text, encoding="utf-8", newline="")
+
+    # Die Ressourcentabelle traegt dieselbe Nummer (tools/lint_version.py
+    # prueft das). Sie steht dort, weil Windows sie im Explorer zeigt und der
+    # Auto-Updater die Fassung danach vergleicht — sie mitzuziehen ist kein
+    # Schritt, den man vergessen koennen sollte.
+    old_full = f"{version.group(1)}-rev{current}"
+    new_full = f"{version.group(1)}-rev{current + 1}"
+    numbers = version.group(1).replace(".", ",")
+    rc = open(RESOURCE, encoding="utf-8", newline="").read()
+    rc = rc.replace(f"{numbers},{current}", f"{numbers},{current + 1}")
+    rc = rc.replace(f'"{old_full}"', f'"{new_full}"')
+    RESOURCE.write_text(rc, encoding="utf-8", newline="")
     print(f"{version.group(1)}-rev{current + 1}")
     return 0
 
