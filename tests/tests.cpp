@@ -13578,6 +13578,30 @@ void testModelCullAndDepthHack() {
         check(group->cullBackFaces, std::string("Modell blendet Rueckseiten aus wie cull front (") + name + ")");
     }
 
+    // Leere Shaderliste: keine Zeichengruppe (wie das alte EffectsEd);
+    // falscher Name: das graue Ersatzkaestchen wie im Spiel.
+    {
+        const efx::Effect empty = effectFrom("Particle\n{\n\tlife\t1000\n}\n");
+        System es;
+        es.play(empty, 1u);
+        check(es.build(10.0f, {1, 0, 0}, {0, 1, 0}).groups.empty(),
+              "Segment ohne Shader zeichnet nichts (wie das Original)");
+        const efx::Effect wrong = effectFrom(
+            "Particle\n{\n\tlife\t1000\n\tshaders\n\t[\n\t\tgfx/gibt/esnicht\n\t]\n}\n");
+        System ws;
+        ws.play(wrong, 1u);
+        bool grey = false;
+        const auto lookup = [](const std::string&) {
+            System::ShaderDraw d;
+            d.missing = true;
+            return d;
+        };
+        for (const auto& g : ws.build(10.0f, {1, 0, 0}, {0, 1, 0}, lookup).groups) {
+            if (g.image == "$default") grey = true;
+        }
+        check(grey, "falscher Shadername zeigt das Ersatzkaestchen wie im Spiel");
+    }
+
     // depthHack: eigenes Gruppenmerkmal, auch bei gleichem Shader.
     const efx::Effect hacked = effectFrom(
         "Particle\n{\n\tlife\t1000\n\tshaders\n\t[\n\t\tgfx/test/a\n\t]\n}\n"
@@ -13741,6 +13765,8 @@ void testEmitterModels() {
 }  // namespace
 
 int main(int argc, char** argv) {
+    // Ungepuffert: stuerzt ein Test ab, steht die letzte Zeile trotzdem da.
+    std::cout << std::unitbuf;
     // Kindmodus fuer den Absturztest: Protokoll oeffnen, in einen Schritt
     // hineinlaufen und mittendrin abbrechen — kein Abflauf, keine
     // Destruktoren, keine Pufferleerung. Genau wie bei einem echten Absturz.

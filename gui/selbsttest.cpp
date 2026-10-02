@@ -464,6 +464,10 @@ public:
     // Menue: oben anklicken, dann den Eintrag. Untermenues ueber `zwischen`.
     static void menue(std::vector<Schritt>& s, Str oben, const std::string& eintrag,
                       const std::string& zwischen = "") {
+        // Ein eben bestaetigter Dialog schliesst erst im naechsten Bild; ein
+        // Klick auf die Menueleiste davor geht ins Leere (der modale Dialog
+        // sperrt sie noch) — unter Last im Gesamtlauf gelegentlich passiert.
+        s.push_back(warteBis("kein Dialog offen", [] { return ImGui::GetTopMostPopupModal() == nullptr; }, 30));
         s.push_back(klick(tr(oben), "##main"));
         if (!zwischen.empty()) s.push_back(klick(zwischen, "##Menu"));
         s.push_back(klick(eintrag, "##Menu"));
@@ -2527,9 +2531,21 @@ public:
                                 : "C:/Program Files (x86)/Steam/steamapps/common/Jedi Academy/"
                                   "GameData Movie Duels/base";
             app->settings_.extraGamePaths.clear();
+            // Weitere Spielpfade wie beim Anwender (durch ';' getrennt).
+            if (const char* extra = std::getenv("EFXED_EXTRAPFADE"); extra && extra[0]) {
+                std::string rest = extra;
+                size_t at = 0;
+                while (at <= rest.size()) {
+                    const size_t end = rest.find(';', at);
+                    const std::string one = rest.substr(at, end == std::string::npos ? std::string::npos : end - at);
+                    if (!one.empty()) app->settings_.extraGamePaths.push_back(one);
+                    if (end == std::string::npos) break;
+                    at = end + 1;
+                }
+            }
             app->rescanAssets();
             app->fixedSeed_ = 4242;
-            bericht = "effekt\tzeit_ms\tlebend\tgezeichnet\tbild_ms\taufbau_ms\tzeichnen_ms\n";
+            bericht = "effekt\tzeit_ms\tlebend\tgezeichnet\tbild_ms\taufbau_ms\tzeichnen_ms\tgrau\n";
         }));
         s.push_back(pruefSchritt("Bestand enthaelt Effekte",
                                  [] { return !app->assets_.effects.empty(); }));
@@ -2592,10 +2608,11 @@ public:
             s.push_back(foto("e_" + datei + "_" + std::to_string(static_cast<int>(ms))));
             s.push_back(tu("messen", [name, ms] {
                 char z[512];
-                std::snprintf(z, sizeof(z), "%s\t%.0f\t%d\t%d\t%.2f\t%.2f\t%.2f\n", name.c_str(),
+                std::snprintf(z, sizeof(z), "%s\t%.0f\t%d\t%d\t%.2f\t%.2f\t%.2f\t%d\n", name.c_str(),
                               double(ms), app->lastAlive_, app->lastDrawn_,
                               double(ImGui::GetIO().DeltaTime * 1000.0f),
-                              double(app->lastBuildMs_), double(app->lastDrawMs_));
+                              double(app->lastBuildMs_), double(app->lastDrawMs_),
+                              app->lastDefaultGroups_);
                 bericht += z;
             }));
         }

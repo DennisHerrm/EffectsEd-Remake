@@ -883,6 +883,10 @@ void App::drawViewport(render::Renderer* renderer, float width, float height) {
         lastAlive_ = list.alive;
         lastScheduled_ = list.scheduled;
         lastMarks_ = list.marks;
+        lastDefaultGroups_ = 0;
+        for (const auto& group : list.groups) {
+            if (group.image == "$default") ++lastDefaultGroups_;
+        }
     } else {
         lastDrawn_ = 0;
         lastAlive_ = 0;

@@ -2361,6 +2361,14 @@ DrawList System::build(float nowMs, const camera::Vec3& right,
         }
 
         // Und die Gruppen, wie die Engine sie zeichnet.
+        // Ohne Shader keine Zeichengruppe, also nichts zu sehen — wie das
+        // alte EffectsEd (die Geometrie oben bleibt fuer Abnehmer wie die
+        // Reichweite). Die Engine nimmt Shader 0 (tr.defaultShader) und zeigt
+        // das Ersatzkaestchen;
+        // fuer ein frisch angelegtes, noch leeres Segment sah das im Editor
+        // wie ein Fehler aus. Die Pruefliste meldet es weiter (VNoVisual).
+        // Ein FALSCHER Name zeigt das Kaestchen dagegen wie im Spiel.
+        if (item.shader.empty()) continue;
         const bool hacked = (item.flags & kFlagDepthHack) != 0;
         if (info.missing) {
             // RE_RegisterShader gibt fuer einen Shader ohne Bild 0 zurueck,

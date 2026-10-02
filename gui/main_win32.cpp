@@ -459,6 +459,19 @@ static bool runSession(efx::gui::App& app, efx::render::Backend preferred,
             y = 0;
             placement.maximized = false;
         }
+        // Der Selbsttest laeuft AUSSERHALB des sichtbaren Bildschirms: er
+        // bedient das Programm intern und fotografiert aus dem Bildpuffer,
+        // braucht das Fenster also nicht zu sehen. So kann der Anwender
+        // nebenher weiterarbeiten, statt dass sich das Fenster ueber alles
+        // legt. EFXED_SICHTBAR=1 holt es zum Zuschauen zurueck.
+        if (efx::gui::selbsttestAktiv()) {
+            const char* visible = std::getenv("EFXED_SICHTBAR");
+            if (!(visible && visible[0] == '1')) {
+                x = GetSystemMetrics(SM_XVIRTUALSCREEN) + GetSystemMetrics(SM_CXVIRTUALSCREEN) + 64;
+                y = GetSystemMetrics(SM_YVIRTUALSCREEN);
+                placement.maximized = false;
+            }
+        }
         hwnd = CreateWindowW(wc.lpszClassName, L"EffectsEd", WS_OVERLAPPEDWINDOW, x, y, width,
                              height, nullptr, nullptr, wc.hInstance, nullptr);
         if (!hwnd) {
