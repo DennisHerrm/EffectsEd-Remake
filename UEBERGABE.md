@@ -80,6 +80,46 @@ lief über Hilfsskripte außerhalb des Projekts; die Ergebnisse stehen in
 
 ---
 
+### Auto-Updater und Releases (neu)
+
+- **Wo die Downloads liegen:** öffentlich in
+  `DennisHerrm/EffectsEd-Remake-Releases` (nur README und Releases, kein
+  Quelltext — Muster wie beim BehavEd-Nachbau). `efx::update::kRepo` zeigt dorthin.
+- **Ablauf im Programm:** beim Start still `GET /releases/latest` (abschaltbar:
+  Help → Check for Updates at Startup); ist die **Revision** im Tag größer als
+  `kRevision`, erscheint unten ein grüner Hinweis. Installieren lädt das erste
+  `.zip` des Releases, packt alles erst als `.neu` aus, benennt die laufende
+  exe in `.exe.alt` um und setzt die neue an ihren Platz; „Restart Now" beendet
+  regulär (mit der Frage nach ungespeicherten Änderungen) und startet die neue
+  Fassung mit `--nach-update=<pid>`. Kern ohne Netz: `src/update.cpp`
+  (Tests in `testUpdate`), Netz und Fenster: `gui/update_win32.cpp`.
+- **Was er nie anfasst:** Pfade mit `..`, absolute Pfade, Dateien `efxed_*`
+  (Einstellungen, Schalter für tragbar) und `*.log`. Nur HTTPS.
+- **Ein Release machen:**
+  1. `python tools/bump_revision.py` (zieht `gui/efxed.rc` mit)
+  2. bauen, `efxtests`, Selbsttest `alles` unter d3d11 und gl3
+  3. `python tools/make_release.py` → `output/EffectsEd-Remake-revNN.zip`
+     (NICHT Compress-Archive: PowerShell 5.1 schreibt Rückstriche ins zip)
+  4. `gh release create v1.18.0-revNN output/EffectsEd-Remake-revNN.zip -R DennisHerrm/EffectsEd-Remake-Releases --title "EffectsEd-Remake 1.18.0-revNN" --notes-file notizen.md`
+- **Prüfen:** Selbsttest-Teil `update` (in `alles`, ohne Netz, Quelle aus
+  `EFXED_UPDATE_QUELLE`), und `updatenetz` (nicht in `alles`): der echte Weg
+  über GitHub — die Testkopie gibt sich als rev1 aus und ersetzt sich durch das
+  neueste Release.
+
+### Haertung gegen Virenscanner-Fehlalarme (neu)
+
+Manifest `gui/efxed.manifest` (asInvoker, supportedOS) über `efxed.rc`,
+`/MANIFEST:NO`; `/guard:cf`, `/CETCOMPAT`; `/PDBALTPATH:efxed.pdb` (sonst steht
+der Bau-Pfad mit Benutzernamen in der exe); VERSIONINFO mit CompanyName und
+LegalCopyright. Nicht gepackt, nicht verschleiert. Was SmartScreen wirklich
+beruhigt, ist nur eine Code-Signatur (siehe OFFEN.md).
+
+### Selbsttest im Hintergrund (neu)
+
+Das Testfenster liegt rechts neben dem sichtbaren Bildschirm und wird nie
+aktiviert; man kann nebenher arbeiten. `EFXED_SICHTBAR=1` holt es zum
+Zuschauen zurück.
+
 ## 1. Was das Projekt ist
 
 Ein moderner 64-Bit-Ersatz für **EffectsEd.exe** von Raven Software (2003) —
