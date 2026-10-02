@@ -372,7 +372,13 @@ void System::play(const Effect& effect, unsigned seed,
     // pulsiert. Mit Generationen bei -d, -2d, ... ist der Bestand schon beim
     // ersten Bild eingeschwungen, und nach genau `repeatDelay` sieht er
     // wieder genauso aus. Damit laeuft die Vorschau nahtlos rund.
-    const float delay = static_cast<float>(effect.repeatDelay);
+    //
+    // Ohne `repeatDelay` in der Datei wiederholt die Engine alle 300 ms
+    // (effectiveRepeatDelay). Hier stand `effect.repeatDelay`, also 0 — ein
+    // Feuer ohne die Zeile (env/fire, env/fire_wall, ships/fire, ...) bekam
+    // keinen Vorlauf und lief in den Kacheln als einzelnes Aufflammen mit
+    // anschliessender Leere statt als stehendes Feuer.
+    const float delay = static_cast<float>(effectiveRepeatDelay(effect));
     if (buildUpRepeats && delay >= 1.0f && !live_.empty()) {
         const float longest = durationMs_;
         // So viele Generationen, bis die aelteste gerade ausgestorben ist.

@@ -11204,17 +11204,30 @@ void testRepeatBuildUp() {
                     sounds, fromPast);
     }
 
-    // Ohne repeatDelay aendert das Flag nichts — sonst wuerde man beim
-    // Beurteilen eines einzelnen Segments hereingelegt.
+    // Ohne repeatDelay wiederholt die Engine alle 300 ms
+    // (CFxScheduler::GetNewEffectTemplate: mRepeatDelay = 300). Der Vorlauf
+    // muss also genauso aussehen wie mit `repeatDelay 300` — vorher gab es
+    // gar keinen, und ein Feuer ohne die Zeile (env/fire, env/fire_wall,
+    // ships/fire) lief in den Kacheln als einzelnes Aufflammen.
+    // Wer EINEN Durchlauf sehen will, ruft play ohne Vorlauf auf (der Editor
+    // tut das ohne die Zeile ohnehin: dort legt die Werkzeugleiste nach).
     {
-        efx::Effect once = effect;
-        once.repeatDelay = 0;
-        once.repeatDelaySet = false;
-        efx::particles::System a, b;
-        a.play(once, 7u, {}, {}, {}, {}, false);
-        b.play(once, 7u, {}, {}, {}, {}, true);
-        check(a.live().size() == b.live().size(),
-              "ohne repeatDelay bleibt alles wie zuvor");
+        efx::Effect unset = effect;
+        unset.repeatDelay = 0;
+        unset.repeatDelaySet = false;
+        efx::Effect explicit300 = effect;
+        explicit300.repeatDelay = 300;
+        explicit300.repeatDelaySet = true;
+        check(efx::effectiveRepeatDelay(unset) == 300 &&
+                  efx::effectiveRepeatDelay(explicit300) == 300,
+              "ohne repeatDelay gilt die Vorgabe der Engine: 300 ms");
+        efx::particles::System once, a, b;
+        once.play(unset, 7u, {}, {}, {}, {}, false);
+        a.play(unset, 7u, {}, {}, {}, {}, true);
+        b.play(explicit300, 7u, {}, {}, {}, {}, true);
+        check(a.live().size() == b.live().size() && a.live().size() > once.live().size(),
+              "ohne repeatDelay: Vorlauf wie bei repeatDelay 300");
+        check(a.durationMs() == b.durationMs(), "... und dieselbe Schleifenlaenge");
     }
 
     // Ein unsinnig kleiner Abstand darf nicht in zehntausende Teilchen laufen.
