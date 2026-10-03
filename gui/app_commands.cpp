@@ -82,6 +82,32 @@ void App::openDroppedFile(const std::string& path) {
     openFile(path);
 }
 
+void App::queueDroppedFile(const std::string& path) {
+    droppedFiles_.push_back(path);
+}
+
+void App::openQueuedDrops() {
+    // Erst oeffnen, wenn nichts mehr am aktuellen Dokument haengt.
+    //
+    // Vorher oeffnete die Datei sofort, auch mitten in einem Dialog — und der
+    // wirkte danach auf das NEUE Dokument: der Wiedergabe-Dialog schrieb bei
+    // OK das repeatDelay des alten in das neue, die Rueckfrage "teure Physik"
+    // setzte das Flag dort, ein laufendes Umbenennen benannte dort ein
+    // Segment um (Fehlersuche 03.10.2026). Die Datei geht nicht verloren, sie
+    // wartet.
+    //
+    // Nur ImGui fragen: Auswahl-, Wiedergabe- und Rueckfragedialog sind
+    // modal, Umbenennen und Listeneintrag sind aktive Eingabefelder. Eigene
+    // Merker (renamingSegment_, listEditing_) koennten stehen bleiben, wenn
+    // ihr Feld nicht mehr gezeichnet wird — dann kaeme die Datei nie an.
+    if (droppedFiles_.empty()) return;
+    if (ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) return;
+    if (ImGui::IsAnyItemActive()) return;
+    std::vector<std::string> files;
+    files.swap(droppedFiles_);
+    for (const std::string& path : files) openDroppedFile(path);
+}
+
 void App::cmdOpen() {
     if (!fileDialog_) return;
     const std::string path = fileDialog_(false, kEfxFilter, nullptr);
@@ -232,6 +258,36 @@ void App::drawConfirmDialog() {
     ImGui::SameLine();
     if (ImGui::Button(tr(Str::MsgNo), ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
         confirmYes_ = nullptr;
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
+void App::showNotice(std::string text) {
+    // Kommt ein zweiter Hinweis, bevor der erste weggeklickt ist, beide zeigen.
+    if (!noticeText_.empty() && (showNotice_ || ImGui::IsPopupOpen("###notice"))) {
+        noticeText_ += "\n\n" + text;
+    } else {
+        noticeText_ = std::move(text);
+    }
+    showNotice_ = true;
+}
+
+void App::drawNoticeDialog() {
+    if (showNotice_) {
+        ImGui::OpenPopup("###notice");
+        showNotice_ = false;
+    }
+    ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 28.0f, 0.0f), ImGuiCond_Always);
+    if (!ImGui::BeginPopupModal((std::string(tr(Str::AppTitle)) + "###notice").c_str(), nullptr,
+                                ImGuiWindowFlags_NoResize)) {
+        return;
+    }
+    ImGui::TextWrapped("%s", noticeText_.c_str());
+    ImGui::Separator();
+    if (ImGui::Button(tr(Str::MsgOk), ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+        ImGui::IsKeyPressed(ImGuiKey_Enter)) {
+        noticeText_.clear();
         ImGui::CloseCurrentPopup();
     }
     ImGui::EndPopup();

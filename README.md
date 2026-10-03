@@ -21,7 +21,9 @@ Beides ist hier behoben.
 
 ## Was es kann
 
-- `.efx` lesen, bearbeiten und **verlustfrei** zurückschreiben
+- `.efx` lesen, bearbeiten und **verlustfrei** zurückschreiben — jeder Wert
+  bleibt erhalten; nur Kommentare (`//`, `/* */`) gehen wie im Original
+  verloren, und die Prüfung sagt das schon beim Öffnen
 - alle dreizehn Primitivtypen mit den Eigenschaftsseiten des Originals,
   Feld für Feld gegen das Binary gemessen
 - **Vorschau**, die der Engine folgt: Kurven, Zeitplanung, Bahnen, Abpraller,

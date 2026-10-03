@@ -193,16 +193,35 @@ void App::refreshPreview() {
     const float wasAt = doc().clock.timeMs();
     const timeline::State wasState = doc().clock.state();
 
-    startPlayback();
+    // Ein Neuaufbau ist kein Neustart: was schon erklungen ist, laeuft weiter
+    // und wird nicht noch einmal angestossen — ebenso die Erschuetterung.
+    // Vorher brach jede Feldaenderung den Klang ab und startete ihn im
+    // naechsten Bild neu, beim Ziehen eines Reglers 60-mal je Sekunde
+    // (Fehlersuche 03.10.2026: 21 Starts bei 10 Aenderungen).
+    startPlayback(/*keepSounds=*/true);
+    for (auto& item : doc().particles.liveForPlayback()) {
+        if (item.spawnMs < wasAt) {
+            item.soundPlayed = true;
+            item.shakeTriggered = true;
+        }
+    }
 
+    // scrubTo haelt eine laufende Uhr an (Clock::scrubTo) — deshalb danach
+    // den alten Zustand ausdruecklich wiederherstellen, AUCH "laeuft".
+    // Vorher fehlte genau dieser Fall: jede Feldaenderung waehrend der
+    // Wiedergabe hielt sie an (Fehlersuche 03.10.2026).
     doc().clock.scrubTo(wasAt);
-    if (wasState != timeline::State::Playing) {
-        if (wasState == timeline::State::Paused) {
+    switch (wasState) {
+        case timeline::State::Playing:
+            doc().clock.play();
+            break;
+        case timeline::State::Paused:
             doc().clock.pause();
-        } else {
+            break;
+        case timeline::State::Stopped:
             doc().clock.stop();
             doc().clock.scrubTo(wasAt);
-        }
+            break;
     }
 }
 
@@ -224,7 +243,7 @@ void App::buildPreviewStopped() {
     doc().paused = false;
 }
 
-void App::startPlayback() {
+void App::startPlayback(bool keepSounds) {
     // Bei jedem Start ein neuer Ausgangswert, sonst sieht ein Effekt mit
     // Spannen jedes Mal identisch aus — und gerade das Wuerfeln will man
     // beurteilen.
@@ -333,7 +352,7 @@ void App::startPlayback() {
     doc().paused = false;
     // Beim Neustart alles Laufende abbrechen, sonst ueberlagern sich die
     // Klaenge des vorigen Durchlaufs mit denen des neuen.
-    audio_.stopAll();
+    if (!keepSounds) audio_.stopAll();
 }
 
 bool App::usesSpawnSchedule() const {
@@ -473,6 +492,7 @@ void App::triggerSounds(float nowMs) {
                        " (" + item.soundName + ")");
             continue;
         }
+        ++soundsStarted_;
         diag::info("sound playing: " + item.soundName + " (" +
                    std::to_string(clip->sampleRate) + " Hz, " +
                    std::to_string(clip->channels) + " ch -> Geraet)");

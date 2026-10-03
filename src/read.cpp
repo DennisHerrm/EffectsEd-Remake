@@ -447,6 +447,15 @@ ReadResult read(std::string_view text) {
     }
     if (!parsed.ok()) return result;
 
+    // Kommentare verliert das Speichern — wie im Original, dessen Schreiber
+    // keinen Weg fuer sie hat. Nur sagte es bisher niemand (Abgleich
+    // Original, Befund 5: 69 von 380 mitgelieferten Dateien haben welche).
+    if (parsed.firstCommentLine > 0) {
+        reader.info(parsed.firstCommentLine,
+                    "Die Datei enthaelt Kommentare — beim Speichern gehen sie verloren "
+                    "(wie im Original)");
+    }
+
     for (const auto& prop : parsed.topLevel.properties) {
         if (iequals(prop.name, "repeatDelay")) {
             result.effect.repeatDelay =

@@ -54,9 +54,17 @@ inline ImVec4 alpha(const theme::Color& c, float a) {
     return ImVec4(c.r, c.g, c.b, a);
 }
 
-inline void applyTheme(const theme::Theme& t) {
+// `scale` ist die Bildschirmskalierung. Sie gehoert HIERHER und nicht hinter
+// den Aufruf: vorher skalierte nur der Start (ScaleAllSizes), und jeder
+// Theme-Wechsel schrieb die festen Groessen ungeskaliert zurueck — bei 150 %
+// wurde FramePadding 9x6 zu 6x4 (Fehlersuche 03.10.2026).
+inline void applyTheme(const theme::Theme& t, float scale = 1.0f) {
     const theme::Palette& p = t.palette;
     ImGuiStyle& style = ImGui::GetStyle();
+    // Frisch anfangen: ScaleAllSizes skaliert ALLE Groessen, auch die, die
+    // hier nicht gesetzt werden. Auf einem schon skalierten Stil waeren die
+    // beim zweiten Mal doppelt skaliert.
+    style = ImGuiStyle();
     ImVec4* col = style.Colors;
 
     col[ImGuiCol_Text] = toImGui(p.text);
@@ -150,6 +158,8 @@ inline void applyTheme(const theme::Theme& t) {
     style.ItemInnerSpacing = ImVec2(6, 4);
     style.ScrollbarSize = 13.0f;
     style.GrabMinSize = 10.0f;
+
+    if (scale > 0.0f && scale != 1.0f) style.ScaleAllSizes(scale);
 }
 
 }  // namespace efx::gui

@@ -979,6 +979,7 @@ void App::drawDialogs() {
     }
     drawSaveChangesDialog();
     drawConfirmDialog();
+    drawNoticeDialog();
 
     drawDriverInfoDialog();
     drawSunDialog();

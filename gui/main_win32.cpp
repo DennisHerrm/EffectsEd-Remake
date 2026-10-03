@@ -59,6 +59,9 @@ std::vector<std::wstring> g_dropped;
 int g_width = 1280;
 int g_height = 860;
 bool g_resized = false;
+// Neue Bildschirmskalierung aus WM_DPICHANGED, bis die Hauptschleife Schrift
+// und Stil neu baut (0 = keine).
+UINT g_newDpi = 0;
 
 LRESULT WINAPI wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam)) return 1;
@@ -71,6 +74,22 @@ LRESULT WINAPI wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                 g_resized = true;
             }
             return 0;
+        case WM_DPICHANGED: {
+            // Das Fenster ist auf einen Bildschirm mit anderer Skalierung
+            // gewandert (oder die Skalierung wurde umgestellt). Vorher
+            // unbehandelt: Schrift und Stil blieben in der alten Groesse
+            // (Fehlersuche 03.10.2026). Windows schlaegt das neue Rechteck
+            // vor; Schrift und Stil baut die Hauptschleife zwischen zwei
+            // Bildern neu.
+            g_newDpi = HIWORD(wParam);
+            if (const RECT* suggested = reinterpret_cast<const RECT*>(lParam)) {
+                SetWindowPos(hwnd, nullptr, suggested->left, suggested->top,
+                             suggested->right - suggested->left,
+                             suggested->bottom - suggested->top,
+                             SWP_NOZORDER | SWP_NOACTIVATE);
+            }
+            return 0;
+        }
         case WM_SYSCOMMAND:
             if ((wParam & 0xfff0) == SC_KEYMENU) return 0;  // Alt-Menue aus
             return DefWindowProcW(hwnd, msg, wParam, lParam);
@@ -825,8 +844,8 @@ static bool runSession(efx::gui::App& app, efx::render::Backend preferred,
         const efx::theme::Theme* selected =
             efx::theme::findTheme(app.settings().themeId);
         efx::gui::applyTheme(selected ? *selected
-                                      : efx::theme::builtinThemes().front());
-        ImGui::GetStyle().ScaleAllSizes(dpiScale);
+                                      : efx::theme::builtinThemes().front(),
+                             dpiScale);
     }
 
     {
@@ -912,7 +931,7 @@ static bool runSession(efx::gui::App& app, efx::render::Backend preferred,
         if (!g_dropped.empty()) {
             std::vector<std::wstring> dropped;
             dropped.swap(g_dropped);
-            for (const std::wstring& path : dropped) app.openDroppedFile(toUtf8(path));
+            for (const std::wstring& path : dropped) app.queueDroppedFile(toUtf8(path));
         }
         if (const std::string title = app.windowTitle(); title != shownTitle) {
             shownTitle = title;
@@ -929,6 +948,23 @@ static bool runSession(efx::gui::App& app, efx::render::Backend preferred,
             renderer->shutdownImGuiBackend();
             buildFonts(dpiScale, info && info->needsCjkFont);
             renderer->initImGuiBackend();
+        }
+        // Neue Bildschirmskalierung: Schrift und Stil neu, ebenfalls nur
+        // zwischen zwei Bildern.
+        if (g_newDpi != 0) {
+            dpiScale = static_cast<float>(g_newDpi) / 96.0f;
+            g_newDpi = 0;
+            efx::diag::Step rebuild("Rebuild fonts and style after DPI change");
+            efx::diag::info("new display scaling: " + std::to_string(dpiScale));
+            const auto* info =
+                efx::i18n::findLanguage(app.settings().languageCode);
+            renderer->shutdownImGuiBackend();
+            buildFonts(dpiScale, info && info->needsCjkFont);
+            renderer->initImGuiBackend();
+            const efx::theme::Theme* current =
+                efx::theme::findTheme(app.settings().themeId);
+            efx::gui::applyTheme(current ? *current : efx::theme::builtinThemes().front(),
+                                 dpiScale);
         }
 
         // Leerlauf: nichts laeuft, und seit einer halben Sekunde hat niemand

@@ -38,9 +38,10 @@ public:
     Audio(Audio&&) noexcept;
     Audio& operator=(Audio&&) noexcept;
 
-    // Öffnet ein Ausgabegerät für dieses Format. Ein zweiter Aufruf mit
-    // anderem Format schließt das alte und öffnet neu — waveOut kann keine
-    // gemischten Formate auf einem Gerät.
+    // Prüft, ob das Format abspielbar ist, und merkt es sich. Geöffnet wird
+    // je Klang ein eigenes Gerät, damit Windows die Klänge mischt statt sie
+    // aneinanderzureihen. Ein zweiter Aufruf mit anderem Format beendet
+    // alle laufenden Klänge.
     bool open(int sampleRate, int channels);
     void close();
 
@@ -54,12 +55,14 @@ public:
 
     void stopAll();
 
-    bool ready() const { return handle_ != nullptr; }
+    bool ready() const { return ready_; }
     const char* lastError() const { return error_; }
     int activeBuffers() const;
 
 private:
-    void* handle_ = nullptr;   // HWAVEOUT
+    // Jeder Klang hat sein eigenes Geraet (siehe .cpp); hier steht nur das
+    // geprüfte Format.
+    bool ready_ = false;
     int sampleRate_ = 0;
     int channels_ = 0;
     const char* error_ = "";
