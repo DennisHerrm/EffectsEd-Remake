@@ -13,6 +13,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -57,11 +58,20 @@ public:
     void clear();
     size_t size() const { return states_.size(); }
 
+    // Eine Kennung des aktuellen Stands, eindeutig ueber die ganze Lebenszeit
+    // des Stapels. Wer sich die Kennung beim Speichern merkt, weiss nach
+    // Rueckgaengig/Wiederholen, ob der Stand wieder dem auf der Platte
+    // entspricht — auch wenn vorn alte Eintraege wegfallen (limit) oder ein
+    // neuer Schritt die Wiederholen-Kette abschneidet.
+    uint64_t currentId() const { return states_.empty() ? 0 : states_[position_].id; }
+
 private:
     struct Entry {
         Effect state;
         std::string what;
+        uint64_t id = 0;
     };
+    uint64_t nextId_ = 1;
     std::vector<Entry> states_;
     size_t position_ = 0;
     size_t limit_;

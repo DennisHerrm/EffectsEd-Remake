@@ -5,6 +5,7 @@
 // schreibt Zahlen mit "%1.4g" — das ist die Voreinstellung nur, wenn man sie
 // ausdruecklich waehlt, sonst schreiben wir verlustfrei.
 #include <algorithm>
+#include <cctype>
 #include <charconv>
 #include <cmath>
 #include <cstdio>
@@ -27,6 +28,27 @@ namespace {
 //
 // std::to_chars mit chars_format::fixed liefert die kuerzeste Festkomma-Form,
 // die exakt zuruecklaeuft: 1500 -> "1500", 0.001 -> "0.001".
+// Ein Text, den der Leser ohne Anfuehrungszeichen anders verstuende: "//"
+// und "/*" leiten dort einen Kommentar ein, { und [ eine Gruppe oder Liste,
+// und ein leerer Wert waere gar keiner. Gelesen wurde so etwas schon immer
+// (in Anfuehrungszeichen), nur zurueckgeschrieben ohne — aus "a//b" wurde
+// beim naechsten Oeffnen "a".
+bool iequalsAscii(const std::string& a, const char* b) {
+    size_t i = 0;
+    for (; i < a.size() && b[i]; ++i) {
+        if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i])))
+            return false;
+    }
+    return i == a.size() && b[i] == 0;
+}
+
+std::string quoteIfNeeded(const std::string& text) {
+    const bool needs = text.empty() || text.find("//") != std::string::npos ||
+                       text.find("/*") != std::string::npos || text.front() == '{' ||
+                       text.front() == '[' || text.front() == '"';
+    return needs ? "\"" + text + "\"" : text;
+}
+
 std::string exactFloat(float value) {
     if (value == 0.0f) return "0";  // auch -0 als "0"
     char buffer[96];
@@ -192,11 +214,30 @@ public:
         line();
         line(indent(1) + key);
         line(indent(1) + "[");
-        for (const auto& item : items) line(indent(2) + item);
+        for (const auto& item : items) line(indent(2) + quoteIfNeeded(item));
         line(indent(1) + "]");
     }
 
-    std::string flagText(uint32_t bits, const std::vector<FlagName>& table) const {
+    std::string flagText(uint32_t bits, const std::vector<FlagName>& table,
+                         const std::vector<std::string>& original = {}) const {
+        // Die gelesenen Woerter, solange sie noch genau diese Bits ergeben —
+        // wie die Engine sie liest: hoechstens sieben, Gross/Klein egal.
+        if (!original.empty()) {
+            uint32_t fromWords = 0;
+            for (size_t i = 0; i < original.size() && i < 7; ++i) {
+                for (const auto& entry : table) {
+                    if (iequalsAscii(original[i], entry.name)) fromWords |= entry.bits;
+                }
+            }
+            if (fromWords == bits) {
+                std::string joined;
+                for (const auto& word : original) {
+                    if (!joined.empty()) joined += " ";
+                    joined += word;
+                }
+                return joined;
+            }
+        }
         std::string text;
         uint32_t remaining = bits;
         // Erst die Sammelnamen (mehrere Bits), damit ghoul2Collision nicht als
@@ -246,14 +287,14 @@ std::string write(const Effect& effect, const WriteOptions& options) {
         w.line(typeName(p.type));
         w.line("{");
 
-        if (!p.name.empty()) w.keyValue(1, "name", p.name);
+        if (!p.name.empty()) w.keyValue(1, "name", quoteIfNeeded(p.name));
         if (p.flags) {
             w.keyValue(1, p.flagsSingular ? "flag" : "flags",
-                       w.flagText(p.flags, flagNames()));
+                       w.flagText(p.flags, flagNames(), p.flagWords));
         }
         if (p.spawnFlags) {
             w.keyValue(1, p.spawnFlagsSingular ? "spawnFlag" : "spawnFlags",
-                       w.flagText(p.spawnFlags, spawnFlagNames()));
+                       w.flagText(p.spawnFlags, spawnFlagNames(), p.spawnFlagWords));
         }
         if (p.materialImpactSet) {
             w.keyValue(1, "materialImpact",

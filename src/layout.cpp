@@ -1,5 +1,6 @@
 #include "efx/layout.h"
 
+#include <cmath>
 #include <algorithm>
 #include <cstdlib>
 #include <sstream>
@@ -153,7 +154,13 @@ Settings Settings::fromIni(const std::string& text) {
         std::string key = trim(line.substr(0, eq));
         std::string value = trim(line.substr(eq + 1));
 
-        auto toFloat = [&] { return std::strtof(value.c_str(), nullptr); };
+        // strtof liest auch "nan" und "inf". Ein NaN ueberlebt jede Pruefung
+        // der Form "x <= 0" und machte etwa die Uhr dauerhaft NaN; dann
+        // lieber 0, das die Pruefungen unten auf die Voreinstellung setzen.
+        auto toFloat = [&] {
+            const float parsed = std::strtof(value.c_str(), nullptr);
+            return std::isfinite(parsed) ? parsed : 0.0f;
+        };
         auto toInt = [&] { return std::atoi(value.c_str()); };
         auto toBool = [&] { return toInt() != 0; };
 
@@ -253,7 +260,7 @@ Settings Settings::fromIni(const std::string& text) {
     }
     s.split.propertiesFraction = std::clamp(s.split.propertiesFraction, 0.05f, 0.8f);
     s.split.listFraction = std::clamp(s.split.listFraction, 0.05f, 0.8f);
-    if (s.timeScale <= 0.0f || s.timeScale > 100.0f) s.timeScale = 1.0f;
+    if (!(s.timeScale > 0.0f && s.timeScale <= 100.0f)) s.timeScale = 1.0f;
     if (s.worldScale <= 0.0f) s.worldScale = 16.0f;
     if (s.orientation < 0 || s.orientation > 2) s.orientation = 0;
     if (s.roomTexture < 0 || s.roomTexture > 3) s.roomTexture = 0;

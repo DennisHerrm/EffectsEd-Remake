@@ -1,8 +1,10 @@
 #include "efx/diag.h"
+#include "efx/paths.h"
 
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
+#include <mutex>
 #include <string>
 #include <vector>
 #include <algorithm>
@@ -19,6 +21,18 @@ namespace {
 std::FILE* g_file = nullptr;
 
 std::vector<std::string> g_lines;
+
+// Eine Sperre fuer alles hier. Geschrieben wird aus mehreren Faeden (die
+// Update-Pruefung beim Start, Arbeitsfaeden), gelesen jedes Bild vom
+// Protokollfenster. Ohne Sperre beschaedigte push_back den Heap — im Test
+// stuerzte das in drei von drei Laeufen ab. Rekursiv, weil die oeffentlichen
+// Funktionen einander und emit() aufrufen. Absichtlich nie zerstoert: ein
+// Hintergrundfaden darf auch beim Beenden noch schreiben.
+std::recursive_mutex& lock() {
+    static auto* mutex = new std::recursive_mutex();
+    return *mutex;
+}
+using Guard = std::lock_guard<std::recursive_mutex>;
 std::vector<std::string> g_openSteps;
 long long g_startMicros = 0;
 
@@ -49,6 +63,7 @@ const char* marker(Level level) {
 }
 
 void emit(const std::string& line) {
+    Guard guard(lock());
     g_lines.push_back(line);
     if (!g_file) return;
     std::fputs(line.c_str(), g_file);
@@ -62,6 +77,7 @@ void emit(const std::string& line) {
 }  // namespace
 
 bool open(const std::string& path) {
+    Guard guard(lock());
     close();
     g_lines.clear();
     g_openSteps.clear();
@@ -71,16 +87,25 @@ bool open(const std::string& path) {
     // Das vorige Protokoll beiseitelegen statt überschreiben. Wer nach einem
     // Absturz das Programm noch einmal startet — und das tut jeder —, würde
     // sonst gerade den Beweis löschen.
-    if (fs::exists(path, ec)) {
-        fs::rename(path, path + ".vorher", ec);
-        if (ec) fs::remove(path, ec);
+    const fs::path file = paths::fromUtf8(path);
+    fs::path previous = file;
+    previous += ".vorher";
+    if (fs::exists(file, ec)) {
+        fs::rename(file, previous, ec);
+        if (ec) fs::remove(file, ec);
     }
 
+#ifdef _WIN32
+    // _wfopen: der Pfad ist UTF-8, fopen laese ihn als ANSI-Codepage.
+    g_file = _wfopen(file.c_str(), L"w");
+#else
     g_file = std::fopen(path.c_str(), "w");
+#endif
     return g_file != nullptr;
 }
 
 void close() {
+    Guard guard(lock());
     if (g_file) {
         // Offene Schritte gehören vermerkt: wer hier noch offen ist, wurde
         // nie abgeschlossen, und das soll man nicht erst durch Zählen der
@@ -96,11 +121,13 @@ void close() {
 }
 
 void write(Level level, const std::string& text) {
+    Guard guard(lock());
     emit(timestamp() + marker(level) + std::string(g_openSteps.size() * 2, ' ') +
          text);
 }
 
 void writeHeader(const std::vector<std::pair<std::string, std::string>>& entries) {
+    Guard guard(lock());
     emit("============================================================");
     emit(" EffectsEd - startup log");
     emit("============================================================");
@@ -114,6 +141,7 @@ void writeHeader(const std::vector<std::pair<std::string, std::string>>& entries
 }
 
 Step::Step(std::string name) : name_(std::move(name)) {
+    Guard guard(lock());
     // Erst vermerken, dann arbeiten. Andersherum stünde nichts im Protokoll,
     // wenn die Arbeit abstürzt — und das ist der einzige Fall, für den es da
     // ist.
@@ -126,6 +154,7 @@ Step::Step(std::string name) : name_(std::move(name)) {
 void Step::fail(const std::string& reason) { failure_ = reason; }
 
 Step::~Step() {
+    Guard guard(lock());
     if (!g_openSteps.empty()) g_openSteps.pop_back();
     long long ms = (nowMicros() - startMicros_) / 1000;
 
@@ -142,13 +171,20 @@ Step::~Step() {
 }
 
 std::string currentStep() {
+    Guard guard(lock());
     return g_openSteps.empty() ? std::string("(no step active)")
                                : g_openSteps.back();
 }
 
-const std::vector<std::string>& lines() { return g_lines; }
+std::vector<std::string> lines() {
+    // Eine Kopie: wer ueber eine Referenz liefe, waehrend ein anderer Faden
+    // anhaengt, liefe ueber freigegebenen Speicher.
+    Guard guard(lock());
+    return g_lines;
+}
 
 void resetForTesting() {
+    Guard guard(lock());
     if (g_file) {
         std::fclose(g_file);
         g_file = nullptr;

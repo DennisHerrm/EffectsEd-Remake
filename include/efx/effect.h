@@ -251,6 +251,13 @@ struct Primitive {
 
     uint32_t flags = 0;
     uint32_t spawnFlags = 0;
+    // Die Woerter, wie sie in der Datei standen. Mehrere Woerter teilen sich
+    // ein Bit (localizedFlash, playerView, paperPhysics); aus den Bits allein
+    // kam beim Speichern immer "paperPhysics" heraus, und unbekannte Woerter
+    // fielen weg. Solange die Woerter noch genau diese Bits ergeben, schreibt
+    // der Schreiber sie zurueck wie gelesen.
+    std::vector<std::string> flagWords;
+    std::vector<std::string> spawnFlagWords;
 
     // Lage
     Vec3Range origin;

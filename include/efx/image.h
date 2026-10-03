@@ -33,6 +33,12 @@ struct Image {
 // was wirklich drinsteht.
 Image decode(const unsigned char* data, size_t size);
 
+// Groesser kann kein Bild sein, das wir dekodieren: hoechstens 16384 je Seite
+// und 64 Millionen Bildpunkte. Fuer alle drei Formate gleich — vorher galt die
+// Bildpunktgrenze nur fuer TGA, und ein 82-Byte-JPEG mit 16384x16384 belegte
+// 2 GB.
+bool implausibleSize(int width, int height);
+
 // Targa. Unterstützt die Fälle, die in JKA vorkommen: 24 und 32 Bit,
 // unkomprimiert und lauflängenkodiert, mit und ohne gedrehte Zeilenrichtung.
 Image decodeTga(const unsigned char* data, size_t size);

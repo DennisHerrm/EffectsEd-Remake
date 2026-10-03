@@ -47,9 +47,7 @@ public:
             }
             break;
         }
-        size_t start = pos_;
-        while (pos_ < text_.size() && !isSpace(text_[pos_])) ++pos_;
-        return std::string(text_.substr(start, pos_ - start));
+        return readWord();
     }
 
     // Rest der aktuellen Zeile, in Woerter zerlegt.
@@ -70,14 +68,36 @@ public:
                 while (pos_ < text_.size() && text_[pos_] != '\n') ++pos_;
                 return words;
             }
-            size_t start = pos_;
-            while (pos_ < text_.size() && !isSpace(text_[pos_])) ++pos_;
+            // /* ... */ mitten in der Zeile ist ein Kommentar, keine Woerter.
+            // Vorher zaehlte "animMap 10 a b /* alt: c */" vier Bilder mehr.
+            if (text_[pos_] == '/' && pos_ + 1 < text_.size() &&
+                text_[pos_ + 1] == '*') {
+                pos_ += 2;
+                while (pos_ + 1 < text_.size() &&
+                       !(text_[pos_] == '*' && text_[pos_ + 1] == '/')) {
+                    if (text_[pos_] == '\n') ++line_;
+                    ++pos_;
+                }
+                pos_ = pos_ + 2 <= text_.size() ? pos_ + 2 : text_.size();
+                continue;
+            }
+            // Eine Klammer gehoert zum Aufbau, nicht zum Wert davor: in
+            // "{ map gfx/a.tga }" schliesst die } die Stufe. Vorher wurde sie
+            // Teil des Werts, die Stufe blieb offen, und der NAECHSTE Shader
+            // landete als zweite Stufe in diesem.
+            if (text_[pos_] == '{' || text_[pos_] == '}') {
+                pos_ = save;
+                line_ = saveLine;
+                return words;
+            }
+            const size_t start = pos_;
+            std::string word = readWord();
             if (pos_ == start) {
                 pos_ = save;
                 line_ = saveLine;
                 return words;
             }
-            words.emplace_back(text_.substr(start, pos_ - start));
+            words.push_back(std::move(word));
         }
     }
 
@@ -86,6 +106,21 @@ public:
 private:
     bool isSpace(char c) const {
         return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+    }
+    // Ein Wort ab pos_. In Anfuehrungszeichen bis zum schliessenden, OHNE die
+    // Zeichen — wie COM_ParseExt der Engine. Vorher blieben sie stehen, und
+    // "gfx/q" wurde als Shader \"gfx/q\" gefuehrt, den niemand findet.
+    std::string readWord() {
+        if (pos_ < text_.size() && text_[pos_] == '"') {
+            const size_t start = ++pos_;
+            while (pos_ < text_.size() && text_[pos_] != '"' && text_[pos_] != '\n') ++pos_;
+            std::string word(text_.substr(start, pos_ - start));
+            if (pos_ < text_.size() && text_[pos_] == '"') ++pos_;
+            return word;
+        }
+        const size_t start = pos_;
+        while (pos_ < text_.size() && !isSpace(text_[pos_])) ++pos_;
+        return std::string(text_.substr(start, pos_ - start));
     }
     void skipSpace() {
         while (pos_ < text_.size() && isSpace(text_[pos_])) {

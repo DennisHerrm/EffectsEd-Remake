@@ -390,6 +390,17 @@ using EffectLoader = std::function<const Effect*(const std::string& name)>;
 // als in echten Dateien vorkommt.
 inline constexpr int kMaxEffectDepth = 4;
 
+// Wie viele Teilchen ein System hoechstens haelt.
+//
+// Die Tiefe allein begrenzte nur die Schachtelung, nicht die Breite: ein
+// FxRunner mit "count 128" und "playfx [ sich selbst ]" startete 128^4 =
+// 270 Mio. Effekte (20 s, 1 GB), und ein Vorlauf ueber 24 Segmente zu je
+// 5000 Teilchen hielt 3,2 Mio. (1,5 GB). Die Engine begrenzt das zur Laufzeit
+// selbst (ihr Effektvorrat ist endlich); die Vorschau rechnet alles im Voraus
+// und braucht deshalb eine eigene Grenze. 200 000 liegt weit ueber dem, was
+// echte Effekte erzeugen, und weit unter dem, was das Programm lahmlegt.
+inline constexpr size_t kMaxLiveItems = 200000;
+
 // Woher die Modelle der Emitter kommen — wie EffectLoader ein Rueckruf, damit
 // der Kern das Dateisystem nicht kennt. Der Name steht wie in der .efx
 // ("models/players/droids/r5d2_head.md3"). nullptr, wenn es die Datei nicht

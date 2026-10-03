@@ -158,16 +158,22 @@ int extend(int value, int length) {
 // nicht auf. Eine schnelle DCT einzubauen, ohne sie prüfen zu koennen, waere
 // die schlechtere Wahl.
 void inverseDct(const int* input, unsigned char* output, int stride) {
-    static float cosTable[8][8];
-    static bool ready = false;
-    if (!ready) {
-        for (int x = 0; x < 8; ++x) {
-            for (int u = 0; u < 8; ++u) {
-                cosTable[x][u] = std::cos((2.0f * x + 1.0f) * u * 3.14159265f / 16.0f);
+    // Einmal angelegt, ueber die Initialisierung einer lokalen statischen
+    // Variable — die ist in C++ fadensicher. Vorher fuellten mehrere
+    // Texturaufgaben dieselbe Tabelle gleichzeitig (ein "ready"-Merker ohne
+    // Sperre): ein Datenwettlauf.
+    struct Table {
+        float value[8][8];
+        Table() {
+            for (int x = 0; x < 8; ++x) {
+                for (int u = 0; u < 8; ++u) {
+                    value[x][u] = std::cos((2.0f * x + 1.0f) * u * 3.14159265f / 16.0f);
+                }
             }
         }
-        ready = true;
-    }
+    };
+    static const Table table;
+    const auto& cosTable = table.value;
     auto scale = [](int u) { return u == 0 ? 0.70710678f : 1.0f; };
 
     float temp[64];
@@ -240,7 +246,7 @@ Image decodeJpeg(const unsigned char* data, size_t size) {
                 width = (segment[3] << 8) | segment[4];
                 const int count = segment[5];
                 if (width <= 0 || height <= 0) return fail("bad image size");
-                if (width > 16384 || height > 16384) return fail("implausible size");
+                if (implausibleSize(width, height)) return fail("implausible size");
                 if (count < 1 || count > 4) return fail("unsupported component count");
                 if (segmentSize < 6 + static_cast<size_t>(count) * 3) {
                     return fail("short component list");

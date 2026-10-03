@@ -123,6 +123,23 @@ std::wstring toWide(const std::string& text) {
     return out;
 }
 
+// Die Kommandozeile in Argumente zerlegt (UTF-8), nach Windows' eigenen
+// Regeln. lpCmdLine von wWinMain enthaelt den Programmnamen nicht; fuer
+// CommandLineToArgvW wird ein Platzhalter davorgesetzt.
+std::vector<std::string> commandLineArguments(const wchar_t* commandLine) {
+    std::vector<std::string> out;
+    if (!commandLine || !*commandLine) return out;
+    const std::wstring line = std::wstring(L"efxed ") + commandLine;
+    int count = 0;
+    LPWSTR* parts = CommandLineToArgvW(line.c_str(), &count);
+    if (!parts) return out;
+    for (int i = 1; i < count; ++i) {
+        if (parts[i][0] != L'\0') out.push_back(toUtf8(parts[i]));
+    }
+    LocalFree(parts);
+    return out;
+}
+
 std::string exeDirectory() {
     wchar_t buffer[MAX_PATH]{};
     GetModuleFileNameW(nullptr, buffer, MAX_PATH);
@@ -479,6 +496,22 @@ static bool runSession(efx::gui::App& app, efx::render::Backend preferred,
             step.fail("CreateWindowW failed");
             UnregisterClassW(wc.lpszClassName, wc.hInstance);
             return false;
+        }
+        // Die gespeicherte Lage ueber SetWindowPlacement zurueck, nicht ueber
+        // CreateWindow: gespeichert wird rcNormalPosition, und die steht in
+        // ARBEITSFLAECHEN-Koordinaten. Mit der Taskleiste oben oder links
+        // wanderte das Fenster sonst bei jedem Start um deren Breite. Und
+        // SetWindowPlacement holt ein Fenster zurueck, das ganz ausserhalb
+        // laege — etwa nachdem ein zweiter Bildschirm abgesteckt wurde.
+        if (placement.valid && !efx::gui::selbsttestAktiv()) {
+            WINDOWPLACEMENT wp{};
+            wp.length = sizeof(wp);
+            if (GetWindowPlacement(hwnd, &wp)) {
+                wp.showCmd = SW_HIDE;  // gezeigt wird weiter unten
+                wp.rcNormalPosition = RECT{placement.x, placement.y, placement.x + placement.width,
+                                           placement.y + placement.height};
+                SetWindowPlacement(hwnd, &wp);
+            }
         }
     }
 
@@ -987,6 +1020,9 @@ static bool runSession(efx::gui::App& app, efx::render::Backend preferred,
     // also muessen sie vor dessen Zerstoerung enden. Vorher stand
     // renderer.reset() nach DestroyContext — der Renderer haette dort in
     // seinem Erzeuger auf einen bereits freigegebenen Kontext zugegriffen.
+    // Erst die Texturen der App ueber diesen Renderer freigeben — danach ist
+    // er weg, und unter Direct3D bliebe jede Textur samt Geraet liegen.
+    app.releaseGraphicsResources(renderer.get());
     renderer->shutdownImGuiBackend();
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();
@@ -1158,6 +1194,24 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR commandLine, int) {
     // spaet, und alles erscheint verwaschen.
     announceDpiAwareness();
 
+    // Der Ordner der Exe, bevor irgendein Pfad gebraucht wird: davon haengt
+    // der mitnehmbare Betrieb ab (efxed_portable.txt daneben). Bis zur
+    // Fehlersuche am 03.10.2026 wurde er nie gesetzt, und es zaehlte der
+    // Arbeitsordner — ueber eine Verknuepfung gestartet, war der Betrieb weg.
+    efx::paths::setExeDirectory(exeDirectory());
+
+    // Die Argumente einzeln, wie Windows sie trennt: mehrere Dateien aufs
+    // Symbol gezogen, Pfade mit Leerzeichen in Anfuehrungszeichen. Vorher
+    // galt die ganze Zeile als EIN Pfad ("a.efx" "b.efx" -> nicht lesbar).
+    const std::vector<std::string> arguments = commandLineArguments(commandLine);
+
+    // Nach einem Update: erst warten, bis die alte Instanz beendet ist — VOR
+    // dem Protokoll. Die alte hat ihr Protokoll noch offen; diese hier haette
+    // es sonst umbenannt bzw. geleert, waehrend die alte noch hineinschreibt.
+    for (const std::string& argument : arguments) {
+        efx::gui::updater::waitForPredecessor(argument);
+    }
+
     // Als Allererstes das Protokoll. Vor allem, was abstuerzen koennte.
     // Im Selbsttest liegen Einstellungen und Protokoll in einem eigenen
     // Ordner — der Test fasst die echten Einstellungen nie an.
@@ -1188,12 +1242,6 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR commandLine, int) {
         nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     efx::diag::info(SUCCEEDED(comReady) ? "COM ready" : "COM unavailable");
 
-    // Nach einem Update: warten, bis die alte Instanz ihre Einstellungen
-    // fertig geschrieben hat — sonst liest diese hier den halben Stand.
-    if (commandLine && *commandLine) {
-        efx::gui::updater::waitForPredecessor(toUtf8(commandLine));
-    }
-
     efx::gui::App app;
 
     app.startup();
@@ -1207,15 +1255,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR commandLine, int) {
         }
     }
 
-    if (commandLine && *commandLine) {
-        std::string path = toUtf8(commandLine);
-        if (path.size() >= 2 && path.front() == '"' && path.back() == '"') {
-            path = path.substr(1, path.size() - 2);
-        }
+    for (const std::string& path : arguments) {
         // Nach einem Update startet die alte Fassung die neue mit
         // "--nach-update=<pid>". Das ist keine Datei; gewartet wurde schon
-        // vor startup() (siehe oben).
-        if (path.rfind("--nach-update=", 0) != 0) app.openFile(path);
+        // ganz am Anfang (siehe oben).
+        if (path.rfind("--nach-update=", 0) == 0) continue;
+        app.openFile(path);
     }
     // Reste eines frueheren Updates wegraeumen und — wenn eingeschaltet —
     // im Hintergrund nachsehen, ob es eine neuere Fassung gibt.

@@ -89,20 +89,25 @@ std::vector<Spawn> schedule(const Effect& effect, Random& random,
         // der Faelle gar nichts (flrand < 0.5). Hier stand `if (count < 1)
         // count = 1` — die Vorschau zeigte immer mindestens eines, im Mittel
         // 1.25 statt 1.0.
-        int count = 1;
-        if (p.count.set) {
-            if (p.count.min == p.count.max || !p.count.ranged) {
-                count = static_cast<int>(p.count.min);
-            } else {
-                count = static_cast<int>(random.pick(p.count) + 0.5f);
-            }
-        }
-        if (count < 0) count = 0;
         // FX_MAX_EFFECT_COMPONENTS begrenzt die Segmente, nicht die Anzahl je
         // Segment — aber eine Datei mit count 100000 wuerde die Vorschau
         // aufhaengen, und das hilft niemandem beim Bearbeiten.
         constexpr int kMaxPerSegment = 4096;
-        if (count > kMaxPerSegment) count = kMaxPerSegment;
+        // Erst als float begrenzen, dann umwandeln: "count 3000000000" passt
+        // in keinen int, die Umwandlung war undefiniert und ergab 0 Teilchen.
+        const auto toCount = [](float value) {
+            if (!(value > 0.0f)) return 0;  // auch NaN
+            if (value >= static_cast<float>(kMaxPerSegment)) return kMaxPerSegment;
+            return static_cast<int>(value);
+        };
+        int count = 1;
+        if (p.count.set) {
+            if (p.count.min == p.count.max || !p.count.ranged) {
+                count = toCount(p.count.min);
+            } else {
+                count = toCount(random.pick(p.count) + 0.5f);
+            }
+        }
 
         // Gleichmaessige Verteilung: die Spanne wird in count Schritte geteilt.
         //   factor = |max - min| / count;  delay = t * factor
@@ -244,7 +249,19 @@ Path buildPath(const camera::Vec3& origin, const camera::Vec3& velocity,
     float currentGravity = gravity;
     float segmentStart = 0.0f;
 
-    for (float t = 0.0f; t < lifeMs; t += kStepMs) {
+    // Mit einem ganzzahligen Zaehler: "t += 8" kommt als float ab 2^27 ms
+    // nicht mehr voran (t + 8 == t), und life 1.4e8 lief endlos.
+    for (long long stepIndex = 0;; ++stepIndex) {
+        const float t = static_cast<float>(static_cast<double>(stepIndex) * kStepMs);
+        if (t >= lifeMs) break;
+        // Zur Ruhe gekommen: es bewegt sich nichts mehr, also trifft auch
+        // nichts mehr. Vorher lief die Schleife trotzdem ueber das ganze Leben.
+        if (path.settledMs > 0.0f) break;
+        // Ebenso, wenn sich von vornherein nichts bewegt.
+        if (camera::dot(currentVelocity, currentVelocity) == 0.0f &&
+            camera::dot(currentAcceleration, currentAcceleration) == 0.0f && currentGravity == 0.0f) {
+            break;
+        }
         const float step = std::min(kStepMs, lifeMs - t);
         const float from = t - segmentStart;
         const float to = from + step;

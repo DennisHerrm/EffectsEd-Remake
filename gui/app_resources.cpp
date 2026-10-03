@@ -41,6 +41,20 @@ void App::clearTextures(render::Renderer* renderer) {
     missingTextures_.clear();
 }
 
+void App::releaseGraphicsResources(render::Renderer* renderer) {
+    // Fehlersuche 03.10.2026: unter Direct3D ist jede Kennung eine
+    // ID3D11ShaderResourceView mit eigener Referenz. forgetGraphicsResources
+    // vergass sie nur — jede hielt ihre Textur und das ganze Geraet am Leben,
+    // bei jedem Wechsel der Grafikschnittstelle aufs Neue.
+    settleTextureJobs();
+    if (!renderer) return;
+    clearTextures(renderer);
+    if (wallTexture_ != render::kNoTexture) renderer->destroyTexture(wallTexture_);
+    if (fallbackTexture_ != render::kNoTexture) renderer->destroyTexture(fallbackTexture_);
+    wallTexture_ = render::kNoTexture;
+    fallbackTexture_ = render::kNoTexture;
+}
+
 void App::forgetGraphicsResources() {
     // Erst die Arbeitsfaeden zur Ruhe bringen: sie halten `this` und liefern
     // Bildpunkte fuer einen Renderer, den es gleich nicht mehr gibt.

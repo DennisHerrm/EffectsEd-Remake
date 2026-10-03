@@ -206,7 +206,13 @@ public:
         return true;
     }
 
-    ~D3D11Renderer() override = default;
+    ~D3D11Renderer() override {
+        // Was jetzt noch lebt, hat niemand freigegeben: jede Ansicht haelt
+        // ihre Textur UND das ganze Geraet am Leben. Steht hier eine Zahl
+        // ueber 0, ist das ein Leck (Fehlersuche 03.10.2026: bei jedem
+        // Wechsel der Grafikschnittstelle blieben alle Texturen liegen).
+        diag::info("d3d11: textures alive at shutdown: " + std::to_string(liveTextures_));
+    }
 
     bool initImGuiBackend() override {
         if (!ImGui::GetCurrentContext()) {
@@ -700,17 +706,23 @@ public:
         // clampMap: der Rand wird nicht wiederholt. Welcher Sampler gilt,
         // entscheidet drawTriangles nach dieser Liste.
         if (clamp) clampTextures_.insert(srv);
+        ++liveTextures_;
         return reinterpret_cast<TextureId>(srv);
     }
+
+    long long liveTextureCount() const override { return static_cast<long long>(liveTextures_); }
 
     void destroyTexture(TextureId texture) override {
         if (texture == kNoTexture) return;
         auto* srv = reinterpret_cast<ID3D11ShaderResourceView*>(texture);
         clampTextures_.erase(srv);
         srv->Release();
+        if (liveTextures_ > 0) --liveTextures_;
     }
 
 private:
+    size_t liveTextures_ = 0;
+
     static D3D11_BLEND d3dFactor(BlendFactor f) {
         switch (f) {
             case BlendFactor::Zero: return D3D11_BLEND_ZERO;

@@ -426,8 +426,14 @@ void App::drawPlaybackDialog() {
                                    ? timeline::EndMode::Repeat
                                    : timeline::EndMode::Stop);
         settings_.repeat = repeating;
-        // Die Werkzeugleiste folgt (und damit das repeatDelay der Datei).
-        setRepeatRateSeconds(playback_.repeatRateSeconds);
+        // Die Werkzeugleiste folgt (und damit das repeatDelay der Datei) —
+        // aber nur, wenn die Rate im Dialog wirklich geaendert wurde. Vorher
+        // schrieb schon ein blosses OK "repeatDelay 300" in eine Datei ohne
+        // repeatDelay: aus einem einmaligen Effekt wurde im Spiel ein
+        // wiederholter, und das Dokument galt als geaendert.
+        if (std::fabs(playback_.repeatRateSeconds - repeatRateSeconds()) > 0.0005f) {
+            setRepeatRateSeconds(playback_.repeatRateSeconds);
+        }
         // Laeuft gerade etwas, gilt das Neue sofort.
         if (playing()) previewDirty_ = true;
         ImGui::CloseCurrentPopup();
@@ -1177,10 +1183,11 @@ void App::takeScreenshot(render::Renderer* renderer, bool toClipboard) {
     const std::string path = folder + "/" + stamp;
 
     const auto tga = image::encodeTga(pixels.data(), width, height);
-    std::ofstream file(path, std::ios::binary);
-    if (file) {
-        file.write(reinterpret_cast<const char*>(tga.data()),
-                   static_cast<std::streamsize>(tga.size()));
+    if (!paths::writeFileReplacing(path, tga.data(), tga.size())) {
+        // Vorher meldete die Statuszeile "gespeichert", auch wenn nichts
+        // geschrieben wurde.
+        diag::warn("screenshot not written: " + path);
+        return;
     }
     screenshotMessage_ = std::string(tr(Str::MsgScreenshotSaved)) + ": " + stamp;
     screenshotMessageUntil_ = static_cast<float>(ImGui::GetTime()) + 4.0f;
@@ -1202,14 +1209,9 @@ void App::openUsersGuide() {
     // 270 KB ist das nicht messbar, und so ist nach einer neuen Fassung
     // auch das Handbuch aktuell.
     const std::string path = paths::configDir() + "/Using_EffectsEd.html";
-    {
-        std::ofstream out(path, std::ios::binary);
-        if (!out.good()) {
-            diag::warn("could not write the manual to " + path);
-            return;
-        }
-        out.write(reinterpret_cast<const char*>(help::kUsersGuide),
-                  static_cast<std::streamsize>(help::kUsersGuideSize));
+    if (!paths::writeFileReplacing(path, help::kUsersGuide, help::kUsersGuideSize)) {
+        diag::warn("could not write the manual to " + path);
+        return;
     }
     diag::info("manual written: " + path);
     if (shellOpen_) shellOpen_(path);

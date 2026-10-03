@@ -6,7 +6,10 @@ namespace efx::timeline {
 namespace {
 
 float clampRange(float value, float low, float high) {
-    return value < low ? low : (value > high ? high : value);
+    // NaN zaehlt als "zu klein". Vorher ging es durch beide Vergleiche
+    // hindurch, und Zeitfaktor oder Bildrate blieben dauerhaft NaN.
+    if (!(value >= low)) return low;
+    return value > high ? high : value;
 }
 
 }  // namespace
@@ -100,13 +103,17 @@ void Clock::stepFrames(int frames) {
 }
 
 void Clock::setSpeed(float value) {
+    if (!std::isfinite(value)) return;  // NaN/inf: der bisherige Wert bleibt
     // Nach unten begrenzt, damit die Uhr nicht stehenbleibt und man glaubt,
     // das Programm haenge. Nach oben, weil darueber ohnehin nichts mehr zu
     // erkennen ist.
     speed_ = clampRange(value, 0.01f, 8.0f);
 }
 
-void Clock::setFrameRate(float fps) { frameRate_ = clampRange(fps, 1.0f, 240.0f); }
+void Clock::setFrameRate(float fps) {
+    if (!std::isfinite(fps)) return;  // NaN/inf: der bisherige Wert bleibt
+    frameRate_ = clampRange(fps, 1.0f, 240.0f);
+}
 
 int Clock::currentFrame() const {
     return static_cast<int>(timeMs_ * frameRate_ / 1000.0f + 0.5f);

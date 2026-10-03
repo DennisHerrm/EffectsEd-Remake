@@ -4,13 +4,13 @@ namespace efx::undo {
 
 void Stack::reset(const Effect& state) {
     states_.clear();
-    states_.push_back({state, {}});
+    states_.push_back({state, {}, nextId_++});
     position_ = 0;
 }
 
 void Stack::record(const Effect& state, std::string what) {
     if (states_.empty()) {
-        states_.push_back({state, std::move(what)});
+        states_.push_back({state, std::move(what), nextId_++});
         position_ = 0;
         return;
     }
@@ -19,7 +19,7 @@ void Stack::record(const Effect& state, std::string what) {
     // etwas Neues tut, kann das Verworfene nicht mehr wiederherstellen. So
     // verhaelt sich jedes Programm, und alles andere waere verwirrend.
     states_.resize(position_ + 1);
-    states_.push_back({state, std::move(what)});
+    states_.push_back({state, std::move(what), nextId_++});
 
     // Obergrenze. Faellt vorne etwas weg, wandert die aktuelle Stelle mit.
     while (states_.size() > limit_) {

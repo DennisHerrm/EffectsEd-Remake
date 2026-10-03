@@ -1,9 +1,12 @@
 #include "efx/jobs.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <deque>
+#include <exception>
+#include <memory>
 #include <mutex>
 #include <thread>
 
@@ -51,6 +54,23 @@ struct Pool::Impl {
     std::mutex splitMutex;
     std::condition_variable splitSignal;
 
+    // Eine Aufgabe ausfuehren, ohne dass eine Ausnahme den Faden verlaesst.
+    //
+    // Eine Ausnahme, die aus einem std::thread herausfaellt, ruft
+    // std::terminate — das ganze Programm endet. Genau das geschah bei einem
+    // 82-Byte-JPEG, das 2 GB anforderte (std::bad_alloc in der
+    // Texturaufgabe): ein kaputtes Bild in einer heruntergeladenen .pk3
+    // beendete den Editor beim Blaettern. Die Aufgabe gilt dann als erledigt,
+    // ihr Ergebnis bleibt aus; wer darauf wartet, sieht "nicht geladen".
+    static void runGuarded(const std::function<void()>& task) {
+        try {
+            task();
+        } catch (...) {
+            failedTasks.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    static inline std::atomic<unsigned> failedTasks{0};
+
     // Holt eine Aufgabe und führt sie aus. Gibt false zurück, wenn nichts da
     // war.
     bool runOne() {
@@ -61,7 +81,7 @@ struct Pool::Impl {
             task = std::move(queue.front());
             queue.pop_front();
         }
-        task();
+        runGuarded(task);
         {
             std::lock_guard<std::mutex> lock(queueMutex);
             if (--outstanding == 0) idleSignal.notify_all();
@@ -79,7 +99,7 @@ struct Pool::Impl {
                 task = std::move(queue.front());
                 queue.pop_front();
             }
-            task();
+            runGuarded(task);
             {
                 std::lock_guard<std::mutex> lock(queueMutex);
                 if (--outstanding == 0) idleSignal.notify_all();
@@ -119,7 +139,7 @@ Pool::~Pool() {
 
 void Pool::post(std::function<void()> task) {
     if (threadCount_ == 0) {
-        task();
+        Impl::runGuarded(task);  // auf einem Einkerner: hier, ebenso geschuetzt
         return;
     }
     {
@@ -152,37 +172,63 @@ void Pool::parallelFor(size_t count, size_t grainSize,
         return;
     }
 
-    std::atomic<size_t> next{0};
-    std::atomic<size_t> running{0};
+    // Gewartet wird auf ERLEDIGTE PORTIONEN, nicht auf die Helfer.
+    //
+    // Vorher zaehlte "running" die Helfer, und der aufrufende Faden wartete,
+    // bis jeder eingereihte Helfer einmal drangekommen war — auch wenn er
+    // selbst laengst alle Portionen erledigt hatte. Standen die Helfer hinter
+    // fremder Arbeit (Texturen laden) in der Schlange, stand der Hauptfaden
+    // mit: gemessen 583 ms neben 4 x 300 ms Laden, fuer eine leere Schleife.
+    //
+    // Jetzt liegt der Zaehler in einem geteilten Block, den auch ein spaeter
+    // Helfer noch sicher anfassen kann: er holt sich eine Nummer >= chunks und
+    // geht wieder. body/cancel/progress fasst er nur mit einer gueltigen
+    // Nummer an — und solange es die gibt, wartet der Aufrufer noch.
+    struct Shared {
+        std::atomic<size_t> next{0};
+        std::atomic<size_t> finished{0};
+        // Die erste Ausnahme aus body. Sie darf weder einen Helfer beenden
+        // (dann fehlte seine Portion, und der Aufrufer wartete ewig) noch den
+        // Aufrufer vorzeitig verlassen (dann liefen Helfer mit einem body
+        // weiter, den es nicht mehr gibt). Also: Portion als erledigt zaehlen,
+        // Ausnahme merken, nach dem Warten im Aufrufer weiterwerfen.
+        std::mutex errorMutex;
+        std::exception_ptr error;
+    };
+    auto shared = std::make_shared<Shared>();
+    Impl* impl = impl_.get();
 
-    auto worker = [&] {
+    auto worker = [shared, chunks, grainSize, count, &body, cancel, progress, impl] {
         for (;;) {
-            const size_t index = next.fetch_add(1, std::memory_order_relaxed);
+            const size_t index = shared->next.fetch_add(1, std::memory_order_relaxed);
             if (index >= chunks) break;
-            if (cancel && cancel->cancelled()) break;
-
-            const size_t begin = index * grainSize;
-            const size_t end = std::min(begin + grainSize, count);
-            body(begin, end);
-
-            if (progress) {
-                progress->done.fetch_add(end - begin, std::memory_order_relaxed);
+            // Abgebrochen: die Portion zaehlt als erledigt, nur ohne Arbeit —
+            // sonst wartete der Aufrufer auf sie.
+            if (!cancel || !cancel->cancelled()) {
+                const size_t begin = index * grainSize;
+                const size_t end = std::min(begin + grainSize, count);
+                try {
+                    body(begin, end);
+                } catch (...) {
+                    std::lock_guard<std::mutex> lock(shared->errorMutex);
+                    if (!shared->error) shared->error = std::current_exception();
+                }
+                if (progress) progress->done.fetch_add(end - begin, std::memory_order_relaxed);
             }
-        }
-        if (running.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-            // Unter der Sperre benachrichtigen, damit der Wartende nicht
-            // zwischen Zähler und Signal hindurchschlüpft. Sperre und Signal
-            // gehören dem Verteiler — sie können hier nicht mehr unter den
-            // Füßen weggezogen werden.
-            std::lock_guard<std::mutex> lock(impl_->splitMutex);
-            impl_->splitSignal.notify_all();
+            if (shared->finished.fetch_add(1, std::memory_order_acq_rel) + 1 == chunks) {
+                // Unter der Sperre benachrichtigen, damit der Wartende nicht
+                // zwischen Zaehler und Signal hindurchschluepft. Sperre und
+                // Signal gehoeren dem Verteiler und leben laenger als dieser
+                // Aufruf.
+                std::lock_guard<std::mutex> lock(impl->splitMutex);
+                impl->splitSignal.notify_all();
+            }
         }
     };
 
     // Nicht mehr Helfer als Portionen. Zehn Fäden auf drei Portionen anzusetzen
     // bringt sieben Umschaltungen und keinen Nutzen.
     const size_t helpers = std::min<size_t>(threadCount_, chunks - 1);
-    running.store(helpers + 1, std::memory_order_relaxed);
     for (size_t i = 0; i < helpers; ++i) post(worker);
 
     // Der aufrufende Faden arbeitet mit, statt zu warten. Auf einem Rechner
@@ -192,8 +238,10 @@ void Pool::parallelFor(size_t count, size_t grainSize,
 
     std::unique_lock<std::mutex> lock(impl_->splitMutex);
     impl_->splitSignal.wait(lock, [&] {
-        return running.load(std::memory_order_acquire) == 0;
+        return shared->finished.load(std::memory_order_acquire) == chunks;
     });
+    lock.unlock();
+    if (shared->error) std::rethrow_exception(shared->error);
 }
 
 void Pool::postToMain(std::function<void()> task) {

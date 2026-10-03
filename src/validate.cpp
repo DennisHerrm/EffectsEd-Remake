@@ -3,6 +3,8 @@
 // Jede Regel hier hat eine Fundstelle im Spielcode. Es geht nicht um Geschmack,
 // sondern um Faelle, in denen die Datei etwas sagt und das Spiel etwas anderes
 // tut — genau die Faelle, die man sonst erst im Spiel bemerkt.
+#include <algorithm>
+#include <cctype>
 #include <set>
 
 #include "efx/io.h"
@@ -215,7 +217,13 @@ std::vector<Diagnostic> validate(const Effect& effect, Dialect target) {
             // Wie viele der drei parameterbehafteten Arten wurden geschrieben?
             int named = 0;
             std::string listed;
-            for (const auto& word : words) {
+            // Wie der Leser und die Engine: ohne Ruecksicht auf Gross- und
+            // Kleinschreibung, und nur die ersten kMaxCurveFlagWords Woerter —
+            // was dahinter steht, liest das Spiel gar nicht.
+            const size_t counted = std::min(words.size(), kMaxCurveFlagWords);
+            for (size_t w = 0; w < counted; ++w) {
+                std::string word = words[w];
+                for (char& ch : word) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
                 bool isParmType = word == "nonlinear" || word == "wave" ||
                                   word == "clamp";
                 if (isParmType) {

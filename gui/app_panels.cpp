@@ -10,6 +10,7 @@
 // Zustaendigkeiten die Stelle, an der ein Leser aufgibt.
 #include "app.h"
 #include "update.h"
+#include "efx/diag.h"
 #include "efx/i18n.h"
 
 #include <algorithm>
@@ -842,6 +843,11 @@ bool App::moveSegment(int from, int to) {
 
 bool App::insertSegmentAt(int at) {
     auto& list = doc().effect.primitives;
+    // Dieselbe Grenze wie "Neues Segment" und Klonen — hier fehlte sie.
+    if (list.size() >= kMaxSegments) {
+        diag::warn("segment limit reached (" + std::to_string(kMaxSegments) + ")");
+        return false;
+    }
     if (at < 0) at = 0;
     if (at > static_cast<int>(list.size())) at = static_cast<int>(list.size());
 
@@ -1004,7 +1010,6 @@ void App::drawSegmentList(float width, float height) {
         }
 
         for (int i = 0; i < static_cast<int>(doc().effect.primitives.size()); ++i) {
-            const Primitive& p = doc().effect.primitives[i];
             // Feste Zeilenhoehe, wenn eingestellt — sonst wie bisher an den
             // Inhalt angepasst. Der Rollbalken bleibt in beiden Faellen: die
             // Hoehe aendert nur, wie viel gleichzeitig hineinpasst.
@@ -1117,6 +1122,10 @@ void App::drawSegmentList(float width, float height) {
                 ImGui::TextDisabled("%s", tr(Str::SegmentMoveHint));
                 ImGui::EndPopup();
             }
+            // Erst NACH dem Menue holen: "Einfuegen" vergroessert die Liste,
+            // der Vektor zieht dabei um, und eine vorher genommene Referenz
+            // zeigte fuer den Rest der Zeile in freigegebenen Speicher.
+            const Primitive& p = doc().effect.primitives[static_cast<size_t>(i)];
 
             ImGui::TableSetColumnIndex(1);
             ImGui::TextUnformatted(typeName(p.type));
