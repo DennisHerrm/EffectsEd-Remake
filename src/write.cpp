@@ -214,17 +214,44 @@ public:
         line();
         line(indent(1) + key);
         line(indent(1) + "[");
-        for (const auto& item : items) line(indent(2) + quoteIfNeeded(item));
+        for (const auto& item : items) {
+            // Leer oder "]" laesst sich nicht schreiben: "" liest GP2 als
+            // Dateiende, "]" als Listenende — die Rueckleseprobe verwarf dann
+            // das ganze Speichern, und der Anwender erfuhr es nicht.
+            if (item.empty() || item == "]") continue;
+            line(indent(2) + quoteIfNeeded(item));
+        }
         line(indent(1) + "]");
+    }
+
+    // ParseFlags/ParseSpawnFlags lesen hoechstens 7 Woerter je Zeile (ein
+    // sscanf mit sieben Plaetzen) und verknuepfen mehrere Zeilen mit ODER.
+    // Also in Zeilen zu hoechstens 7 Woertern schreiben — vorher stand alles
+    // in einer, und ab dem achten Flag ging beim naechsten Lesen eines
+    // verloren (wie schon im Original-EffectsEd).
+    void flagLines(const std::string& key, const std::string& words) {
+        std::istringstream in(words);
+        std::vector<std::string> all;
+        for (std::string w; in >> w;) all.push_back(w);
+        constexpr size_t kPerLine = 7;
+        for (size_t start = 0; start < all.size(); start += kPerLine) {
+            std::string chunk;
+            for (size_t i = start; i < all.size() && i < start + kPerLine; ++i) {
+                if (!chunk.empty()) chunk += " ";
+                chunk += all[i];
+            }
+            keyValue(1, key, chunk);
+        }
     }
 
     std::string flagText(uint32_t bits, const std::vector<FlagName>& table,
                          const std::vector<std::string>& original = {}) const {
         // Die gelesenen Woerter, solange sie noch genau diese Bits ergeben —
-        // wie die Engine sie liest: hoechstens sieben, Gross/Klein egal.
+        // alle Woerter (geschrieben wird in Zeilen zu hoechstens sieben, die
+        // die Engine ODER-verknuepft), Gross/Klein egal.
         if (!original.empty()) {
             uint32_t fromWords = 0;
-            for (size_t i = 0; i < original.size() && i < 7; ++i) {
+            for (size_t i = 0; i < original.size(); ++i) {
                 for (const auto& entry : table) {
                     if (iequalsAscii(original[i], entry.name)) fromWords |= entry.bits;
                 }
@@ -289,12 +316,12 @@ std::string write(const Effect& effect, const WriteOptions& options) {
 
         if (!p.name.empty()) w.keyValue(1, "name", quoteIfNeeded(p.name));
         if (p.flags) {
-            w.keyValue(1, p.flagsSingular ? "flag" : "flags",
-                       w.flagText(p.flags, flagNames(), p.flagWords));
+            w.flagLines(p.flagsSingular ? "flag" : "flags",
+                        w.flagText(p.flags, flagNames(), p.flagWords));
         }
         if (p.spawnFlags) {
-            w.keyValue(1, p.spawnFlagsSingular ? "spawnFlag" : "spawnFlags",
-                       w.flagText(p.spawnFlags, spawnFlagNames(), p.spawnFlagWords));
+            w.flagLines(p.spawnFlagsSingular ? "spawnFlag" : "spawnFlags",
+                        w.flagText(p.spawnFlags, spawnFlagNames(), p.spawnFlagWords));
         }
         if (p.materialImpactSet) {
             w.keyValue(1, "materialImpact",

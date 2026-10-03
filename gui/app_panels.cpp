@@ -11,6 +11,7 @@
 #include "app.h"
 #include "update.h"
 #include "efx/diag.h"
+#include "efx/paths.h"
 #include "efx/i18n.h"
 
 #include <algorithm>
@@ -55,7 +56,8 @@ void App::drawMenuBar() {
             for (const std::string& path : settings_.recentFiles) {
                 if (++number > 16) break;
                 std::error_code ec;
-                const bool exists = std::filesystem::exists(path, ec);
+                // UTF-8 -> Pfad: sonst war jeder Eintrag mit Umlaut ausgegraut.
+                const bool exists = std::filesystem::exists(paths::fromUtf8(path), ec);
                 const std::string label = std::to_string(number % 10) + "  " + path;
                 if (ImGui::MenuItem(label.c_str(), nullptr, false, exists)) chosen = path;
             }
@@ -439,13 +441,13 @@ void App::drawToolbar(float dpiScale) {
         // Vorgabe 0.300). Der Wert ist zugleich das `repeatDelay` der Datei.
         float repeatSeconds = repeatRateSeconds();
         ImGui::SetNextItemWidth(em * 4.0f);
-        const bool byField = ImGui::DragFloat("##repeatRate", &repeatSeconds, 0.005f, 0.001f,
+        const bool byField = shared::dragFloatFinite("##repeatRate", &repeatSeconds, 0.005f, 0.001f,
                                               60.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr(Str::ToolRepeatRate));
         ImGui::SameLine();
         ImGui::SetNextItemWidth(em * 8.0f);
         float slider = std::clamp(repeatSeconds, 0.05f, 5.0f);
-        const bool bySlider = ImGui::SliderFloat("##repeatSlider", &slider, 0.05f, 5.0f, "",
+        const bool bySlider = shared::sliderFloatFinite("##repeatSlider", &slider, 0.05f, 5.0f, "",
                                                  ImGuiSliderFlags_Logarithmic);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr(Str::ToolRepeatRate));
         if (bySlider) repeatSeconds = slider;
@@ -499,14 +501,14 @@ void App::drawToolbar(float dpiScale) {
         // Zeitfaktor: Feld (%.2f) und Regler, logarithmisch 0.1 bis 10
         // (gemessen: Wert = 10^((pos-500)/500)). Wirkt nur im Editor.
         ImGui::SetNextItemWidth(em * 3.5f);
-        if (ImGui::DragFloat("##timeScale", &settings_.timeScale, 0.01f, 0.1f, 10.0f, "%.2f",
+        if (shared::dragFloatFinite("##timeScale", &settings_.timeScale, 0.01f, 0.1f, 10.0f, "%.2f",
                              ImGuiSliderFlags_AlwaysClamp)) {
             doc().clock.setSpeed(settings_.timeScale);
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr(Str::ToolTimeScale));
         ImGui::SameLine();
         ImGui::SetNextItemWidth(em * 8.0f);
-        if (ImGui::SliderFloat("##timeSlider", &settings_.timeScale, 0.1f, 10.0f, "",
+        if (shared::sliderFloatFinite("##timeSlider", &settings_.timeScale, 0.1f, 10.0f, "",
                                ImGuiSliderFlags_Logarithmic)) {
             doc().clock.setSpeed(settings_.timeScale);
         }
@@ -711,7 +713,7 @@ void App::drawTimeline(float dpiScale) {
     const float available = ImGui::GetContentRegionAvail().x - tail;
     ImGui::SetNextItemWidth(available > 120.0f ? available : 120.0f);
     float progress = doc().clock.progress();
-    if (ImGui::SliderFloat("##scrub", &progress, 0.0f, 1.0f, "")) {
+    if (shared::sliderFloatFinite("##scrub", &progress, 0.0f, 1.0f, "")) {
         doc().clock.setProgress(progress);
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr(Str::TimelineScrub));
@@ -719,7 +721,7 @@ void App::drawTimeline(float dpiScale) {
     ImGui::SameLine();
     ImGui::SetNextItemWidth(80.0f * dpiScale);
     float speed = doc().clock.speed();
-    if (ImGui::DragFloat("##speed", &speed, 0.01f, 0.01f, 8.0f, "%.2fx")) {
+    if (shared::dragFloatFinite("##speed", &speed, 0.01f, 0.01f, 8.0f, "%.2fx")) {
         doc().clock.setSpeed(speed);
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr(Str::TimelineSpeed));
@@ -727,7 +729,7 @@ void App::drawTimeline(float dpiScale) {
     ImGui::SameLine();
     ImGui::SetNextItemWidth(70.0f * dpiScale);
     float fps = doc().clock.frameRate();
-    if (ImGui::DragFloat("##fps", &fps, 1.0f, 1.0f, 240.0f, "%.0f Hz")) {
+    if (shared::dragFloatFinite("##fps", &fps, 1.0f, 1.0f, 240.0f, "%.0f Hz")) {
         doc().clock.setFrameRate(fps);
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr(Str::TimelineFrameRate));
@@ -813,6 +815,7 @@ void App::drawTimeline(float dpiScale) {
 }
 
 bool App::moveSegment(int from, int to) {
+    flushPendingFieldEdit();
     auto& list = doc().effect.primitives;
     const int count = static_cast<int>(list.size());
     if (from < 0 || from >= count || to < 0 || to >= count || from == to) {
@@ -885,6 +888,7 @@ void App::startRename(int index) {
 }
 
 void App::sortSegments(int column, bool ascending) {
+    diag::info("sort segments by column " + std::to_string(column) + (ascending ? " ascending" : " descending"));
     auto& list = doc().effect.primitives;
     if (list.size() < 2) return;
     doc().segmentEnabled.resize(list.size(), true);
@@ -955,9 +959,13 @@ void App::drawSegmentList(float width, float height) {
         // Die Kopfzeile von Hand statt TableHeadersRow: so bekommt jeder Kopf
         // eine Testmarke (der Selbsttest klickt ihn zum Sortieren an).
         ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
+        bool headerClicked = false;
         for (int column = 0; column < 5; ++column) {
             if (!ImGui::TableSetColumnIndex(column)) continue;
             ImGui::TableHeader(ImGui::TableGetColumnName(column));
+            // Beim LOSLASSEN, wie TableHeader selbst die Sortierung umschaltet
+            // (IsItemClicked meldet das Druecken, ein Bild zu frueh).
+            if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) headerClicked = true;
             const std::string mark = "liste/kopf" + std::to_string(column);
             testmarke::marke(mark.c_str());
         }
@@ -967,8 +975,15 @@ void App::drawSegmentList(float width, float height) {
         // the header of a column"). Vorher zeigte der Kopf einen Pfeil, und
         // nichts geschah.
         if (ImGuiTableSortSpecs* specs = ImGui::TableGetSortSpecs()) {
+            // NUR nach einem Klick auf einen Kopf. ImGui meldet "geaendert"
+            // auch ohne Klick: beim ersten Anlegen der Tabelle mit einer
+            // gespeicherten Sortierung (efxed_gui.ini, "Sort=0^") und nach
+            // einer Minute auf der Startseite (TableGcCompactTransientBuffers,
+            // dort selbst als FIXME vermerkt). Dann wurde das Dokument
+            // umsortiert und galt als geaendert — und die Reihenfolge der
+            // Segmente ist die, in der die Engine sie abarbeitet.
             if (specs->SpecsDirty) {
-                if (specs->SpecsCount > 0) {
+                if (headerClicked && specs->SpecsCount > 0) {
                     sortSegments(specs->Specs[0].ColumnIndex,
                                  specs->Specs[0].SortDirection == ImGuiSortDirection_Ascending);
                 }
@@ -1002,7 +1017,7 @@ void App::drawSegmentList(float width, float height) {
             // lesbar, und ein Wert, bei dem man nichts mehr sieht, ist keine
             // Einstellung, sondern eine Falle.
             const float smallest = ImGui::GetTextLineHeight();
-            if (ImGui::DragFloat("##rowHeightValue", &rowHeight, 0.5f, smallest,
+            if (shared::dragFloatFinite("##rowHeightValue", &rowHeight, 0.5f, smallest,
                                  smallest * 6.0f, "%.0f px")) {
                 settings_.segmentRowHeight = rowHeight;
             }

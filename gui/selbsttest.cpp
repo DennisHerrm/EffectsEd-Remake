@@ -1797,6 +1797,117 @@ public:
             return text.str().find("654") != std::string::npos && !doc().dirty;
         }));
 
+        // 10. Die Segmentliste sortierte das Dokument ohne Klick um: ImGui
+        //     wendet eine gespeicherte Sortierung (efxed_gui.ini, Sort=0^) an,
+        //     sobald die Tabelle neu angelegt wird — etwa nach einer Weile auf
+        //     der Startseite. Hier wird "eine Weile" auf sofort gestellt.
+        frischesDokument(s);
+        neuesSegment(s, PrimitiveType::Particle);
+        neuesSegment(s, PrimitiveType::Particle);
+        // Einmal per Klick nach Namen sortieren: ImGui behaelt diese
+        // Sortierung (wie eine gespeicherte aus efxed_gui.ini).
+        s.push_back(klickMarke("liste/kopf0"));
+        s.push_back(warte(3));
+        s.push_back(tu("zwei Segmente, nicht nach Namen geordnet", [] {
+            effekt().primitives.clear();
+            for (const char* name : {"zebra", "alpha"}) {
+                Primitive p = freshPrimitive(PrimitiveType::Particle);
+                p.name = name;
+                effekt().primitives.push_back(p);
+            }
+            doc().segmentEnabled.assign(effekt().primitives.size(), true);
+            doc().undo.reset(effekt());
+            doc().savedUndoId = doc().undo.currentId();
+            doc().dirty = false;
+            ImGui::GetIO().ConfigMemoryCompactTimer = 0.0f;
+            app->wantStartTab_ = true;
+        }));
+        s.push_back(warte(20));
+        s.push_back(pruefSchritt("(Vorbedingung) die Startseite ist vorn", [] { return app->startTabActive_; }));
+        s.push_back(tu("zurueck in den Editor", [] { app->showEditor(); }));
+        s.push_back(warte(10));
+        s.push_back(pruefSchritt("die Liste sortiert das Dokument nicht von selbst um", [] {
+            return anzahlSegmente() == 2 && effekt().primitives[0].name == "zebra" && !doc().dirty;
+        }));
+        s.push_back(tu("Speicherverdichtung zurueck", [] { ImGui::GetIO().ConfigMemoryCompactTimer = 60.0f; }));
+
+        // 11. Speichern, waehrend ein Feld noch bearbeitet wird: die Datei hat
+        //     den neuen Wert, aber der Merker "gespeichert" stand auf dem
+        //     Stand davor — Strg+Z danach galt als "sauber".
+        frischesDokument(s);
+        neuesSegment(s, PrimitiveType::Particle);
+        const std::string pfadTippen = arbeitsOrdner + "/fehlersuche_tippen.efx";
+        s.push_back(dateiAntwort(pfadTippen));
+        // In einem Schritt: das Feld ist noch aktiv, Strg+S kommt im selben Bild.
+        s.push_back(tu("Eingabe Life 777 angefangen, dann Strg+S im selben Bild", [] {
+            gewaehlt()->life = Range::single(777.0f);
+            doc().dirty = true;
+            app->fieldEditOpen_ = true;
+            app->cmdSave();
+        }));
+        s.push_back(warte(3));
+        s.push_back(pruefSchritt("nach dem Speichern: sauber, kein Stern", [] { return !doc().dirty; }));
+        s.push_back(taste(ImGuiKey_Z, true));
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("Strg+Z danach weicht von der Datei ab: geaendert", [] { return doc().dirty; }));
+
+        // 12. "Spielpfad festlegen" von der Startseite oeffnete den Dialog mit
+        //     leerem Feld; OK loeschte den eingestellten Spielpfad.
+        s.push_back(tu("Spielpfad gesetzt, Feld im Dialog leer", [] {
+            app->settings_.gamePath = arbeitsOrdner;
+            app->gamePathBuffer_[0] = '\0';
+            app->showGamePathDialog_ = true;   // wie der Knopf auf der Startseite
+        }));
+        s.push_back(warteBis("Spielpfad-Dialog offen", [] { return dialogOffen("###gamepath"); }, 30));
+        s.push_back(pruefSchritt("der Dialog zeigt den eingestellten Spielpfad", [] {
+            return std::string(app->gamePathBuffer_) == app->settings_.gamePath;
+        }));
+        s.push_back(klick(tr(Str::MsgCancel), "###gamepath"));
+        s.push_back(tu("Spielpfad zurueck", [] { app->settings_.gamePath.clear(); }));
+        s.push_back(allesZu());
+
+        // 13. Letzte Dateien mit Umlaut im Pfad waren ausgegraut (MSVC) und
+        //     liessen sich nicht oeffnen.
+        frischesDokument(s);
+        {
+            const std::string pfad = arbeitsOrdner + "/J\xC3\xB6rg_letzte.efx";
+            s.push_back(tu("eine existierende Datei mit Umlaut in die letzten Dateien", [pfad] {
+                std::ofstream(paths::fromUtf8(pfad), std::ios::binary)
+                    << "Particle\n{\n\tlife\t432\n}\n";
+                app->settings_.addRecentFile(pfad);
+            }));
+            s.push_back(klick(tr(Str::MenuFile), "##main"));
+            s.push_back(klick(tr(Str::FileRecent), "##Menu"));
+            // Bei sehr langen Pfaden legt ImGui das Untermenue UEBER den
+            // Mauszeiger, und das Loslassen waehlt schon den ersten Eintrag.
+            // Dann ist nichts mehr zu klicken.
+            {
+                const Schritt eintrag = klick("1  " + pfad, "");
+                s.push_back({"Eintrag anklicken (falls noch noetig)", [eintrag, pfad](int b) {
+                                 if (doc().filePath == pfad) return true;
+                                 return eintrag.tun(b);
+                             }});
+            }
+            s.push_back(warte(3));
+            s.push_back(pruefSchritt("der Eintrag mit Umlaut oeffnet die Datei", [pfad] {
+                return doc().filePath == pfad && gewaehlt() && gewaehlt()->life.min == 432.0f;
+            }));
+            s.push_back(menuesZu());
+        }
+
+        // 14. Getippte Werte "nan" und "inf" landeten in der Datei.
+        frischesDokument(s);
+        neuesSegment(s, PrimitiveType::Particle);
+        s.push_back(klick(tr(Str::TabGeneration), "properties"));
+        s.push_back(klickMarke("life/min", 0, true));
+        s.push_back(taste(ImGuiKey_A, true));
+        s.push_back(tippe("nan"));
+        s.push_back(taste(ImGuiKey_Enter));
+        s.push_back(warte(3));
+        s.push_back(pruefSchritt("getipptes nan wird nicht uebernommen", [] {
+            return gewaehlt() && std::isfinite(gewaehlt()->life.min) && std::isfinite(gewaehlt()->life.max);
+        }));
+
         // 9. Ein zweites "Installieren" in derselben Sitzung legte die ALTE
         //    exe wieder ueber die neue (der Rueckweg lief, obwohl der erste
         //    Schritt gar nicht geklappt hatte). Steht am Ende: danach ist die
