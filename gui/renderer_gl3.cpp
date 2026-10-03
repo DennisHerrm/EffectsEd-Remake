@@ -587,6 +587,15 @@ public:
         return static_cast<TextureId>(texture);
     }
 
+    int mipLevels(TextureId texture) const override {
+        if (texture == kNoTexture) return -1;
+        GLint filter = 0;
+        glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(texture));
+        glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, &filter);
+        // Ohne Kette steht GL_LINEAR, mit Kette GL_LINEAR_MIPMAP_LINEAR.
+        return filter == GL_LINEAR ? 1 : 2;
+    }
+
     void destroyTexture(TextureId texture) override {
         if (texture == kNoTexture) return;
         const GLuint name = static_cast<GLuint>(texture);

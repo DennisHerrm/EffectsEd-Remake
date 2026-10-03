@@ -95,6 +95,32 @@ Image decodeTga(const unsigned char* data, size_t size) {
     if (depth != 8 && depth != 15 && depth != 16 && depth != 24 && depth != 32) {
         return fail("unsupported TGA bit depth");
     }
+    // Was das Spiel ueberhaupt laedt (LoadTGA, tr_image_tga.cpp): Typ 2, 3
+    // und 10, 24 oder 32 Bit (8 Bit nur als Grau), keine Farbtabelle, Typ 10
+    // nur von unten nach oben. Alles andere zeigt die Engine als
+    // Ersatzkaestchen — hier wurde es trotzdem gezeigt, teils mit falschen
+    // Farben (Farbtabelle mit Startindex, 16-Bit-Eintraege, 16-Bit-Grau).
+    // Abgleich vom 03.10.2026: efxed zeigt dasselbe wie das Spiel.
+    {
+        const unsigned firstColourMapEntry =
+            static_cast<unsigned>(data[3]) | (static_cast<unsigned>(data[4]) << 8);
+        if (imageType != 2 && imageType != 3 && imageType != 10) {
+            return fail("the game loads only TGA types 2, 3 and 10");
+        }
+        if (firstColourMapEntry != 0) return fail("the game does not load TGA colour maps");
+        if (colourMapLength != 0 && colourMapLength != 256) {
+            return fail("the game needs a TGA colour map length of 0 or 256");
+        }
+        if (colourMapDepth != 0 && colourMapDepth != 24) {
+            return fail("the game needs a TGA colour map entry size of 0 or 24");
+        }
+        if (depth != 24 && depth != 32 && !(depth == 8 && imageType == 3)) {
+            return fail("the game loads only 24/32-bit TGA (8-bit only as grey)");
+        }
+        if (imageType == 10 && (descriptor & 0x30) != 0) {
+            return fail("the game loads RLE TGA only bottom-to-top");
+        }
+    }
     // 8 Bit gibt es nur als Index (Farbtabelle) oder Grau. Ein Farbbild mit
     // 8 Bit las vorher je Bildpunkt drei Byte aus einem Byte grossen Platz —
     // also hinter das Ende der Daten.

@@ -261,11 +261,16 @@ Path buildPath(const camera::Vec3& origin, const camera::Vec3& velocity,
     float currentGravity = gravity;
     float segmentStart = 0.0f;
 
-    // Mit einem ganzzahligen Zaehler: "t += 8" kommt als float ab 2^27 ms
-    // nicht mehr voran (t + 8 == t), und life 1.4e8 lief endlos.
-    for (long long stepIndex = 0;; ++stepIndex) {
-        const float t = static_cast<float>(static_cast<double>(stepIndex) * kStepMs);
-        if (t >= lifeMs) break;
+    // Die Zeit als double: "t += 8" kommt als float ab 2^27 ms nicht mehr
+    // voran (t + 8 == t), und life 1.4e8 lief endlos.
+    //
+    // Nach einem Aufprall geht es AB DEM AUFPRALL weiter, nicht erst ab dem
+    // naechsten vollen Schritt. Vorher blieb der Rest des 8-ms-Schritts
+    // ungeprueft, und ein schneller Funke stand danach schon hinter der
+    // naechsten Wand (gemessen: 214 von 400 Abprallern verliessen den Raum).
+    double clock = 0.0;
+    while (clock < static_cast<double>(lifeMs)) {
+        const float t = static_cast<float>(clock);
         // Zur Ruhe gekommen: es bewegt sich nichts mehr, also trifft auch
         // nichts mehr. Vorher lief die Schleife trotzdem ueber das ganze Leben.
         if (path.settledMs > 0.0f) break;
@@ -274,7 +279,8 @@ Path buildPath(const camera::Vec3& origin, const camera::Vec3& velocity,
             camera::dot(currentAcceleration, currentAcceleration) == 0.0f && currentGravity == 0.0f) {
             break;
         }
-        const float step = std::min(kStepMs, lifeMs - t);
+        const float step = static_cast<float>(std::min(static_cast<double>(kStepMs),
+                                                       static_cast<double>(lifeMs) - clock));
         const float from = t - segmentStart;
         const float to = from + step;
 
@@ -286,7 +292,10 @@ Path buildPath(const camera::Vec3& origin, const camera::Vec3& velocity,
                                           to * 0.001f);
 
         const Hit hit = trace(a, b, planes);
-        if (!hit.hit) continue;
+        if (!hit.hit) {
+            clock += step;
+            continue;
+        }
 
         const float hitMs = t + step * hit.fraction;
         path.impactMs.push_back(hitMs);
@@ -337,7 +346,18 @@ Path buildPath(const camera::Vec3& origin, const camera::Vec3& velocity,
         path.segments.push_back({hitMs, position, currentVelocity,
                                  currentAcceleration, currentGravity});
 
-        if (static_cast<int>(path.segments.size()) > kMaxBounces) break;
+        // Genug Aufpralle: hier liegen bleiben. Vorher brach die Schleife nur
+        // ab, und der letzte Abschnitt flog ohne Kollision weiter — bis weit
+        // hinter die Waende.
+        if (static_cast<int>(path.segments.size()) > kMaxBounces) {
+            path.segments.back().velocity = {};
+            path.segments.back().acceleration = {};
+            path.segments.back().gravity = 0.0f;
+            if (path.settledMs <= 0.0f) path.settledMs = hitMs;
+            break;
+        }
+        // Weiter ab dem Aufprall, mindestens ein kleines Stueck voran.
+        clock = std::max(static_cast<double>(hitMs), clock + 1e-3);
     }
     return path;
 }

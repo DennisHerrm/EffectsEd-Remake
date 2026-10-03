@@ -149,11 +149,16 @@ public:
             if (!iequals(word, "linear") && !iequals(word, "nonlinear") &&
                 !iequals(word, "wave") && !iequals(word, "random") &&
                 !iequals(word, "clamp")) {
-                warn(prop.line, "Unbekannte Uebergangsart \"" + word + "\"");
+                warn(prop.line, "Unbekannte Uebergangsart \"" + word +
+                                    "\" — die Engine verwirft damit die ganze Zeile");
             }
         }
-        if (wordsOut) *wordsOut = words;
-        return curveFlagsFromWords(words);
+        // Mehrere Zeilen: hinten anhaengen, getrennt (siehe kCurveLineBreak).
+        if (wordsOut) {
+            if (!wordsOut->empty()) wordsOut->push_back(kCurveLineBreak);
+            wordsOut->insert(wordsOut->end(), words.begin(), words.end());
+        }
+        return curveFlagsOfLine(words);
     }
 
     // --- Unterbloecke ----------------------------------------------------
@@ -169,7 +174,8 @@ public:
                 readRange(prop, out.parm);
                 out.parmPlural = iequals(prop.name, "parms");
             } else if (iequals(prop.name, "flag") || iequals(prop.name, "flags")) {
-                out.curveFlags = readCurveFlags(prop, &out.curveWords);
+                // ODER, nicht ersetzen: zwei Zeilen gelten in der Engine beide.
+                out.curveFlags |= readCurveFlags(prop, &out.curveWords);
                 out.flagsPlural = iequals(prop.name, "flags");
             } else {
                 warn(prop.line, std::string("Unbekannter Schluessel \"") + prop.name +
@@ -189,7 +195,7 @@ public:
                 readRange(prop, out.parm);
                 out.parmPlural = iequals(prop.name, "parms");
             } else if (iequals(prop.name, "flag") || iequals(prop.name, "flags")) {
-                out.curveFlags = readCurveFlags(prop, &out.curveWords);
+                out.curveFlags |= readCurveFlags(prop, &out.curveWords);
                 out.flagsPlural = iequals(prop.name, "flags");
             } else {
                 warn(prop.line, "Unbekannter Schluessel \"" + prop.name +

@@ -130,6 +130,11 @@ struct Index {
     bool hasTexture(const std::string& name) const;
 };
 
+// Laedt die Engine diese Shaderdefinition? Nur, wenn jedes Bild jeder Stufe
+// zu finden ist (ParseStage: R_FindImageFile scheitert -> return qfalse ->
+// die ganze Definition gilt nicht, gezeichnet wird tr.defaultShader).
+bool engineLoadsShader(const Index& index, const shader::Shader& shader);
+
 // Liest ausschließlich; verändert nichts im Spielordner.
 //
 // Der Pool ist optional. Ohne ihn läuft der Suchlauf seriell — bei einer

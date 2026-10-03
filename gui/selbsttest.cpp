@@ -1908,6 +1908,55 @@ public:
             return gewaehlt() && std::isfinite(gewaehlt()->life.min) && std::isfinite(gewaehlt()->life.max);
         }));
 
+        // 15. "nomipmaps" im Shader: die Engine laedt das Bild ohne Mip-Kette
+        //     (Upload32, tr_image.cpp). efxed baute immer eine (71 Bezuege).
+        frischesDokument(s);
+        neuesSegment(s, PrimitiveType::Particle);
+        s.push_back(tu("Spielordner mit nomipmaps-Shader und Bild", [] {
+            const fs::path ordner = fs::path(arbeitsOrdner) / "nomip_base";
+            std::error_code ec;
+            fs::create_directories(ordner / "shaders", ec);
+            fs::create_directories(ordner / "gfx", ec);
+            schreibeDatei((ordner / "shaders" / "nomip.shader").string(),
+                          "gfx/nomiptest\n{\n\tnomipmaps\n\t{\n\t\tmap gfx/nomiptest.tga\n"
+                          "\t\tblendFunc GL_ONE GL_ONE\n\t}\n}\n");
+            std::vector<unsigned char> pixel(64 * 64 * 4, 200);
+            const auto tga = image::encodeTga(pixel.data(), 64, 64);
+            std::ofstream((ordner / "gfx" / "nomiptest.tga"), std::ios::binary)
+                .write(reinterpret_cast<const char*>(tga.data()), static_cast<std::streamsize>(tga.size()));
+            app->settings_.gamePath = ordner.string();
+            app->settings_.extraGamePaths.clear();
+            app->rescanAssets();
+            Primitive& p = *gewaehlt();
+            p.life = Range::single(100000.0f);
+            p.shaders = {"gfx/nomiptest"};
+            app->recordChange("test");
+            app->pressPlay();
+        }));
+        s.push_back(warteSekunden("Bild geladen", [] {
+            for (const auto& [name, id] : app->textureCache_) {
+                if (name.find("nomiptest") != std::string::npos && id != render::kNoTexture) return true;
+            }
+            return false;
+        }, 10.0));
+        s.push_back(pruefSchritt("nomipmaps: das Bild hat keine Mip-Kette (wie im Spiel)", [] {
+            bool seen = false;
+            for (const auto& [name, id] : app->textureCache_) {
+                if (name.find("nomiptest") == std::string::npos) continue;
+                const int levels = renderer->mipLevels(id);
+                diag::info("nomiptest [" + name + "] Mip-Stufen: " + std::to_string(levels));
+                // JEDE Fassung ohne Kette — auch eine vorab geladene.
+                if (levels != 1) return false;
+                seen = true;
+            }
+            return seen;
+        }));
+        s.push_back(tu("aufraeumen", [] {
+            app->pressStop();
+            app->settings_.gamePath.clear();
+            app->rescanAssets();
+        }));
+
         // 9. Ein zweites "Installieren" in derselben Sitzung legte die ALTE
         //    exe wieder ueber die neue (der Rueckweg lief, obwohl der erste
         //    Schritt gar nicht geklappt hatte). Steht am Ende: danach ist die

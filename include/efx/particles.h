@@ -398,8 +398,9 @@ inline constexpr int kMaxEffectDepth = 4;
 // 5000 Teilchen hielt 3,2 Mio. (1,5 GB). Die Engine begrenzt das zur Laufzeit
 // selbst (ihr Effektvorrat ist endlich); die Vorschau rechnet alles im Voraus
 // und braucht deshalb eine eigene Grenze. 200 000 liegt weit ueber dem, was
-// echte Effekte erzeugen, und weit unter dem, was das Programm lahmlegt.
-inline constexpr size_t kMaxLiveItems = 200000;
+// echte Effekte erzeugen, und weit unter dem, was das Programm lahmlegt (gemessen: echte Effekte
+// haben hoechstens rund 570 gleichzeitig, mit Vorlauf einige Tausend).
+inline constexpr size_t kMaxLiveItems = 100000;
 
 // Woher die Modelle der Emitter kommen — wie EffectLoader ein Rueckruf, damit
 // der Kern das Dateisystem nicht kennt. Der Name steht wie in der .efx

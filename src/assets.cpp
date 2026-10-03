@@ -952,7 +952,25 @@ bool Index::hasShader(const std::string& name) const {
 }
 
 bool Index::hasTexture(const std::string& name) const {
-    return std::binary_search(textures.begin(), textures.end(), toLower(name));
+    // Wie der Bestand die Namen ablegt: klein, "/", OHNE Endung. Ein Shader,
+    // der sein Bild mit Endung nennt (gfx/misc/csteam.jpg), galt vorher als
+    // fehlend — die Engine laedt es (R_FindImageFile versucht die Endungen).
+    return std::binary_search(textures.begin(), textures.end(), normaliseName(name, Kind::Texture));
+}
+
+bool engineLoadsShader(const Index& index, const shader::Shader& shader) {
+    // Bilder, die die Engine selbst erzeugt, sind immer da.
+    const auto found = [&index](const std::string& image) {
+        if (image.empty() || image[0] == '$' || image[0] == '*') return true;
+        return index.hasTexture(image);
+    };
+    for (const auto& stage : shader.stages) {
+        if (!found(stage.map) || !found(stage.clampMap)) return false;
+        for (const auto& frame : stage.animMaps) {
+            if (!found(frame)) return false;
+        }
+    }
+    return true;
 }
 
 namespace {

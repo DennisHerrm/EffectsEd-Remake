@@ -216,6 +216,9 @@ public:
     // Bilder, die eine Shaderstufe mit clampMap benutzt: sie werden mit
     // Randklemmung angelegt (sonst blutet die gegenueberliegende Kante ein).
     std::set<std::string> clampImages_;
+    // Bilder aus Shadern mit "nomipmaps": ohne Mip-Kette hochladen, wie die
+    // Engine (Upload32 legt dann keine Kette an).
+    std::set<std::string> noMipImages_;
     void collectDecodedTextures(render::Renderer* renderer);
     // Ein Bild anfordern, ohne es sofort zu brauchen.
     void requestTexture(const std::string& imageName);

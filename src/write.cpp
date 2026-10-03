@@ -134,9 +134,14 @@ public:
     // Ausblenden war nach einmal Oeffnen und Speichern weg.
     std::string curveText(int flags, const std::vector<std::string>& words) const {
         if (!words.empty() && curveFlagsFromWords(words) == flags) {
+            // Die gelesenen Zeilen, wie sie waren (kCurveLineBreak trennt).
             std::string text;
             for (const auto& word : words) {
-                if (!text.empty()) text += " ";
+                if (word == kCurveLineBreak) {
+                    text += kCurveLineBreak;
+                    continue;
+                }
+                if (!text.empty() && text.back() != '\n') text += " ";
                 text += word;
             }
             return text;
@@ -178,7 +183,15 @@ public:
     void writeCurveFlags(int flags, const std::vector<std::string>& words,
                          bool plural) {
         const std::string text = curveText(flags, words);
-        if (!text.empty()) keyValue(2, plural ? "flags" : "flag", text);
+        // Je Zeile eine flags-Zeile (die Engine verknuepft sie mit ODER).
+        size_t from = 0;
+        while (from <= text.size()) {
+            const size_t to = text.find('\n', from);
+            const std::string one = text.substr(from, to == std::string::npos ? std::string::npos : to - from);
+            if (!one.empty()) keyValue(2, plural ? "flags" : "flag", one);
+            if (to == std::string::npos) break;
+            from = to + 1;
+        }
     }
 
     // Ein Block, den die Engine nicht kennt, wortwoertlich (ForeignGroup).
