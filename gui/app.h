@@ -41,6 +41,7 @@
 #include "efx/shader.h"
 #include "efx/timeline.h"
 #include "efx/sound.h"
+#include "efx/theme.h"
 #include "efx/undo.h"
 
 namespace efx::gui {
@@ -104,6 +105,10 @@ public:
     void buildFrame(render::Renderer* renderer, int windowWidth, int windowHeight,
                     float dpiScale);
 
+    // Farben und Groessen eines Themas, auf die Bildschirmskalierung der
+    // Sitzung gebracht (Menue Ansicht > Thema).
+    void applyStyle(const theme::Theme& t);
+
     // Schreibt die Einstellungen zurueck.
     void shutdown();
 
@@ -129,6 +134,9 @@ public:
     bool openFile(const std::string& path);
     // Eine aufs Fenster gezogene Datei: .efx als Effekt, .pk3 als Archiv.
     void openDroppedFile(const std::string& path);
+    // Vom Fensterrahmen (WM_DROPFILES): vormerken. Geoeffnet wird erst, wenn
+    // kein Dialog, keine Eingabe und kein Umbenennen mehr offen ist.
+    void queueDroppedFile(const std::string& path);
 
     // Vom Fensterrahmen gesetzt: oeffnet einen Windows-Dateidialog. Die
     // Oberflaeche kennt keine Win32-Aufrufe, deshalb ueber einen Rueckruf.
@@ -377,6 +385,12 @@ private:
     bool showConfirm_ = false;
     std::string confirmText_;
     std::function<void()> confirmYes_;
+    // Ein Hinweis mit OK — fuer Fehler, die der Anwender sehen muss
+    // (Speichern oder Oeffnen gescheitert), nicht nur das Protokoll.
+    void showNotice(std::string text);
+    void drawNoticeDialog();
+    bool showNotice_ = false;
+    std::string noticeText_;
     bool showSaveChangesDialog_ = false;
     int pendingClose_ = -1;
     bool pendingQuit_ = false;
@@ -696,7 +710,8 @@ private:
     float colourBackup_[3] = {};
     std::vector<std::string> extraPathsBackup_;
     bool colourBackupOverridden_ = false;
-    void startPlayback();
+    // keepSounds: laufende Klaenge nicht abbrechen (Neuaufbau, kein Neustart).
+    void startPlayback(bool keepSounds = false);
     // Ungleich 0: jeder Start benutzt diesen Ausgangswert (Selbsttest).
     unsigned fixedSeed_ = 0;
     // Die Zeitleiste zwischen Ansicht und Segmentliste.
@@ -761,6 +776,13 @@ private:
     // je Sekunde.
     bool soundsOffReported_ = false;
     Audio audio_;
+    // Wie oft triggerSounds einen Klang gestartet hat (fuer den Selbsttest).
+    int soundsStarted_ = 0;
+    // Bildschirmskalierung der Sitzung (aus buildFrame), fuer applyStyle.
+    float dpiScale_ = 1.0f;
+    // Aufs Fenster gezogene Dateien, die noch auf einen ruhigen Moment warten.
+    std::vector<std::string> droppedFiles_;
+    void openQueuedDrops();
     playback::Origin spawnOrigin_;
 
     // Fortlaufendes Nachlegen, wie es die Wiedergabe-Einstellungen des

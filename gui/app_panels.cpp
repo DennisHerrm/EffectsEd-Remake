@@ -30,6 +30,10 @@ namespace efx::gui {
 using i18n::Str;
 using i18n::tr;
 
+void App::applyStyle(const theme::Theme& t) {
+    applyTheme(t, dpiScale_);
+}
+
 void App::drawMenuBar() {
     if (!ImGui::BeginMenuBar()) return;
 
@@ -148,7 +152,7 @@ void App::drawMenuBar() {
                 const bool selected = settings_.themeId == t.id;
                 if (ImGui::MenuItem(t.name(), nullptr, selected)) {
                     settings_.themeId = t.id;
-                    applyTheme(t);
+                    applyStyle(t);
                     // Raum, Gitter und Achsen bekommen ihre Farben aus dem
                     // Thema — sie muessen mitwechseln.
                     geometryDirty_ = true;

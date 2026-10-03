@@ -106,6 +106,8 @@ void App::rescanAssets() {
     if (settings_.allGamePaths().empty()) {
         assets_ = assets::Index{};
         assetsScanned_ = false;
+        // Auch hier: die Bilder des alten Spielpfads gelten nicht mehr.
+        textureCacheDirty_ = true;
         return;
     }
     diag::Step step("Scan game assets");

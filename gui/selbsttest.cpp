@@ -634,6 +634,10 @@ public:
     // erzwungen) — zum Vergleich mit dem fertigen Fensterbild.
     static int punktVorschau[3];
     static bool punktMitte;
+    static std::chrono::steady_clock::time_point klangStart;
+    static float klangZeit;
+    static float stilVorher[3];
+    static std::string themaVorher;
     // Liest die Farbe des Bildpunkts in der oberen linken Ecke der Ansicht
     // (ein Stueck nach innen, ausserhalb von Achsen und Effekt).
     static Schritt leseAnsichtsEcke() {
@@ -773,7 +777,7 @@ public:
             for (const auto& th : theme::builtinThemes()) {
                 if (th.id == "classic") {
                     app->settings_.themeId = th.id;
-                    applyTheme(th);
+                    app->applyStyle(th);
                     app->geometryDirty_ = true;
                 }
             }
@@ -1866,6 +1870,165 @@ public:
         s.push_back(tu("Spielpfad zurueck", [] { app->settings_.gamePath.clear(); }));
         s.push_back(allesZu());
 
+        // 18. Der Texturzwischenspeicher wurde nur in der Editoransicht
+        //     geleert. Auf der Startseite (neuer Spielpfad, .pk3 geoeffnet)
+        //     zeigten die Kacheln weiter die alten Bilder oder den Ersatz
+        //     fuer "fehlt", bis man einmal im Editor war.
+        s.push_back(tu("Startseite; ein Bild gilt als fehlend", [] {
+            app->wantStartTab_ = true;
+            app->textureCache_["image:cacheprobe"] = render::kNoTexture;
+        }));
+        s.push_back(warte(5));
+        auto probeWeg = [](const std::string& wann) {
+            return pruefSchritt("auf der Startseite ist der alte Zwischenspeicher verworfen (" + wann + ")", [] {
+                diag::info(std::string("Startseite vorn: ") + (app->startTabActive_ ? "ja" : "nein") +
+                           ", vorgemerkt: " + (app->textureCacheDirty_ ? "ja" : "nein") + ", Probe noch da: " +
+                           (app->textureCache_.count("image:cacheprobe") ? "ja" : "nein"));
+                return app->startTabActive_ && !app->textureCacheDirty_ &&
+                       app->textureCache_.count("image:cacheprobe") == 0;
+            });
+        };
+        s.push_back(tu("neuer Spielpfad (wie nach dem Spielpfad-Dialog)", [] {
+            app->settings_.gamePath = arbeitsOrdner;
+            app->settings_.extraGamePaths.clear();
+            app->rescanAssets();
+        }));
+        s.push_back(warte(5));
+        s.push_back(probeWeg("neuer Spielpfad"));
+        s.push_back(tu("ein Bild gilt als fehlend; Spielpfad wieder leer", [] {
+            app->textureCache_["image:cacheprobe"] = render::kNoTexture;
+            app->settings_.gamePath.clear();
+            app->rescanAssets();
+        }));
+        s.push_back(warte(5));
+        s.push_back(probeWeg("Spielpfad geloescht"));
+        s.push_back(tu("zurueck in den Editor", [] { app->showEditor(); }));
+
+        // 19. Ein Theme-Wechsel setzte den Stil auf 100 % zurueck: applyTheme
+        //     schreibt feste Groessen, ScaleAllSizes lief nur beim Start. Bei
+        //     150 % wurde FramePadding 9x6 zu 6x4 — alles gedrungen.
+        s.push_back(tu("Stilgroessen merken", [] {
+            const ImGuiStyle& st = ImGui::GetStyle();
+            stilVorher[0] = st.FramePadding.x;
+            stilVorher[1] = st.FramePadding.y;
+            stilVorher[2] = st.ScrollbarSize;
+            themaVorher = app->settings_.themeId;
+        }));
+        {
+            // Hin zu einem anderen Thema und zurueck, ueber das echte Menue.
+            std::string anderes, zurueck;
+            for (const auto& th : theme::builtinThemes()) {
+                if (anderes.empty() && th.id != "classic") anderes = th.name();
+                if (th.id == "classic") zurueck = th.name();
+            }
+            for (const std::string& name : {zurueck, anderes}) {
+                s.push_back(klick(tr(Str::MenuView), "##main"));
+                s.push_back(klick(tr(Str::ViewTheme), "##Menu"));
+                s.push_back(klick(name, "##Menu"));
+                s.push_back(menuesZu());
+                s.push_back(warte(2));
+            }
+        }
+        s.push_back(pruefSchritt("nach dem Theme-Wechsel gilt die Bildschirmskalierung weiter", [] {
+            const ImGuiStyle& st = ImGui::GetStyle();
+            diag::info("FramePadding vorher " + std::to_string(stilVorher[0]) + "x" + std::to_string(stilVorher[1]) +
+                       ", nachher " + std::to_string(st.FramePadding.x) + "x" + std::to_string(st.FramePadding.y) +
+                       "; Bildlaufleiste " + std::to_string(stilVorher[2]) + " -> " + std::to_string(st.ScrollbarSize));
+            return std::fabs(st.FramePadding.x - stilVorher[0]) < 0.01f &&
+                   std::fabs(st.FramePadding.y - stilVorher[1]) < 0.01f &&
+                   std::fabs(st.ScrollbarSize - stilVorher[2]) < 0.01f;
+        }));
+        s.push_back(tu("Thema zurueck", [] {
+            if (const theme::Theme* th = theme::findTheme(themaVorher)) {
+                app->settings_.themeId = th->id;
+                app->applyStyle(*th);
+            }
+        }));
+
+        // 20. WM_DPICHANGED wurde nicht behandelt: zog man das Fenster auf
+        //     einen Bildschirm mit anderer Skalierung, blieben Schrift und
+        //     Stil in der alten Groesse. Die Nachricht, die Windows dann
+        //     schickt, hier selbst schicken — mit dem jetzigen Fensterrechteck,
+        //     damit nichts verrutscht.
+        auto dpiNachricht = [](UINT dpi) {
+            HWND fenster = static_cast<HWND>(ImGui::GetMainViewport()->PlatformHandleRaw);
+            RECT r{};
+            GetWindowRect(fenster, &r);
+            SendMessageW(fenster, WM_DPICHANGED, MAKEWPARAM(dpi, dpi), reinterpret_cast<LPARAM>(&r));
+        };
+        s.push_back(tu("Skalierung merken, Fenster meldet 192 dpi", [dpiNachricht] {
+            stilVorher[0] = app->dpiScale_;
+            dpiNachricht(192);
+        }));
+        s.push_back(warte(3));
+        s.push_back(pruefSchritt("nach WM_DPICHANGED: Schrift und Stil in der neuen Groesse (200 %)", [] {
+            const ImGuiStyle& st = ImGui::GetStyle();
+            const float schrift = ImGui::GetIO().Fonts->Fonts.empty() ? 0.0f : ImGui::GetIO().Fonts->Fonts[0]->FontSize;
+            diag::info("nach 192 dpi: Faktor " + std::to_string(app->dpiScale_) + ", FramePadding " +
+                       std::to_string(st.FramePadding.x) + "x" + std::to_string(st.FramePadding.y) +
+                       ", Schrift " + std::to_string(schrift));
+            return std::fabs(app->dpiScale_ - 2.0f) < 0.01f && std::fabs(st.FramePadding.x - 12.0f) < 0.01f &&
+                   std::fabs(schrift - 32.0f) < 0.5f;
+        }));
+        s.push_back(tu("Skalierung zurueck", [dpiNachricht] {
+            dpiNachricht(static_cast<UINT>(std::lround(stilVorher[0] * 96.0f)));
+        }));
+        s.push_back(warte(3));
+        s.push_back(pruefSchritt("und zurueck auf die alte Skalierung", [] {
+            diag::info("zurueck: Faktor " + std::to_string(app->dpiScale_) + ", FramePadding " +
+                       std::to_string(ImGui::GetStyle().FramePadding.x));
+            return std::fabs(app->dpiScale_ - stilVorher[0]) < 0.01f &&
+                   std::fabs(ImGui::GetStyle().FramePadding.x - 6.0f * stilVorher[0]) < 0.01f;
+        }));
+
+        // 21. Eine Datei, die aufs Fenster gezogen wird, waehrend ein Dialog
+        //     offen ist, oeffnete sofort — und der Dialog wirkte danach auf das
+        //     NEUE Dokument (Wiedergabe-Dialog: OK schrieb das repeatDelay
+        //     von A in B). Jetzt wartet die Datei, bis der Dialog zu ist.
+        frischesDokument(s);
+        neuesSegment(s, PrimitiveType::Particle);
+        const std::string pfadAblage = arbeitsOrdner + "/fehlersuche_ablage.efx";
+        s.push_back(tu("Datei zum Ziehen anlegen", [pfadAblage] {
+            std::ofstream(paths::fromUtf8(pfadAblage), std::ios::binary)
+                << "Particle\n{\n\tlife\t4321\n\tshaders\n\t[\n\t\tgfx/x\n\t]\n}\n";
+        }));
+        wiedergabeDialog(s);
+        s.push_back(tu("Datei aufs Fenster ziehen (WM_DROPFILES)", [pfadAblage] { app->queueDroppedFile(pfadAblage); }));
+        s.push_back(warte(5));
+        s.push_back(pruefSchritt("bei offenem Dialog bleibt das Dokument dasselbe", [] {
+            diag::info("Dokument: " + doc().filePath + ", Dialog offen: " + (dialogOffen("###playback") ? "ja" : "nein"));
+            return dialogOffen("###playback") && doc().filePath.find("fehlersuche_ablage") == std::string::npos;
+        }));
+        s.push_back(klick(tr(Str::MsgCancel), "###playback"));
+        s.push_back(warte(5));
+        s.push_back(pruefSchritt("nach dem Dialog ist die gezogene Datei offen", [] {
+            return !dialogOffen("###playback") && doc().filePath.find("fehlersuche_ablage") != std::string::npos &&
+                   anzahlSegmente() == 1 && gewaehlt() && gewaehlt()->life.min == 4321.0f;
+        }));
+
+        // 22. Scheiterte das Speichern (Ordner weg, schreibgeschuetzt, volle
+        //     Platte) oder das Oeffnen, stand das nur im Protokoll: Strg+S tat
+        //     sichtbar nichts. Jetzt sagt es ein Hinweis.
+        frischesDokument(s);
+        neuesSegment(s, PrimitiveType::Particle);
+        s.push_back(dateiAntwort(arbeitsOrdner + "/gibt_es_nicht/x.efx"));
+        menue(s, Str::MenuFile, Str::FileSaveAs);
+        s.push_back(warte(3));
+        s.push_back(pruefSchritt("Speichern in einen fehlenden Ordner: ein Hinweis erscheint, das Dokument bleibt geaendert", [] {
+            return dialogOffen("###notice") && doc().dirty;
+        }));
+        s.push_back(klick(tr(Str::MsgOk), "###notice"));
+        s.push_back(warte(2));
+        s.push_back(dateiAntwort(arbeitsOrdner + "/gibt_es_nicht.efx"));
+        menue(s, Str::MenuFile, Str::FileOpen);
+        s.push_back(warte(3));
+        s.push_back(pruefSchritt("Oeffnen einer fehlenden Datei: ein Hinweis erscheint", [] {
+            return dialogOffen("###notice");
+        }));
+        s.push_back(klick(tr(Str::MsgOk), "###notice"));
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("und schliesst mit OK", [] { return !dialogOffen("###notice"); }));
+
         // 13. Letzte Dateien mit Umlaut im Pfad waren ausgegraut (MSVC) und
         //     liessen sich nicht oeffnen.
         frischesDokument(s);
@@ -1953,6 +2116,120 @@ public:
         }));
         s.push_back(tu("aufraeumen", [] {
             app->pressStop();
+            app->settings_.gamePath.clear();
+            app->rescanAssets();
+        }));
+
+        // 16. Klaenge spielten NACHEINANDER statt gleichzeitig: alle liefen
+        //     ueber ein waveOut-Geraet, und das reiht Puffer an, statt sie zu
+        //     mischen. Zwei Klaenge zu je 0,5 s muessen nach 0,75 s beide
+        //     fertig sein (Stille, also nichts zu hoeren).
+        s.push_back(tu("zwei Klaenge zu 0,5 s gleichzeitig starten", [] {
+            app->audio_.stopAll();
+            if (!app->audio_.open(22050, 1)) {
+                diag::info("kein Tongeraet - Klangpruefung uebersprungen");
+                return;
+            }
+            const std::vector<int16_t> stille(11025, 0);
+            app->audio_.play(stille);
+            app->audio_.play(stille);
+            klangStart = std::chrono::steady_clock::now();
+        }));
+        s.push_back(warteSekunden("0,75 s", [] {
+            return std::chrono::duration<double>(std::chrono::steady_clock::now() - klangStart).count() > 0.75;
+        }, 5.0));
+        s.push_back(pruefSchritt("beide Klaenge sind nach 0,75 s fertig (gemischt, nicht angereiht)", [] {
+            if (!app->audio_.ready()) return true;
+            app->audio_.update();
+            diag::info("Klaenge noch aktiv: " + std::to_string(app->audio_.activeBuffers()));
+            return app->audio_.activeBuffers() == 0;
+        }));
+
+        // 16b. Das Verschieben eines Tongeraets war `= default` und kopierte
+        //      den rohen Griff: der alte Halter beendete beim Schliessen die
+        //      Klaenge des neuen (und beide schlossen dasselbe Geraet).
+        s.push_back(pruefSchritt("verschobenes Tongeraet: der alte Halter beendet den Klang des neuen nicht", [] {
+            Audio a;
+            if (!a.open(22050, 1)) {
+                diag::info("kein Tongeraet - Pruefung uebersprungen");
+                return true;
+            }
+            a.play(std::vector<int16_t>(22050, 0));
+            Audio b(std::move(a));
+            a.close();
+            b.update();
+            const int aktiv = b.activeBuffers();
+            diag::info("nach Schliessen des alten Halters noch aktiv: " + std::to_string(aktiv));
+            b.stopAll();
+            return aktiv == 1;
+        }));
+
+        // 17. Jede Feldaenderung WAEHREND der Wiedergabe baute die Vorschau
+        //     neu, brach den Klang ab und startete ihn im naechsten Bild neu
+        //     — beim Ziehen eines Reglers 60-mal je Sekunde. Ein Klang, der
+        //     schon dran war, bleibt dran: einmal gestartet, weiter laufend.
+        frischesDokument(s);
+        neuesSegment(s, PrimitiveType::Sound);
+        s.push_back(tu("Spielordner mit 3 s Stille, Ton an, abspielen", [] {
+            const fs::path ordner = fs::path(arbeitsOrdner) / "klangtest_base";
+            std::error_code ec;
+            fs::create_directories(ordner / "sound", ec);
+            // WAV, 22050 Hz, mono, 16 Bit, 3 s Stille.
+            const uint32_t daten = 22050u * 2u * 3u;
+            std::string wav = "RIFF";
+            auto u32 = [&wav](uint32_t v) { for (int k = 0; k < 4; ++k) wav += static_cast<char>((v >> (8 * k)) & 0xff); };
+            auto u16 = [&wav](uint16_t v) { wav += static_cast<char>(v & 0xff); wav += static_cast<char>(v >> 8); };
+            u32(36u + daten);
+            wav += "WAVEfmt ";
+            u32(16); u16(1); u16(1); u32(22050); u32(44100); u16(2); u16(16);
+            wav += "data";
+            u32(daten);
+            wav.append(daten, '\0');
+            std::ofstream(ordner / "sound" / "stille.wav", std::ios::binary) << wav;
+            app->settings_.gamePath = ordner.string();
+            app->settings_.extraGamePaths.clear();
+            app->rescanAssets();
+            app->settings_.playSounds = true;
+            app->pressStop();
+            Primitive& p = *gewaehlt();
+            p.life = Range::single(5000.0f);
+            p.sounds = {"sound/stille.wav"};
+            app->recordChange("test");
+            app->soundsStarted_ = 0;
+            app->pressPlay();
+        }));
+        s.push_back(warteBis("der Klang laeuft", [] { return app->soundsStarted_ > 0; }, 120));
+        for (int k = 0; k < 10; ++k) {
+            // Wie ein Regler, der gezogen wird (app_properties.cpp: changed).
+            s.push_back(tu("Feld aendern " + std::to_string(k + 1), [] {
+                app->fieldEditOpen_ = true;
+                app->previewDirty_ = true;
+            }));
+            s.push_back(warte(2));
+        }
+        // 17b. Dabei kam heraus: die Feldaenderung hielt die Wiedergabe AN.
+        //      refreshPreview spult zurueck an die alte Stelle, und scrubTo
+        //      setzt eine laufende Uhr auf "angehalten".
+        s.push_back(tu("Zeit merken", [] { klangZeit = app->doc().clock.timeMs(); }));
+        s.push_back(warte(5));
+        s.push_back(pruefSchritt("die Wiedergabe laeuft nach Feldaenderungen weiter", [] {
+            diag::info("Uhr: Zustand " + std::to_string(static_cast<int>(app->doc().clock.state())) + ", " +
+                       std::to_string(klangZeit) + " -> " + std::to_string(app->doc().clock.timeMs()) + " ms");
+            return app->doc().clock.state() == timeline::State::Playing &&
+                   app->doc().clock.timeMs() > klangZeit;
+        }));
+        s.push_back(pruefSchritt("Feldaenderungen starten den laufenden Klang nicht neu", [] {
+            diag::info("Klangstarts: " + std::to_string(app->soundsStarted_) + ", aktiv: " +
+                       std::to_string(app->audio_.activeBuffers()));
+            if (app->soundsStarted_ == 0 && !app->audio_.ready()) {
+                diag::info("kein Tongeraet - Klangpruefung uebersprungen");
+                return true;
+            }
+            return app->soundsStarted_ == 1 && app->audio_.activeBuffers() == 1;
+        }));
+        s.push_back(tu("stopp, Ton aus, Spielordner zurueck", [] {
+            app->pressStop();
+            app->settings_.playSounds = false;
             app->settings_.gamePath.clear();
             app->rescanAssets();
         }));
@@ -3626,6 +3903,10 @@ ImVec2 Selbsttest::punktOrt;
 int Selbsttest::punktFarbe[3] = {-1, -1, -1};
 int Selbsttest::punktVorschau[3] = {-1, -1, -1};
 bool Selbsttest::punktMitte = false;
+std::chrono::steady_clock::time_point Selbsttest::klangStart;
+float Selbsttest::klangZeit = 0.0f;
+float Selbsttest::stilVorher[3] = {};
+std::string Selbsttest::themaVorher;
 std::string Selbsttest::bericht;
 
 // ===========================================================================

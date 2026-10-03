@@ -40,6 +40,9 @@ public:
         return text_.substr(from, to - from);
     }
     size_t pos() const { return pos_; }
+    // Zeile des ersten Kommentars (0 = keiner). Gelesen wird darueber hinweg;
+    // gemerkt, damit der Leser sagen kann, dass Speichern sie verliert.
+    int firstCommentLine = 0;
     // Wo ein Token, das aus diesem Text stammt, beginnt. Bei einem Token in
     // Anfuehrungszeichen zaehlt das oeffnende Zeichen mit.
     size_t offsetOf(std::string_view token) const {
@@ -61,10 +64,12 @@ void skipWhitespaceAndComments(Cursor& c, bool allowLineBreaks) {
             c.advance();
         }
         if (c.peek() == '/' && c.peek(1) == '/') {
+            if (c.firstCommentLine == 0) c.firstCommentLine = c.line();
             while (!c.eof() && c.peek() != '\n') c.advance();
             continue;
         }
         if (c.peek() == '/' && c.peek(1) == '*') {
+            if (c.firstCommentLine == 0) c.firstCommentLine = c.line();
             c.advance(2);
             while (!c.eof() && !(c.peek() == '*' && c.peek(1) == '/')) c.advance();
             if (!c.eof()) c.advance(2);
@@ -211,6 +216,7 @@ ParseResult parse(std::string_view text) {
     ParseResult result;
     Cursor c(text);
     parseGroup(c, result.topLevel, /*topLevel=*/true, result.errors);
+    result.firstCommentLine = c.firstCommentLine;
     return result;
 }
 

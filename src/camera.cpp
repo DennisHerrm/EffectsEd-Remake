@@ -65,6 +65,19 @@ void Orbit::setDistance(float value) {
     distance_ = value < kNearest ? kNearest : (value > kFarthest ? kFarthest : value);
 }
 
+void Orbit::setWorldScale(float worldScale) {
+    // Vorher setzte die Oberflaeche nur den Abstand. worldScale_ blieb alt,
+    // und damit nahe/ferne Ebene, Dolly-Grenzen und Tempo: bei 8 -> 64 lag
+    // ein Drittel des Himmels hinter der fernen Ebene (Fehlersuche
+    // 03.10.2026). Der Raum waechst in Einheiten mit, also auch der
+    // verschobene Zielpunkt — die Ansicht bleibt dieselbe.
+    if (!(worldScale > 0.0f) || !(worldScale_ > 0.0f)) return;
+    const float ratio = worldScale / worldScale_;
+    worldScale_ = worldScale;
+    target_ = target_ * ratio;
+    setDistance(distance_ * ratio);
+}
+
 float Orbit::distanceToFit(float radius, float margin) const {
     if (!(radius > 0.0f)) radius = 1.0f;
     // Der halbe Bildwinkel spannt bei Abstand d eine halbe Bildhoehe von

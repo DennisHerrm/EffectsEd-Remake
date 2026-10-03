@@ -1206,6 +1206,32 @@ void testOriginalWriter() {
 // unbekanntes Wort verwirft die GANZE Zeile; mehrere Zeilen werden ODER-
 // verknuepft (mFlags |= ...). efxed nahm die letzte Zeile und verlor beim
 // Speichern die erste; ein unbekanntes Wort liess die bekannten gelten.
+// Abgleich Original (Befund 5): Kommentare gehen beim Speichern verloren —
+// im Original wie hier —, aber die Beschreibung versprach "verlustfrei", und
+// niemand erfuhr davon. 69 von 380 mitgelieferten Dateien haben welche.
+// Jetzt sagt es der Leser, mit der Zeile des ersten.
+void testOriginalComments() {
+    using namespace efx;
+    std::cout << "== Abgleich Original: Kommentare werden gemeldet ==\n";
+    auto kommentarHinweis = [](const ReadResult& r) -> const Diagnostic* {
+        for (const auto& d : r.diagnostics) {
+            if (d.message.find("Kommentar") != std::string::npos) return &d;
+        }
+        return nullptr;
+    };
+    const ReadResult mit = read("Particle\n{\n\tlife 100 // kurz\n\t/* lang */\n}\n");
+    const Diagnostic* d = kommentarHinweis(mit);
+    check(d != nullptr, "eine Datei mit Kommentaren: ein Hinweis");
+    check(d && d->line == 3, "mit der Zeile des ersten Kommentars");
+    check(d && d->severity != Severity::Error, "kein Fehler — die Datei ist in Ordnung");
+    check(!mit.hasErrors() && mit.effect.primitives.size() == 1 &&
+              mit.effect.primitives[0].life.min == 100.0f,
+          "und gelesen wird wie bisher");
+
+    const ReadResult ohne = read("Particle\n{\n\tname \"a // b\"\n\tlife 100\n}\n");
+    check(kommentarHinweis(ohne) == nullptr, "// in Anfuehrungszeichen ist kein Kommentar");
+}
+
 void testOriginalCurveFlags() {
     std::cout << "== Abgleich Original: Kurvenflags ==\n";
     const auto alphaOf = [](const char* lines) {
@@ -11638,6 +11664,44 @@ void testUndefinedShaderBlend() {
     std::printf("  unbekannt -> Alphamischung, bekannt -> was dasteht\n");
 }
 
+// Fehlersuche 03.10.2026: beim Wechsel des Weltmassstabs (Einstellungen)
+// rief die Oberflaeche nur setDistance. Nahe/ferne Ebene, Dolly-Grenzen und
+// Tempo blieben beim alten Massstab — bei 8 -> 64 lag ein Drittel des
+// Himmels (Radius 250 * Massstab) hinter der fernen Ebene.
+void testWorldScaleSwitch() {
+    using namespace efx::camera;
+    Orbit cam;
+    cam.reset(8.0f);
+    cam.pan(30.0f, -20.0f);   // die Ansicht ist verschoben
+    const Vec3 targetBefore = cam.target();
+    cam.setWorldScale(64.0f);
+
+    check(std::fabs(cam.distance() - 512.0f) < 1e-3f, "Massstab 8 -> 64: Abstand waechst mit (64 -> 512)");
+    check(cam.worldScale() == 64.0f, "und die Kamera kennt den neuen Massstab");
+
+    // Der fernste Punkt des Himmels: hinter dem Ursprung, vom Auge weg.
+    const Matrix view = cam.viewMatrix();
+    const Matrix projection = cam.projectionMatrix(1.0f, false);
+    const Vec3 eye = cam.position();
+    const Vec3 away = cam.target() - eye;
+    const float awayLength = length(away);
+    const Vec3 skyPoint = away * (250.0f * 64.0f / awayLength);
+    const Vec3 inView = transformPoint(view, skyPoint);
+    const float clipZ = projection[10] * inView.z + projection[14];
+    const float clipW = -inView.z;
+    check(clipW > 0.0f && clipZ / clipW <= 1.0f, "der Himmel liegt vor der fernen Ebene");
+
+    // Hinausfahren bis zum Anschlag: die Grenze ist 100 * Massstab.
+    for (int i = 0; i < 2000; ++i) cam.dolly(-1000.0f);
+    check(cam.distance() > 100.0f * 8.0f + 1.0f, "die Dolly-Grenze geht mit dem Massstab mit");
+
+    // Der Zielpunkt (verschoben) bleibt an derselben Stelle im Raum: der Raum
+    // waechst in Einheiten mit.
+    check(std::fabs(cam.target().x - targetBefore.x * 8.0f) < 1e-2f &&
+              std::fabs(cam.target().z - targetBefore.z * 8.0f) < 1e-2f,
+          "der verschobene Zielpunkt waechst mit (gleiche Stelle im Raum)");
+}
+
 void testCameraShake() {
     std::cout << "== Kameraerschuetterung ==\n";
 
@@ -14788,6 +14852,7 @@ int main(int argc, char** argv) {
     testOpenJkSimulation();
     testOpenJkShaderOrder();
     testOriginalWriter();
+    testOriginalComments();
     testOriginalCurveFlags();
     testOpenJkTgaFormats();
     testCurveCollisionMessage();
@@ -14852,6 +14917,7 @@ int main(int argc, char** argv) {
     testMotionMatchesEngine();
     testReplayDoesNotAccumulate();
     testUndefinedShaderBlend();
+    testWorldScaleSwitch();
     testCameraShake();
     testParallelForStress();
     testIndexOverflow();

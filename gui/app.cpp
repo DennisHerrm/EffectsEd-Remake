@@ -388,6 +388,7 @@ bool App::openFile(const std::string& path) {
     const std::string text = readWholeFile(path, ok);
     if (!ok) {
         step.fail("not readable");
+        showNotice(std::string(tr(Str::MsgLoadFailed)) + "\n" + path);
         return false;
     }
 
@@ -451,9 +452,20 @@ bool App::saveFile(const std::string& path) {
     // Nie etwas schreiben, das sich nicht wieder gleich einlesen laesst.
     // Dieselbe Vorsichtsmassnahme wie in efxtool format.
     ReadResult back = read(text);
+    //
+    // Scheitern wird ANGEZEIGT, nicht nur protokolliert: vorher tat Strg+S
+    // dann sichtbar nichts (Fehlersuche 03.10.2026).
     if (back.hasErrors() ||
         back.effect.primitives.size() != doc().effect.primitives.size()) {
         step.fail("round-trip check failed, nothing written");
+        std::string reason;
+        for (const auto& d : back.diagnostics) {
+            if (d.severity == Severity::Error) {
+                reason = "\n" + d.message;
+                break;
+            }
+        }
+        showNotice(std::string(tr(Str::MsgSaveFailed)) + "\n" + path + reason);
         return false;
     }
 
@@ -462,6 +474,7 @@ bool App::saveFile(const std::string& path) {
     // Platte war das Original weg, und das Dokument galt als gespeichert.
     if (!paths::writeFileReplacing(path, text)) {
         step.fail("file not writable");
+        showNotice(std::string(tr(Str::MsgSaveFailed)) + "\n" + path);
         return false;
     }
     doc().filePath = path;
@@ -780,12 +793,6 @@ void App::drawViewport(render::Renderer* renderer, float width, float height) {
         return;
     }
 
-    // Vorgemerkte Texturen erst hier freigeben, wo der Renderer bekannt ist.
-    if (textureCacheDirty_) {
-        clearTextures(renderer);
-        textureCacheDirty_ = false;
-    }
-
     // Weltmassstab gewechselt (oder erstes Bild): wie im Original waechst der
     // Kameraabstand mit dem Massstab (10 -> 16 Einheiten je Fuss: 80 -> 128);
     // der Raum selbst bleibt gleich gross.
@@ -793,7 +800,7 @@ void App::drawViewport(render::Renderer* renderer, float width, float height) {
         if (lastWorldScale_ <= 0.0f) {
             camera_.reset(settings_.worldScale);
         } else {
-            camera_.setDistance(camera_.distance() * settings_.worldScale / lastWorldScale_);
+            camera_.setWorldScale(settings_.worldScale);
         }
     }
     if (geometryDirty_ || settings_.worldScale != lastWorldScale_) {
@@ -1158,6 +1165,17 @@ namespace {
 void App::buildFrame(render::Renderer* renderer, int windowWidth, int windowHeight,
                      float dpiScale) {
     renderer_ = renderer;
+    dpiScale_ = dpiScale > 0.0f ? dpiScale : 1.0f;
+    // Vorgemerkte Texturen erst hier freigeben, wo der Renderer bekannt ist.
+    //
+    // Am Anfang jedes Bildes, nicht in drawViewport: dort lief es nur in der
+    // Editoransicht, und die Kacheln der Startseite zeigten nach einem neuen
+    // Spielpfad oder .pk3 weiter die alten Bilder (Fehlersuche 03.10.2026).
+    if (textureCacheDirty_ && renderer) {
+        clearTextures(renderer);
+        textureCacheDirty_ = false;
+    }
+    openQueuedDrops();
     // Die Hilfezeile gilt nur fuer das Bild, in dem die Maus darueber steht.
     statusHint_ = nullptr;
     // Eine Feldaenderung ist abgeschlossen, sobald kein Feld mehr aktiv ist.

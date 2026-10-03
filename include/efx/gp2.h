@@ -54,6 +54,8 @@ struct Error {
 struct ParseResult {
     Group topLevel;
     std::vector<Error> errors;
+    // Zeile des ersten Kommentars (// oder /* */), 0 = keiner.
+    int firstCommentLine = 0;
     bool ok() const { return errors.empty(); }
 };
 

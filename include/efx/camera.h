@@ -122,6 +122,11 @@ public:
     // die Effekte waren mal zu klein, mal abgeschnitten.
     void setDistance(float value);
 
+    // Weltmassstab wechseln, ohne die Ansicht zu verlieren: Abstand,
+    // Zielpunkt, nahe/ferne Ebene, Grenzen und Tempo gehen mit.
+    void setWorldScale(float worldScale);
+    float worldScale() const { return worldScale_; }
+
     // Wie weit muss die Kamera weg, damit etwas mit Radius `radius` ganz ins
     // Bild passt? `margin` lässt Luft am Rand (1.0 = randvoll).
     float distanceToFit(float radius, float margin = 1.25f) const;
