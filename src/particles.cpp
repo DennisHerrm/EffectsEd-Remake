@@ -14,7 +14,8 @@ constexpr float kPi = 3.14159265358979323846f;
 
 uint32_t packRgba(float r, float g, float b, float a) {
     auto clamp255 = [](float v) {
-        const int i = static_cast<int>(v * 255.0f + 0.5f);
+        // Abgeschnitten wie in der Engine: shaderRGBA = (byte)(perc * 0xff).
+        const int i = static_cast<int>(v * 255.0f);
         return i < 0 ? 0 : (i > 255 ? 255 : i);
     };
     return scene::rgba(clamp255(r), clamp255(g), clamp255(b), clamp255(a));
@@ -902,9 +903,16 @@ void System::playInto(const Effect& effect, sim::Random& random,
         if ((flags & kFlagApplyPhysics) != 0 && !planes.empty()) {
             const float elasticity =
                 p.elasticity.set ? random.pick(p.elasticity) : 0.0f;
+            // Mit useBBox (auch durch min/max) kollidiert eine Box, kein
+            // Punkt — wie CParticle::UpdateOrigin mit mMin/mMax.
+            const bool box = (flags & kFlagUseBBox) != 0 && p.type != PrimitiveType::Electricity;
+            const std::vector<sim::Plane> boxPlanes =
+                box ? sim::planesForBox(planes, camera::Vec3{p.min.min[0], p.min.min[1], p.min.min[2]},
+                                        camera::Vec3{p.max.min[0], p.max.min[1], p.max.min[2]})
+                    : std::vector<sim::Plane>{};
             item.path = sim::buildPath(item.origin, item.velocity,
                                        item.acceleration, item.gravity,
-                                       item.deathMs - item.spawnMs, planes,
+                                       item.deathMs - item.spawnMs, box ? boxPlanes : planes,
                                        elasticity,
                                        (flags & kFlagKillOnImpact) != 0);
             item.hasPath = true;
@@ -1136,7 +1144,15 @@ void System::playInto(const Effect& effect, sim::Random& random,
         // Der dritte Punkt ist der ueberraschendste: ein Todeseffekt zeigt in
         // eine beliebige Richtung, egal wohin die Primitive flog.
         const bool killedByImpact = item.hasPath && item.path.killed;
-        if (!p.deathFx.empty() && mayStartChildren &&
+        // Nur Typen mit eigenem Die() (CParticle und Abkoemmlinge: Particle,
+        // OrientedParticle, Tail, Cylinder, Emitter). Bei CLine, CElectricity,
+        // CLight und CFlash ist Die() leer; Klang, Erschuetterung und
+        // FxRunner sind gar keine Objekte, die sterben.
+        const bool hasDie = p.type == PrimitiveType::Particle ||
+                            p.type == PrimitiveType::OrientedParticle ||
+                            p.type == PrimitiveType::Tail || p.type == PrimitiveType::Cylinder ||
+                            p.type == PrimitiveType::Emitter;
+        if (hasDie && !p.deathFx.empty() && mayStartChildren &&
             (flags & kFlagDeathRunsFx) != 0 && !killedByImpact) {
             if (const Effect* child = loader(pickEffect(p.deathFx))) {
                 ++startedEffects_;
@@ -2271,9 +2287,17 @@ DrawList System::build(float nowMs, const camera::Vec3& right,
                 constexpr float kLookBackMs = 3.0f;
                 const float earlier = std::max(item.spawnMs, nowMs - kLookBackMs);
                 camera::Vec3 direction = item.positionAt(earlier) - position;
-                if (camera::length(direction) < 1e-5f) direction = item.velocity * -1.0f;
+                // Bewegt er sich nicht (erstes Bild, liegengeblieben), ist das
+                // der Nullvektor, und VectorNormalize laesst ihn null — die
+                // Engine zeichnet ein Band der Laenge 0, also nichts. Hier
+                // stand ein Rueckfall auf die Startrichtung: liegende Funken
+                // blieben als starre Striche stehen (Movie Duels bluesparks,
+                // concussion/blast: alle Schweife, die halbe Lebensdauer).
+                if (camera::length(direction) < 1e-5f) {
+                    built = true;
+                    break;
+                }
                 direction = camera::normalise(direction);
-                if (camera::length(direction) < 1e-5f) direction = {0.0f, 0.0f, -1.0f};
                 const camera::Vec3 end = position + direction * length;
                 built = true;
                 full = !addLineQuad(raw, position, end, lineSide(position, end, eye), size,

@@ -630,6 +630,10 @@ public:
     static bool punktGewuenscht;
     static ImVec2 punktOrt;
     static int punktFarbe[3];
+    // Derselbe Punkt im gerenderten Vorschaubild (readViewport, Alpha
+    // erzwungen) — zum Vergleich mit dem fertigen Fensterbild.
+    static int punktVorschau[3];
+    static bool punktMitte;
     // Liest die Farbe des Bildpunkts in der oberen linken Ecke der Ansicht
     // (ein Stueck nach innen, ausserhalb von Achsen und Effekt).
     static Schritt leseAnsichtsEcke() {
@@ -641,6 +645,28 @@ public:
                             return true;
                         }
                         punktOrt = ImVec2(e->rect.Min.x + 6.0f, e->rect.Min.y + 6.0f);
+                        punktGewuenscht = true;
+                        return false;
+                    }
+                    return !punktGewuenscht || b > 3;
+                }};
+    }
+    // Die Mitte der Ansicht: im fertigen Fensterbild UND im Vorschaubild.
+    // Weichen die beiden ab, scheint etwas anderes durch als das, was die
+    // Vorschau gezeichnet hat.
+    static Schritt leseAnsichtsMitte() {
+        return {"Ansichtsmitte lesen", [](int b) {
+                    if (b == 0) {
+                        const Element* e = findeMarke("ansicht");
+                        if (!e) {
+                            punktFarbe[0] = punktFarbe[1] = punktFarbe[2] = -1;
+                            return true;
+                        }
+                        // Die linke obere Ecke des Bildes; die Mitte rechnet
+                        // selbsttestNachZeichnen aus der Groesse des
+                        // Vorschaubildes dazu — so treffen beide denselben Punkt.
+                        punktOrt = e->rect.Min;
+                        punktMitte = true;
                         punktGewuenscht = true;
                         return false;
                     }
@@ -1685,6 +1711,62 @@ public:
         s.push_back(warte(2));
         s.push_back(pruefSchritt("kein zusaetzlicher leerer Reiter, der alte bleibt vorn", [] {
             return app->documents_.size() == 1 && anzahlSegmente() == 1;
+        }));
+
+        // 8c. Direct3D: die Vorschau schrieb Alpha 0 ins Bild (Teilchen ohne
+        //     useAlpha), und das Fenster liess an diesen Stellen den
+        //     Hintergrund der Leiste durchscheinen — die meisten Effekte waren
+        //     unsichtbar. Fensterbild und Vorschaubild muessen gleich sein.
+        frischesDokument(s);
+        neuesSegment(s, PrimitiveType::Particle);
+        // Ein additiver Shader (wie Funken und Gluehen): mit Eckpunkt-Alpha 0
+        // ist er der haeufigste Fall in echten Effekten.
+        s.push_back(tu("Spielordner mit einem additiven Shader", [] {
+            const fs::path ordner = fs::path(arbeitsOrdner) / "alphatest_base";
+            std::error_code ec;
+            fs::create_directories(ordner / "shaders", ec);
+            schreibeDatei((ordner / "shaders" / "alphatest.shader").string(),
+                          "gfx/alphatest_add\n{\n\t{\n\t\tmap $whiteimage\n\t\tblendFunc GL_ONE GL_ONE\n"
+                          "\t\trgbGen vertex\n\t}\n}\n");
+            app->settings_.gamePath = ordner.string();
+            app->settings_.extraGamePaths.clear();
+            app->rescanAssets();
+        }));
+        // (Ein abdunkelnder Shader, GL_DST_COLOR GL_ZERO, stand im Verdacht,
+        // unter OpenGL dasselbe zu tun — im Fensterbild nachgemessen: nein.)
+        for (const std::string shaderName : {"gfx/alphatest_add"}) {
+            s.push_back(tu("Teilchen ohne useAlpha mitten im Bild: " + shaderName, [shaderName] {
+                app->pressStop();
+                Primitive& p = *gewaehlt();
+                p.life = Range::single(100000.0f);
+                p.size.start = Range::single(60.0f);
+                p.size.present = true;
+                p.shaders = {shaderName};
+                p.flags &= ~kFlagUseAlpha;
+                app->recordChange("test");
+                app->pressPlay();
+            }));
+            s.push_back(warte(10));
+            s.push_back(tu("anhalten", [] { app->togglePause(); }));
+            s.push_back(warte(3));
+            s.push_back(leseAnsichtsMitte());
+            s.push_back(pruefSchritt(shaderName + ": Fensterbild = Vorschaubild (nichts scheint durch)",
+                                     [shaderName] {
+                diag::info("Mitte " + shaderName + ": Fenster " + std::to_string(punktFarbe[0]) + "," +
+                           std::to_string(punktFarbe[1]) + "," + std::to_string(punktFarbe[2]) + "  Vorschau " +
+                           std::to_string(punktVorschau[0]) + "," + std::to_string(punktVorschau[1]) + "," +
+                           std::to_string(punktVorschau[2]));
+                if (punktFarbe[0] < 0 || punktVorschau[0] < 0) return false;
+                for (int k = 0; k < 3; ++k) {
+                    if (std::abs(punktFarbe[k] - punktVorschau[k]) > 3) return false;
+                }
+                return true;
+            }));
+        }
+        s.push_back(tu("stopp, Spielordner zurueck", [] {
+            app->pressStop();
+            app->settings_.gamePath.clear();
+            app->rescanAssets();
         }));
 
         // 8b. Datei in einem Ordner mit Umlaut: oeffnen und speichern ueber
@@ -3382,6 +3464,8 @@ std::string Selbsttest::fensterFotoName;
 bool Selbsttest::punktGewuenscht = false;
 ImVec2 Selbsttest::punktOrt;
 int Selbsttest::punktFarbe[3] = {-1, -1, -1};
+int Selbsttest::punktVorschau[3] = {-1, -1, -1};
+bool Selbsttest::punktMitte = false;
 std::string Selbsttest::bericht;
 
 // ===========================================================================
@@ -3421,11 +3505,32 @@ void selbsttestNachZeichnen(render::Renderer* renderer) {
         Selbsttest::punktGewuenscht = false;
         std::vector<unsigned char> bild;
         int bw = 0, bh = 0;
-        const int x = static_cast<int>(Selbsttest::punktOrt.x), y = static_cast<int>(Selbsttest::punktOrt.y);
+        int x = static_cast<int>(Selbsttest::punktOrt.x), y = static_cast<int>(Selbsttest::punktOrt.y);
+        if (Selbsttest::punktMitte) {
+            std::vector<unsigned char> vorschau;
+            int vw = 0, vh = 0;
+            if (renderer->readViewport(vorschau, vw, vh) && vw > 0 && vh > 0) {
+                // Neben der Mitte: dort liegt das Achsenkreuz, das ueber
+                // allem gezeichnet wird.
+                x += vw / 2 - 25;
+                y += vh / 2 + 25;
+            }
+        }
         if (renderer->readBackbuffer(bild, bw, bh) && x >= 0 && y >= 0 && x < bw && y < bh) {
             for (int k = 0; k < 3; ++k) Selbsttest::punktFarbe[k] = bild[(static_cast<size_t>(y) * bw + x) * 4 + k];
         } else {
             for (int& k : Selbsttest::punktFarbe) k = -1;
+        }
+        if (Selbsttest::punktMitte) {
+            Selbsttest::punktMitte = false;
+            std::vector<unsigned char> vorschau;
+            int vw = 0, vh = 0;
+            if (renderer->readViewport(vorschau, vw, vh) && vw > 0 && vh > 0) {
+                const size_t at = (static_cast<size_t>(vh / 2 + 25) * vw + static_cast<size_t>(vw / 2 - 25)) * 4;
+                for (int k = 0; k < 3; ++k) Selbsttest::punktVorschau[k] = vorschau[at + k];
+            } else {
+                for (int& k : Selbsttest::punktVorschau) k = -1;
+            }
         }
     }
     if (Selbsttest::fensterFotoName.empty()) return;

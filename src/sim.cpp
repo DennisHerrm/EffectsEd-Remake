@@ -199,6 +199,18 @@ std::vector<Plane> roomPlanes(float halfWidth, float halfDepth, float floorZ, fl
     };
 }
 
+std::vector<Plane> planesForBox(const std::vector<Plane>& planes, const camera::Vec3& mins,
+                                const camera::Vec3& maxs) {
+    std::vector<Plane> out = planes;
+    for (auto& plane : out) {
+        const float closest = (plane.normal.x > 0.0f ? mins.x : maxs.x) * plane.normal.x +
+                              (plane.normal.y > 0.0f ? mins.y : maxs.y) * plane.normal.y +
+                              (plane.normal.z > 0.0f ? mins.z : maxs.z) * plane.normal.z;
+        plane.distance -= closest;
+    }
+    return out;
+}
+
 Hit trace(const camera::Vec3& from, const camera::Vec3& to,
           const std::vector<Plane>& planes) {
     Hit best;

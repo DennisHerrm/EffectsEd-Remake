@@ -976,6 +976,184 @@ void testAuditParallelFor() {
     pool.waitIdle();
 }
 
+// Abgleich mit OpenJK vom 03.10.2026 (Simulation). Jede Pruefung schlug VOR
+// der Angleichung fehl; die Fundstelle in der Engine steht dabei.
+size_t vertexCountOf(const efx::particles::DrawList& list) {
+    size_t n = 0;
+    for (const auto& group : list.byTexture) n += group.second.vertices.size();
+    return n;
+}
+
+void testOpenJkSimulation() {
+    std::cout << "== Abgleich OpenJK: Simulation ==\n";
+    using efx::Effect;
+    using efx::Primitive;
+    using efx::PrimitiveType;
+    using efx::Range;
+    const efx::camera::Vec3 right{1, 0, 0}, up{0, 0, 1};
+
+    // CTail::CalcNewEndpoint: Richtung = normalize(mOldOrigin - mOrigin1).
+    // Bewegt sich der Schweif nicht, ist das der Nullvektor — das Band hat die
+    // Laenge 0 und ist unsichtbar (auch im ersten Bild, wo beide gleich sind).
+    {
+        const auto tail = [](float speed) {
+            Effect e;
+            Primitive p;
+            p.type = PrimitiveType::Tail;
+            p.life = Range::single(1000.0f);
+            p.length.start = Range::single(20.0f);
+            p.size.start = Range::single(2.0f);
+            p.shaders.push_back("gfx/x");
+            if (speed != 0.0f) {
+                p.velocity.set = true;
+                p.velocity.min = {speed, 0.0f, 0.0f};
+                p.velocity.max = p.velocity.min;
+            }
+            e.primitives.push_back(p);
+            return e;
+        };
+        efx::particles::System still;
+        still.play(tail(0.0f), 1);
+        check(vertexCountOf(still.build(500.0f, right, up)) == 0,
+              "ruhender Schweif zeichnet nichts (FxPrimitives.cpp CTail::CalcNewEndpoint)");
+        efx::particles::System moving;
+        moving.play(tail(100.0f), 1);
+        check(vertexCountOf(moving.build(500.0f, right, up)) >= 4, "bewegter Schweif zeichnet weiter");
+        check(vertexCountOf(moving.build(0.0f, right, up)) == 0,
+              "im ersten Bild hat der Schweif die Laenge 0 (alte = neue Lage)");
+    }
+
+    // Die() ist bei CLine, CElectricity, CLight, CFlash leer; Klang,
+    // Erschuetterung und FxRunner sind gar keine Objekte. deathfx gibt es nur
+    // bei Particle, OrientedParticle, Tail, Cylinder, Emitter.
+    {
+        Effect child;
+        Primitive c;
+        c.type = PrimitiveType::Particle;
+        c.life = Range::single(100.0f);
+        child.primitives.push_back(c);
+        const efx::particles::EffectLoader loader = [&child](const std::string&) -> const Effect* {
+            return &child;
+        };
+        const auto deaths = [&loader](PrimitiveType type) {
+            Effect e;
+            Primitive p;
+            p.type = type;
+            p.life = Range::single(100.0f);
+            p.deathFx.push_back("kind");
+            p.shaders.push_back("gfx/x");
+            e.primitives.push_back(p);
+            efx::particles::System s;
+            s.play(e, 1, {}, {}, loader);
+            return s.startedEffects();
+        };
+        check(deaths(PrimitiveType::Line) == 0, "Line: kein deathfx (CLine::Die ist leer)");
+        check(deaths(PrimitiveType::Electricity) == 0, "Electricity: kein deathfx");
+        check(deaths(PrimitiveType::Light) == 0, "Light: kein deathfx");
+        check(deaths(PrimitiveType::Particle) == 1, "Particle: deathfx wie bisher");
+        check(deaths(PrimitiveType::Tail) == 1, "Tail: deathfx wie bisher");
+    }
+
+    // ParseMin/ParseMax (FxTemplate.cpp): "mFlags |= FX_USE_BBOX |
+    // FX_APPLY_PHYSICS". Und mit FX_USE_BBOX traced CParticle::UpdateOrigin
+    // eine BOX — ein Brocken mit min -5 / max 5 kommt 5 Einheiten ueber dem
+    // Boden zur Ruhe, nicht auf ihm.
+    {
+        Primitive p;
+        p.type = PrimitiveType::Particle;
+        p.min.set = true;
+        p.min.min = {-5.0f, -5.0f, -5.0f};
+        p.max.set = true;
+        p.max.min = {5.0f, 5.0f, 5.0f};
+        const uint32_t flags = efx::effectiveFlags(p);
+        check((flags & efx::kFlagUseBBox) != 0 && (flags & efx::kFlagApplyPhysics) != 0,
+              "min/max schalten Physik und Box ein (wie ParseMin/ParseMax)");
+
+        Effect e;
+        p.life = Range::single(3000.0f);
+        p.gravity = Range::single(-800.0f);
+        p.elasticity = Range::single(0.1f);
+        p.shaders.push_back("gfx/x");
+        e.primitives.push_back(p);
+        efx::particles::System s;
+        s.play(e, 1, {}, {}, {}, efx::sim::roomPlanes(100.0f, 140.0f, -20.0f, 60.0f));
+        const auto& live = s.live();
+        const float restZ = live.empty() ? 0.0f : live[0].positionAt(2900.0f).z;
+        std::printf("  Box -5..5 auf dem Boden (z=-20): Mitte bei z=%.2f\n", restZ);
+        check(std::fabs(restZ - (-15.0f)) < 0.2f, "Box-Kollision: Mitte 5 ueber dem Boden");
+    }
+
+    // shaderRGBA = (byte)(perc * 0xff): abgeschnitten, nicht gerundet.
+    {
+        Effect e;
+        Primitive p;
+        p.type = PrimitiveType::Particle;
+        p.life = Range::single(1000.0f);
+        p.shaders.push_back("gfx/x");
+        p.rgb.start.set = true;
+        p.rgb.start.min = {0.5f, 0.5f, 0.5f};
+        p.rgb.start.max = p.rgb.start.min;
+        p.rgb.present = true;
+        e.primitives.push_back(p);
+        efx::particles::System s;
+        s.play(e, 1);
+        const auto list = s.build(100.0f, right, up);
+        uint32_t colour = 0;
+        for (const auto& group : list.byTexture) {
+            if (!group.second.vertices.empty()) colour = group.second.vertices[0].colour;
+        }
+        check((colour & 0xFF) == 127, "Farbe 0.5 wird 127 wie (byte)(0.5*255), nicht 128");
+    }
+}
+
+// OpenJK SP (tr_shader.cpp ScanAndLoadShaderFiles, files.cpp
+// FS_ListFilteredFiles): die Liste der .shader-Dateien ist NICHT sortiert —
+// Suchreihenfolge (hoechster Rang zuerst), im Archiv in Verzeichnisfolge, jeder
+// Dateiname einmal (die Fassung mit dem hoechsten Rang). Zusammengehaengt wird
+// rueckwaerts, und der erste Treffer gewinnt: ein doppelter Shadername kommt
+// aus der Quelle mit dem NIEDRIGSTEN Rang.
+void testOpenJkShaderOrder() {
+    std::cout << "== Abgleich OpenJK: Reihenfolge der Shaderdateien ==\n";
+    namespace fsys = std::filesystem;
+    const fsys::path root = fsys::temp_directory_path() / "efxed_shaderorder";
+    std::error_code ec;
+    fsys::remove_all(root, ec);
+    fsys::create_directories(root / "mod", ec);
+    fsys::create_directories(root / "base", ec);
+    const auto shaderText = [](const char* name, const char* map) {
+        return std::string(name) + "\n{\n\t{\n\t\tmap " + map + "\n\t}\n}\n";
+    };
+    const auto writeZip = [](const fsys::path& path, const std::vector<std::pair<std::string, std::string>>& files) {
+        const auto zip = storedZip(files);
+        std::ofstream(path, std::ios::binary).write(reinterpret_cast<const char*>(zip.data()),
+                                                    static_cast<std::streamsize>(zip.size()));
+    };
+    // mod (Rang hoch) und base (Rang niedrig).
+    writeZip(root / "mod" / "mod.pk3",
+             {{"shaders/mod_eigen.shader", shaderText("gfx/doppelt", "gfx/aus_mod")},
+              {"shaders/gleich.shader", shaderText("gfx/gleichername", "gfx/gleich_mod")},
+              {"shaders/zuerst.shader", shaderText("gfx/impak", "gfx/impak_zuerst")},
+              {"shaders/danach.shader", shaderText("gfx/impak", "gfx/impak_danach")}});
+    writeZip(root / "base" / "assets0.pk3",
+             {{"shaders/base_eigen.shader", shaderText("gfx/doppelt", "gfx/aus_base")},
+              {"shaders/gleich.shader", shaderText("gfx/gleichername", "gfx/gleich_base")}});
+    const efx::assets::Index index =
+        efx::assets::scanAll({(root / "mod").string(), (root / "base").string()});
+    const auto mapOf = [&index](const char* name) -> std::string {
+        const efx::shader::Shader* s = index.shaderOf(name);
+        return s && !s->stages.empty() ? s->stages[0].map : std::string("(keiner)");
+    };
+    std::printf("  gfx/doppelt -> %s, gfx/gleichername -> %s, gfx/impak -> %s\n", mapOf("gfx/doppelt").c_str(),
+                mapOf("gfx/gleichername").c_str(), mapOf("gfx/impak").c_str());
+    check(mapOf("gfx/doppelt") == "gfx/aus_base",
+          "doppelter Shadername in verschiedenen Dateien: der aus der Quelle mit niedrigerem Rang");
+    check(mapOf("gfx/gleichername") == "gfx/gleich_mod",
+          "gleicher Dateiname: nur die Fassung mit hoechstem Rang wird gelesen");
+    check(mapOf("gfx/impak") == "gfx/impak_danach",
+          "zwei Dateien in einem Archiv: die spaeter im Verzeichnis gewinnt");
+    fsys::remove_all(root, ec);
+}
+
 void testUpdate() {
     std::cout << "== Auto-Updater (ohne Netz) ==\n";
     using namespace efx::update;
@@ -14420,6 +14598,8 @@ int main(int argc, char** argv) {
     testAuditDiagThreads();
     testAuditParallelFor();
     testAuditSimulation();
+    testOpenJkSimulation();
+    testOpenJkShaderOrder();
     testFlags();
     testTolerance();
     testKnownRavenBugs();

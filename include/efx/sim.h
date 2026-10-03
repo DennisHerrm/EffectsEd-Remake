@@ -143,6 +143,14 @@ struct Path {
     float settledMs = 0.0f;
 };
 
+// Die Flaechen fuer eine BOX statt eines Punktes (FX_USE_BBOX: CParticle::
+// UpdateOrigin traced mit mMin/mMax). Eine Box mit dem Mittelpunkt o ist frei,
+// solange o·n + min(c·n) >= d fuer jede Ecke c — das ist eine Punktkollision
+// gegen die um min(c·n) verschobene Flaeche. Ohne das lag ein Brocken mit
+// min -5 / max 5 auf dem Boden statt 5 Einheiten darueber.
+std::vector<Plane> planesForBox(const std::vector<Plane>& planes, const camera::Vec3& mins,
+                                const camera::Vec3& maxs);
+
 // Zerlegt die Bahn in Abschnitte und sammelt die Aufpralle.
 //
 // elasticity ist der Anteil der Geschwindigkeit, der einen Aufprall übersteht.
