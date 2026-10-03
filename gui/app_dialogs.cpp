@@ -34,6 +34,10 @@ void App::drawGamePathDialog() {
     if (showGamePathDialog_) {
         ImGui::OpenPopup("###gamepath");
         showGamePathDialog_ = false;
+        // Das Feld mit dem eingestellten Pfad fuellen — HIER, nicht an jeder
+        // Stelle, die den Dialog oeffnet. Der Knopf auf der Startseite tat es
+        // nicht, und OK loeschte dann den Spielpfad.
+        std::snprintf(gamePathBuffer_, sizeof(gamePathBuffer_), "%s", settings_.gamePath.c_str());
         // Fuer Abbrechen: Zusatzpfade werden im Dialog direkt bearbeitet.
         extraPathsBackup_ = settings_.extraGamePaths;
     }
@@ -331,7 +335,7 @@ void App::drawPlaybackDialog() {
     ImGui::RadioButton(tr(Str::PlaybackForSeconds), &mode, 2);
     ImGui::SameLine();
     ImGui::BeginDisabled(mode != 2);
-    ImGui::DragFloat("##repeatFor", &playbackDraft_.repeatForSeconds, 0.1f, 0.0f, 600.0f, "%.1f",
+    shared::dragFloatFinite("##repeatFor", &playbackDraft_.repeatForSeconds, 0.1f, 0.0f, 600.0f, "%.1f",
                      ImGuiSliderFlags_AlwaysClamp);
     ImGui::EndDisabled();
     ImGui::SameLine();
@@ -348,7 +352,7 @@ void App::drawPlaybackDialog() {
     ImGui::BeginDisabled(playbackDraft_.respawnEveryFrame);
     ImGui::TextUnformatted(tr(Str::PlaybackRate));
     float rate = playbackDraft_.repeatRateSeconds;
-    if (ImGui::DragFloat("##rateField", &rate, 0.005f, playback::Settings::kMinRate,
+    if (shared::dragFloatFinite("##rateField", &rate, 0.005f, playback::Settings::kMinRate,
                          playback::Settings::kMaxRate, "%.3f", ImGuiSliderFlags_AlwaysClamp)) {
         playbackDraft_.setRate(rate);
     }
@@ -356,21 +360,21 @@ void App::drawPlaybackDialog() {
     ImGui::SetNextItemWidth(slider);
     // Logarithmisch 0.05 bis 5 s wie die Werkzeugleiste des Originals.
     float rateSlider = std::clamp(playbackDraft_.repeatRateSeconds, 0.05f, 5.0f);
-    if (ImGui::SliderFloat("##rateSlider", &rateSlider, 0.05f, 5.0f, "",
+    if (shared::sliderFloatFinite("##rateSlider", &rateSlider, 0.05f, 5.0f, "",
                            ImGuiSliderFlags_Logarithmic)) {
         playbackDraft_.setRate(rateSlider);
     }
     ImGui::TextUnformatted(tr(Str::PlaybackFrequency));
     // Frequenz = 1 / Rate, gekoppelt (Regler 0.2 bis 20 je Sekunde).
     float frequency = playbackDraft_.frequency();
-    if (ImGui::DragFloat("##freqField", &frequency, 0.05f, 1.0f / playback::Settings::kMaxRate,
+    if (shared::dragFloatFinite("##freqField", &frequency, 0.05f, 1.0f / playback::Settings::kMaxRate,
                          1.0f / playback::Settings::kMinRate, "%.3f", ImGuiSliderFlags_AlwaysClamp)) {
         playbackDraft_.setFrequency(frequency);
     }
     ImGui::SameLine();
     ImGui::SetNextItemWidth(slider);
     float frequencySlider = std::clamp(playbackDraft_.frequency(), 0.2f, 20.0f);
-    if (ImGui::SliderFloat("##freqSlider", &frequencySlider, 0.2f, 20.0f, "",
+    if (shared::sliderFloatFinite("##freqSlider", &frequencySlider, 0.2f, 20.0f, "",
                            ImGuiSliderFlags_Logarithmic)) {
         playbackDraft_.setFrequency(frequencySlider);
     }
@@ -398,14 +402,14 @@ void App::drawPlaybackDialog() {
         ImGui::TextUnformatted(axes[k]);
         ImGui::SameLine(em * 3.5f);
         ImGui::PushID(k);
-        ImGui::DragFloat("##velocity", velocity[k], 1.0f, -4000.0f, 4000.0f, "%.1f");
+        shared::dragFloatFinite("##velocity", velocity[k], 1.0f, -4000.0f, 4000.0f, "%.1f");
         ImGui::PopID();
         ImGui::Unindent();
     }
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(tr(Str::PlaybackResetAfter));
     ImGui::SameLine();
-    ImGui::DragFloat("##resetAfter", &playbackDraft_.resetLocationAfter, 0.1f, 0.0f, 600.0f, "%.2f",
+    shared::dragFloatFinite("##resetAfter", &playbackDraft_.resetLocationAfter, 0.1f, 0.0f, 600.0f, "%.2f",
                      ImGuiSliderFlags_AlwaysClamp);
     ImGui::SameLine();
     ImGui::TextUnformatted(tr(Str::PlaybackSeconds));
@@ -535,7 +539,7 @@ void App::drawSpawnOriginDialog() {
 
     ImGui::BeginDisabled(spawnOriginDraft_.mode != playback::OriginMode::Custom);
     ImGui::SetNextItemWidth(220.0f);
-    ImGui::DragFloat3("##customOrigin", &spawnOriginDraft_.custom.x, 1.0f, -100000.0f,
+    shared::dragFloat3Finite("##customOrigin", &spawnOriginDraft_.custom.x, 1.0f, -100000.0f,
                       100000.0f, "%.1f");
     ImGui::EndDisabled();
 
@@ -636,12 +640,12 @@ void App::drawWindDialog() {
     }
 
     ImGui::SetNextItemWidth(240.0f);
-    if (ImGui::DragFloat3(tr(Str::WindDirection), settings_.windDirection, 0.02f,
+    if (shared::dragFloat3Finite(tr(Str::WindDirection), settings_.windDirection, 0.02f,
                           -1.0f, 1.0f, "%.2f")) {
         geometryDirty_ = true;
     }
     ImGui::SetNextItemWidth(240.0f);
-    if (ImGui::SliderFloat(tr(Str::WindSpeed), &settings_.windSpeed, 0.2f, 5.0f,
+    if (shared::sliderFloatFinite(tr(Str::WindSpeed), &settings_.windSpeed, 0.2f, 5.0f,
                            "%.2f")) {
         geometryDirty_ = true;
     }
@@ -879,10 +883,10 @@ void App::drawSunDialog() {
 
     bool changed = false;
     ImGui::SetNextItemWidth(240.0f);
-    changed |= ImGui::SliderFloat(tr(Str::SunElevation), &elevation, 1.0f, 89.0f,
+    changed |= shared::sliderFloatFinite(tr(Str::SunElevation), &elevation, 1.0f, 89.0f,
                                   "%.0f\u00B0");
     ImGui::SetNextItemWidth(240.0f);
-    changed |= ImGui::SliderFloat(tr(Str::SunAzimuth), &azimuth, -180.0f, 180.0f,
+    changed |= shared::sliderFloatFinite(tr(Str::SunAzimuth), &azimuth, -180.0f, 180.0f,
                                   "%.0f\u00B0");
     if (changed) {
         const float e = elevation * 3.14159265f / 180.0f;
@@ -894,7 +898,7 @@ void App::drawSunDialog() {
     }
 
     ImGui::SetNextItemWidth(240.0f);
-    if (ImGui::SliderFloat(tr(Str::SunAmbient), &settings_.sunAmbient, 0.0f, 1.0f,
+    if (shared::sliderFloatFinite(tr(Str::SunAmbient), &settings_.sunAmbient, 0.0f, 1.0f,
                            "%.2f")) {
         geometryDirty_ = true;
     }

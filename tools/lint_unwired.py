@@ -58,6 +58,12 @@ EXPECTED = {
     "buildRoom",
     "visualReach",
 
+    # Ein einzelner Spielordner. Das Programm liest seit dem Abgleich vom
+    # 03.10.2026 nur noch ueber scanAll, weil die Shaderdateien ueber ALLE
+    # Ordner zusammen geordnet werden muessen (wie die Engine ihren
+    # Shadertext zusammenhaengt). scan bleibt die pruefbare Einheit dafuer.
+    "scan",
+
     # Wird von der Oberflaeche ueber `settings_.windFlagPos` erledigt; die
     # Funktion rechnet die Vorgabelage aus und wird beim ersten Start
     # gebraucht.

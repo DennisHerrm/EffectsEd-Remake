@@ -1154,6 +1154,53 @@ void testOpenJkShaderOrder() {
     fsys::remove_all(root, ec);
 }
 
+// Abgleich mit dem Original-EffectsEd vom 03.10.2026 (Schreiber).
+void testOriginalWriter() {
+    std::cout << "== Abgleich Original: Schreiber ==\n";
+    // ParseFlags liest hoechstens 7 Woerter je Zeile; mehrere Zeilen werden
+    // ODER-verknuepft. Wer 8 Flags in EINE Zeile schreibt, verliert eines.
+    {
+        const efx::ReadResult r = efx::read(
+            "Particle\n{\n\tflags\tuseModel useBBox usePhysics expensivePhysics impactKills\n"
+            "\tflags\tuseAlpha depthHack setShaderTime\n\tlife\t100\n}\n");
+        const uint32_t before = r.effect.primitives.empty() ? 0 : r.effect.primitives[0].flags;
+        const std::string saved = efx::write(r.effect);
+        const efx::ReadResult again = efx::read(saved);
+        const uint32_t after = again.effect.primitives.empty() ? 0 : again.effect.primitives[0].flags;
+        std::printf("  flags vorher %08x, nach Speichern %08x\n", before, after);
+        check(before == after, "Flags aus zwei Zeilen ueberleben das Speichern (je Zeile hoechstens 7 Woerter)");
+        bool longLine = false;
+        std::istringstream lines(saved);
+        for (std::string line; std::getline(lines, line);) {
+            std::istringstream words(line);
+            std::string key;
+            words >> key;
+            if (key != "flags" && key != "spawnFlags") continue;
+            int n = 0;
+            for (std::string w; words >> w;) ++n;
+            if (n > 7) longLine = true;
+        }
+        check(!longLine, "keine flags-Zeile mit mehr als 7 Woertern");
+    }
+    // Eine leere Zeile in einer Liste (Doppelklick auf die freie Flaeche)
+    // wurde als "" geschrieben — der Leser nimmt das als Dateiende, und das
+    // Speichern scheiterte still an der Rueckleseprobe.
+    {
+        efx::Effect e;
+        efx::Primitive p;
+        p.type = efx::PrimitiveType::Particle;
+        p.life = efx::Range::single(100.0f);
+        p.shaders = {"gfx/a", "", "]", "gfx/b"};
+        p.deathFx = {""};
+        e.primitives.push_back(p);
+        const efx::ReadResult back = efx::read(efx::write(e));
+        check(!back.hasErrors() && back.effect.primitives.size() == 1, "leere Listeneintraege: Datei bleibt lesbar");
+        check(!back.effect.primitives.empty() && back.effect.primitives[0].shaders ==
+                                                     std::vector<std::string>({"gfx/a", "gfx/b"}),
+              "leere und ']'-Eintraege fallen beim Schreiben weg, die anderen bleiben");
+    }
+}
+
 void testUpdate() {
     std::cout << "== Auto-Updater (ohne Netz) ==\n";
     using namespace efx::update;
@@ -14600,6 +14647,7 @@ int main(int argc, char** argv) {
     testAuditSimulation();
     testOpenJkSimulation();
     testOpenJkShaderOrder();
+    testOriginalWriter();
     testFlags();
     testTolerance();
     testKnownRavenBugs();

@@ -482,6 +482,7 @@ void App::recordChange(const char* what) {
 }
 
 void App::applyUndo() {
+    flushPendingFieldEdit();
     if (const Effect* state = doc().undo.undo()) {
         doc().effect = *state;
         // Die Auswahl kann jetzt ins Leere zeigen.
@@ -500,6 +501,7 @@ void App::applyUndo() {
 }
 
 void App::applyRedo() {
+    flushPendingFieldEdit();
     if (const Effect* state = doc().undo.redo()) {
         doc().effect = *state;
         if (doc().selectedPrimitive >= static_cast<int>(doc().effect.primitives.size())) {

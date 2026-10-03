@@ -269,7 +269,7 @@ bool pairFields(float& low, float& high, bool set, float speed, float lo, float 
     ImGui::SetCursorScreenPos(ImVec2(minX(), ImGui::GetCursorScreenPos().y));
     ImGui::SetNextItemWidth(g_page.field - spinnerWidth());
     float a = low;
-    bool minChanged = ImGui::DragFloat("##min", &a, speed, lo, hi, format);
+    bool minChanged = shared::dragFloatFinite("##min", &a, speed, lo, hi, format);
     testmarke::marke("min");
     ImGui::SameLine(0.0f, 0.0f);
     ImGui::PushID("minSpin");
@@ -282,7 +282,7 @@ bool pairFields(float& low, float& high, bool set, float speed, float lo, float 
     ImGui::SetCursorScreenPos(ImVec2(maxX(), ImGui::GetCursorScreenPos().y));
     ImGui::SetNextItemWidth(g_page.field - spinnerWidth());
     float b = high;
-    bool maxChanged = ImGui::DragFloat("##max", &b, speed, lo, hi, format);
+    bool maxChanged = shared::dragFloatFinite("##max", &b, speed, lo, hi, format);
     testmarke::marke("max");
     ImGui::SameLine(0.0f, 0.0f);
     ImGui::PushID("maxSpin");
@@ -1261,11 +1261,11 @@ void App::drawTab(fields::Tab tab, Primitive& p) {
             float low = p.elasticity.set ? p.elasticity.min : 0.0f;
             float high = p.elasticity.set ? p.elasticity.max : 0.0f;
             ImGui::SetCursorScreenPos(ImVec2(minX() + (g_page.field - sliderWidth) * 0.5f, top));
-            const bool lowChanged = ImGui::VSliderFloat("##shakeMin", ImVec2(sliderWidth, sliderHeight),
+            const bool lowChanged = shared::vSliderFloatFinite("##shakeMin", ImVec2(sliderWidth, sliderHeight),
                                                         &low, 0.0f, camera::Shake::kMaxIntensity, "%.1f");
             testmarke::marke("intensity/min");
             ImGui::SetCursorScreenPos(ImVec2(maxX() + (g_page.field - sliderWidth) * 0.5f, top));
-            const bool highChanged = ImGui::VSliderFloat("##shakeMax", ImVec2(sliderWidth, sliderHeight),
+            const bool highChanged = shared::vSliderFloatFinite("##shakeMax", ImVec2(sliderWidth, sliderHeight),
                                                          &high, 0.0f, camera::Shake::kMaxIntensity, "%.1f");
             testmarke::marke("intensity/max");
             // Die Beschriftung des Originals zwischen den Reglern.

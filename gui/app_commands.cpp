@@ -89,11 +89,16 @@ void App::cmdOpen() {
 }
 
 bool App::cmdSave() {
+    // Eine noch offene Feldeingabe gehoert zum gespeicherten Stand: erst
+    // aufzeichnen, dann speichern — sonst stand der Merker "gespeichert" auf
+    // dem Stand davor, und Strg+Z danach galt als sauber.
+    flushPendingFieldEdit();
     if (doc().filePath.empty() || doc().unreadableOriginal) return cmdSaveAs();
     return saveFile(doc().filePath);
 }
 
 bool App::cmdSaveAs() {
+    flushPendingFieldEdit();
     if (!fileDialog_) return false;
     const std::string suggestion =
         doc().filePath.empty() ? std::string("untitled.efx") : doc().filePath;
@@ -252,6 +257,7 @@ bool App::canCloneSegment() const {
 }
 
 void App::cmdCloneSegment() {
+    flushPendingFieldEdit();
     if (!canCloneSegment()) return;
     const size_t at = static_cast<size_t>(doc().selectedPrimitive);
     Primitive copy = doc().effect.primitives[at];
@@ -271,6 +277,7 @@ void App::cmdCloneSegment() {
 }
 
 void App::cmdDeleteSegment() {
+    flushPendingFieldEdit();
     if (!hasSelection()) return;
     const size_t at = static_cast<size_t>(doc().selectedPrimitive);
     doc().effect.primitives.erase(doc().effect.primitives.begin() +
