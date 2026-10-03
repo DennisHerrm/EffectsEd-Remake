@@ -616,6 +616,13 @@ particles::System::ShaderLookup App::particleShaderLookup() const {
     return [this](const std::string& name) -> particles::System::ShaderDraw {
         particles::System::ShaderDraw draw;
         draw.definition = assets_.shaderOf(name);
+        // Eine Definition, deren Stufenbild fehlt, laedt die Engine nicht —
+        // sie zeichnet dann das Ersatzkaestchen (assets::engineLoadsShader).
+        if (draw.definition && assetsScanned_ && !assets::engineLoadsShader(assets_, *draw.definition)) {
+            draw.definition = nullptr;
+            draw.missing = true;
+            return draw;
+        }
         // Weder Shaderblock noch Bild: die Engine zeichnet tr.defaultShader,
         // das graue Kaestchen. Ohne Bestand (kein Spielpfad) wissen wir es
         // nicht — dann nicht als fehlend melden.
@@ -663,6 +670,17 @@ int App::drawParticleGroups(render::Renderer* renderer, const particles::DrawLis
         // der Shaderstufen kennt prefetchTextures nicht; in der anderen
         // Reihenfolge wuerden sie nie angefordert.
         if (group.clamp) clampImages_.insert(group.image);
+        if (const shader::Shader* def = assets_.shaderOf(group.shader); def && def->noMipMaps) {
+            // Schon mit Kette geladen (etwa vorab fuer eine Kachel)? Dann
+            // wegwerfen und neu anfordern — sonst bliebe die Kette.
+            if (noMipImages_.insert(group.image).second) {
+                const auto cached = textureCache_.find(group.image);
+                if (cached != textureCache_.end()) {
+                    if (cached->second != render::kNoTexture) renderer->destroyTexture(cached->second);
+                    textureCache_.erase(cached);
+                }
+            }
+        }
         const render::TextureId texture = textureFor(renderer, group.image, seconds);
         if (!overdraw && textureStillLoading(group.image, seconds)) continue;
 

@@ -153,11 +153,14 @@ const std::vector<FlagName>& spawnFlagNames() {
     return kNames;
 }
 
-int curveFlagsFromWords(const std::vector<std::string>& words) {
+int curveFlagsOfLine(const std::vector<std::string>& words, bool* ok) {
     // Woerter wie in CPrimitiveTemplate::ParseGroupFlags (FxTemplate.cpp):
     // eine Tabelle ohne Ruecksicht auf Gross-/Kleinschreibung, und nur die
     // ersten vier Woerter — mehr Plaetze hat das sscanf-Feld dort nicht.
+    // Ein unbekanntes Wort darunter setzt "ok = false", und der Aufrufer
+    // (ParseAlphaFlags usw.) uebernimmt dann GAR NICHTS aus der Zeile.
     int flags = 0;
+    bool known = true;
     const size_t count = words.size() < kMaxCurveFlagWords ? words.size()
                                                            : kMaxCurveFlagWords;
     for (size_t i = 0; i < count; ++i) {
@@ -167,8 +170,25 @@ int curveFlagsFromWords(const std::vector<std::string>& words) {
         else if (iequals(word, "wave")) flags |= kCurveWave;
         else if (iequals(word, "random")) flags |= kCurveRandom;
         else if (iequals(word, "clamp")) flags |= kCurveClamp;
+        else known = false;
     }
-    return flags;
+    if (ok) *ok = known;
+    return known ? flags : 0;
+}
+
+int curveFlagsFromWords(const std::vector<std::string>& words) {
+    // Mehrere Zeilen: jede fuer sich, dann ODER — wie die Engine sie liest.
+    int flags = 0;
+    std::vector<std::string> line;
+    for (const auto& word : words) {
+        if (word == kCurveLineBreak) {
+            flags |= curveFlagsOfLine(line);
+            line.clear();
+        } else {
+            line.push_back(word);
+        }
+    }
+    return flags | curveFlagsOfLine(line);
 }
 
 uint32_t effectiveFlags(const Primitive& p) {

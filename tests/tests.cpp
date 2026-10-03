@@ -827,7 +827,7 @@ void testAuditSimulation() {
         Effect self;
         Primitive runner;
         runner.type = PrimitiveType::FxRunner;
-        runner.count = Range::single(64.0f);
+        runner.count = Range::single(128.0f);
         runner.life = Range::single(100.0f);
         runner.playFx.push_back("selbst");
         self.primitives.push_back(runner);
@@ -843,9 +843,10 @@ void testAuditSimulation() {
         const auto start = std::chrono::steady_clock::now();
         system.play(self, 1, {}, {}, loader);
         const double took = secondsSince(start);
-        std::printf("  playfx self x64: %.2f s, %zu Teilchen\n", took, system.live().size());
-        check(took < 2.0, "Effekt, der sich selbst ausloest: kein Haenger");
-        check(system.live().size() <= 300000, "... und keine Speicherexplosion");
+        std::printf("  playfx self x128: %.2f s, %zu Teilchen\n", took, system.live().size());
+        check(took < 5.0, // vorher 20 s und mehr (128^4 Starts)
+              "Effekt, der sich selbst ausloest: kein Haenger");
+        check(system.live().size() <= efx::particles::kMaxLiveItems, "... und keine Speicherexplosion");
     }
 
     // 2. Bahn mit Physik und riesiger Lebensdauer: t += 8 ms kommt ab 2^27 ms
@@ -886,7 +887,7 @@ void testAuditSimulation() {
         system.play(big, 1, {}, {}, {}, {}, /*buildUpRepeats=*/true);
         const double took = secondsSince(start);
         std::printf("  Vorlauf 24 x 5000: %.2f s, %zu Teilchen\n", took, system.live().size());
-        check(system.live().size() <= 300000, "Vorlauf mit vielen Segmenten: Gesamtzahl begrenzt");
+        check(system.live().size() <= efx::particles::kMaxLiveItems, "Vorlauf mit vielen Segmenten: Gesamtzahl begrenzt");
     }
 
     // 4. Ein Emitter, der sich nie bewegt: die Aussendesuche lief bei jedem
@@ -1199,6 +1200,145 @@ void testOriginalWriter() {
                                                      std::vector<std::string>({"gfx/a", "gfx/b"}),
               "leere und ']'-Eintraege fallen beim Schreiben weg, die anderen bleiben");
     }
+}
+
+// ParseGroupFlags (FxTemplate.cpp): hoechstens 4 Woerter je Zeile; ein
+// unbekanntes Wort verwirft die GANZE Zeile; mehrere Zeilen werden ODER-
+// verknuepft (mFlags |= ...). efxed nahm die letzte Zeile und verlor beim
+// Speichern die erste; ein unbekanntes Wort liess die bekannten gelten.
+void testOriginalCurveFlags() {
+    std::cout << "== Abgleich Original: Kurvenflags ==\n";
+    const auto alphaOf = [](const char* lines) {
+        return efx::read(std::string("Particle\n{\n\tlife\t100\n\talpha\n\t{\n\t\tstart\t1\n\t\tend\t0\n") + lines +
+                         "\t}\n}\n");
+    };
+    {
+        const efx::ReadResult r = alphaOf("\t\tflags\tlinear\n\t\tflags\trandom\n");
+        const int flags = r.effect.primitives.empty() ? -1 : r.effect.primitives[0].alpha.curveFlags;
+        check(flags == (efx::kCurveLinear | efx::kCurveRandom), "zwei flags-Zeilen: ODER (linear | random)");
+        const efx::ReadResult again = efx::read(efx::write(r.effect));
+        check(!again.effect.primitives.empty() && again.effect.primitives[0].alpha.curveFlags == flags,
+              "zwei flags-Zeilen ueberleben das Speichern");
+    }
+    {
+        const efx::ReadResult r = alphaOf("\t\tflags\tlinear unsinn\n");
+        const int flags = r.effect.primitives.empty() ? -1 : r.effect.primitives[0].alpha.curveFlags;
+        check(flags == 0, "unbekanntes Wort: die ganze Zeile gilt nicht (wie im Spiel)");
+        bool warned = false;
+        for (const auto& d : r.diagnostics) {
+            if (d.severity == efx::Severity::Warning) warned = true;
+        }
+        check(warned, "... und es gibt eine Warnung");
+        check(efx::write(r.effect).find("unsinn") != std::string::npos, "die Zeile bleibt beim Speichern stehen");
+    }
+}
+
+// LoadTGA (tr_image_tga.cpp) nimmt nur Typ 2, 3 und 10, 24/32 Bit (8 Bit nur
+// bei Grau), keine Farbtabelle, Typ 10 nur von unten nach oben. Alles andere
+// laedt das Spiel nicht (Ersatzkaestchen) — efxed zeigte es trotzdem, teils
+// mit falschen Farben (Farbtabelle mit Startindex, 16-Bit-Eintraege, ...).
+void testOpenJkTgaFormats() {
+    std::cout << "== Abgleich OpenJK: TGA-Formate ==\n";
+    const auto tga = [](int type, int depth, int descriptor, bool colourMap) {
+        std::vector<unsigned char> d(18, 0);
+        d[1] = colourMap ? 1 : 0;
+        d[2] = static_cast<unsigned char>(type);
+        if (colourMap) {
+            d[5] = 1;   // ein Eintrag
+            d[7] = 24;  // 24 Bit je Eintrag
+        }
+        d[12] = 1;  // 1 x 1
+        d[14] = 1;
+        d[16] = static_cast<unsigned char>(depth);
+        d[17] = static_cast<unsigned char>(descriptor);
+        if (colourMap) d.insert(d.end(), {0, 0, 255});
+        const int bytes = (depth + 7) / 8;
+        if (type == 10) d.push_back(0x80);  // ein RLE-Paket, ein Bildpunkt
+        for (int i = 0; i < bytes; ++i) d.push_back(0x7F);
+        return d;
+    };
+    const auto loads = [](const std::vector<unsigned char>& d) { return efx::image::decode(d.data(), d.size()).ok; };
+    check(loads(tga(2, 24, 0, false)), "Typ 2, 24 Bit: laedt");
+    check(loads(tga(2, 32, 0, false)), "Typ 2, 32 Bit: laedt");
+    check(loads(tga(3, 8, 0, false)), "Typ 3, 8 Bit Grau: laedt");
+    check(loads(tga(10, 24, 0, false)), "Typ 10, 24 Bit von unten: laedt");
+    check(!loads(tga(1, 8, 0, true)), "Typ 1 (Farbtabelle): laedt das Spiel nicht");
+    check(!loads(tga(2, 16, 0, false)), "Typ 2, 16 Bit: laedt das Spiel nicht");
+    check(!loads(tga(10, 24, 0x20, false)), "Typ 10 von oben nach unten: laedt das Spiel nicht");
+    check(!loads(tga(11, 8, 0, false)), "Typ 11 (RLE-Grau): laedt das Spiel nicht");
+}
+
+// Die Meldung zum Kurvenkonflikt bekam zwei Werte, hatte aber nur einen
+// Platzhalter: welche Art die Engine tatsaechlich liest, stand nie da.
+void testCurveCollisionMessage() {
+    std::cout << "== Meldung Kurvenkonflikt ==\n";
+    const efx::ReadResult r = efx::read(
+        "Particle\n{\n\tlife\t100\n\tsize\n\t{\n\t\tstart\t1\n\t\tend\t5\n\t\tflags\tnonlinear wave\n\t}\n"
+        "\tshaders\n\t[\n\t\tx\n\t]\n}\n");
+    std::string text;
+    for (const auto& d : efx::validate(r.effect)) {
+        if (d.id == efx::i18n::Str::VCurveCollision) text = d.message;
+    }
+    std::printf("  %s\n", text.c_str());
+    check(text.find("\"clamp\"") != std::string::npos, "die Meldung nennt, was die Engine liest (\"clamp\")");
+}
+
+// Abpraller durch die Wand (zweiter Durchgang 03.10.2026): nach einem Treffer
+// wurde der Rest des 8-ms-Schritts nicht mehr verfolgt, und ab dem 32.
+// Aufprall flog ein Teilchen ohne Kollision weiter.
+void testBouncesStayInRoom() {
+    std::cout << "== Abpraller bleiben im Raum ==\n";
+    const auto planes = efx::sim::roomPlanes(100.0f, 140.0f, -20.0f, 60.0f);
+    efx::sim::Random random(7);
+    int outside = 0, total = 0;
+    for (int i = 0; i < 400; ++i) {
+        const efx::camera::Vec3 v{random.range(-800.0f, 800.0f), random.range(-800.0f, 800.0f),
+                                  random.range(-200.0f, 900.0f)};
+        const float gravity = i % 2 ? -800.0f : 0.0f;
+        const float elasticity = random.range(0.5f, 1.0f);
+        const efx::sim::Path path =
+            efx::sim::buildPath({0.0f, 0.0f, 20.0f}, v, {0.0f, 0.0f, 0.0f}, gravity, 10000.0f, planes,
+                                elasticity, false);
+        bool out = false;
+        for (float t = 0.0f; t <= 10000.0f; t += 10.0f) {
+            const efx::camera::Vec3 p = efx::sim::positionOnPath(path, t);
+            if (std::fabs(p.x) > 100.5f || std::fabs(p.y) > 140.5f || p.z < -20.5f || p.z > 60.5f) {
+                out = true;
+                break;
+            }
+        }
+        ++total;
+        if (out) ++outside;
+    }
+    std::printf("  %d von %d Teilchen verlassen den Raum\n", outside, total);
+    check(outside == 0, "kein abprallendes Teilchen verlaesst den Raum");
+}
+
+// Abgleich OpenJK (Shader): R_FindImageFile scheitert -> ParseStage gibt
+// qfalse -> die GANZE Shaderdefinition gilt nicht, die Engine zeichnet das
+// graue Ersatzkaestchen. efxed zeichnete die Stufe mit seinem weichen
+// Ersatzfleck (24 Bezuege in Movie Duels: gfx/blood/BloodPool_*, BloodSplat_*).
+void testOpenJkMissingStageImage() {
+    std::cout << "== Abgleich OpenJK: fehlendes Stufenbild ==\n";
+    efx::assets::Index index;
+    index.textures = {"gfx/misc/csteam", "gfx/misc/da"};  // sortiert wie im Bestand
+    check(index.hasTexture("gfx/misc/csteam.jpg"), "Bildname mit Endung wird gefunden (gfx/misc/csteam.jpg)");
+    check(index.hasTexture("GFX\\misc\\da.tga"), "... auch mit Rueckstrich und Grossbuchstaben");
+    efx::shader::Library lib;
+    efx::shader::parseInto(lib,
+                           "gfx/gut\n{\n\t{\n\t\tmap gfx/misc/da.tga\n\t}\n}\n"
+                           "gfx/weiss\n{\n\t{\n\t\tmap $whiteimage\n\t}\n}\n"
+                           "gfx/kaputt\n{\n\t{\n\t\tmap gfx/misc/da.tga\n\t}\n\t{\n\t\tmap gfx/misc/fehlt.tga\n\t}\n}\n"
+                           "gfx/anim\n{\n\t{\n\t\tanimMap 10 gfx/misc/da.tga gfx/misc/fehlt.tga\n\t}\n}\n",
+                           "test.shader");
+    const auto loads = [&](const char* name) {
+        const efx::shader::Shader* s = lib.find(name);
+        return s != nullptr && efx::assets::engineLoadsShader(index, *s);
+    };
+    check(loads("gfx/gut"), "alle Bilder da: Shader gilt");
+    check(loads("gfx/weiss"), "$whiteimage: Shader gilt");
+    check(!loads("gfx/kaputt"), "ein Stufenbild fehlt: die ganze Definition gilt nicht (Ersatzkaestchen)");
+    check(!loads("gfx/anim"), "ein Bild der Bildfolge fehlt: ebenso");
 }
 
 void testUpdate() {
@@ -14648,6 +14788,11 @@ int main(int argc, char** argv) {
     testOpenJkSimulation();
     testOpenJkShaderOrder();
     testOriginalWriter();
+    testOriginalCurveFlags();
+    testOpenJkTgaFormats();
+    testCurveCollisionMessage();
+    testBouncesStayInRoom();
+    testOpenJkMissingStageImage();
     testFlags();
     testTolerance();
     testKnownRavenBugs();

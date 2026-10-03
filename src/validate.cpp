@@ -220,9 +220,29 @@ std::vector<Diagnostic> validate(const Effect& effect, Dialect target) {
             // Wie der Leser und die Engine: ohne Ruecksicht auf Gross- und
             // Kleinschreibung, und nur die ersten kMaxCurveFlagWords Woerter —
             // was dahinter steht, liest das Spiel gar nicht.
-            const size_t counted = std::min(words.size(), kMaxCurveFlagWords);
-            for (size_t w = 0; w < counted; ++w) {
-                std::string word = words[w];
+            // Je Zeile (kCurveLineBreak trennt) die ersten vier Woerter; eine
+            // Zeile mit unbekanntem Wort gilt in der Engine gar nicht.
+            std::vector<std::string> counted;
+            {
+                std::vector<std::string> line;
+                const auto take = [&] {
+                    bool ok = true;
+                    curveFlagsOfLine(line, &ok);
+                    if (ok) {
+                        for (size_t w = 0; w < line.size() && w < kMaxCurveFlagWords; ++w) {
+                            counted.push_back(line[w]);
+                        }
+                    }
+                    line.clear();
+                };
+                for (const auto& word : words) {
+                    if (word == kCurveLineBreak) take();
+                    else line.push_back(word);
+                }
+                take();
+            }
+            for (size_t w = 0; w < counted.size(); ++w) {
+                std::string word = counted[w];
                 for (char& ch : word) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
                 bool isParmType = word == "nonlinear" || word == "wave" ||
                                   word == "clamp";

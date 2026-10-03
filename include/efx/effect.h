@@ -115,7 +115,16 @@ enum : int {
 // Rechneten beide verschieden, wuerde eine unveraenderte Datei beim
 // Speichern umgeschrieben.
 constexpr size_t kMaxCurveFlagWords = 4;
+// Trennt in `curveWords` die Zeilen, wenn ein Block mehrere "flags"-Zeilen
+// hat (die Engine verknuepft sie mit ODER). Ein Wort, das aus der Datei nie
+// kommen kann — die Woerter werden an Leerraum getrennt.
+inline const char* const kCurveLineBreak = "\n";
+// Je Zeile wie ParseGroupFlags: hoechstens vier Woerter, und ein unbekanntes
+// Wort darunter verwirft die ganze Zeile. Die Zeilen ODER-verknuepft.
 int curveFlagsFromWords(const std::vector<std::string>& words);
+// Die Woerter einer einzelnen Zeile; ok == false, wenn ein unbekanntes Wort
+// unter den ersten vier steht (dann gilt die Zeile in der Engine nicht).
+int curveFlagsOfLine(const std::vector<std::string>& words, bool* ok = nullptr);
 
 // Ein animierbarer Kanal: Startwert, Endwert, ein Parameter und die Kurve.
 // Wird fuer rgb, alpha, size, size2 und length verwendet.

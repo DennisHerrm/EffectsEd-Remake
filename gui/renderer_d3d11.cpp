@@ -734,6 +734,18 @@ public:
 
     long long liveTextureCount() const override { return static_cast<long long>(liveTextures_); }
 
+    int mipLevels(TextureId texture) const override {
+        if (texture == kNoTexture) return -1;
+        auto* srv = reinterpret_cast<ID3D11ShaderResourceView*>(texture);
+        ComPtr<ID3D11Resource> resource;
+        srv->GetResource(&resource);
+        ComPtr<ID3D11Texture2D> texture2d;
+        if (!resource || FAILED(resource.As(&texture2d))) return -1;
+        D3D11_TEXTURE2D_DESC desc{};
+        texture2d->GetDesc(&desc);
+        return static_cast<int>(desc.MipLevels);
+    }
+
     void destroyTexture(TextureId texture) override {
         if (texture == kNoTexture) return;
         auto* srv = reinterpret_cast<ID3D11ShaderResourceView*>(texture);

@@ -371,7 +371,8 @@ void App::collectDecodedTextures(render::Renderer* renderer) {
             id = renderer->createTexture(ready.picture.rgba.data(),
                                          ready.picture.width,
                                          ready.picture.height,
-                                         clampImages_.count(ready.name) != 0, true);
+                                         clampImages_.count(ready.name) != 0,
+                                         noMipImages_.count(ready.name) == 0);
             ++texturesLoaded_;
             diag::info("texture " + ready.name + " <- " + ready.path + " (" +
                        std::to_string(ready.picture.width) + "x" +
@@ -497,14 +498,32 @@ void App::prefetchTextures(const Effect& effect) {
     //
     // Vorgeholt hat der Effekt seine Bilder meist schon, bevor das erste Bild
     // steht: das Laden dauert rund 20 ms, ein Effekt laeuft mehrere hundert.
+    //
+    // Mit DENSELBEN Schluesseln, unter denen das Zeichnen fragt: je Stufe
+    // "image:<Bild>" (particles.cpp, Zeichengruppen). Hier wurde nach dem
+    // Shadernamen angefordert — ein zweites, falsches Bild wurde dekodiert,
+    // und das gebrauchte kam trotzdem erst beim Zeichnen in Auftrag.
+    const auto want = [this](const std::string& image, bool clamp, bool noMips) {
+        if (image.empty() || image[0] == '$' || image[0] == '*') return;
+        const std::string key = std::string(assets::kImagePrefix) + image;
+        if (clamp) clampImages_.insert(key);
+        if (noMips) noMipImages_.insert(key);
+        requestTexture(key);
+    };
     for (const auto& primitive : effect.primitives) {
         for (const auto& shaderName : primitive.shaders) {
-            if (const auto* anim = assets_.animOf(shaderName)) {
+            const shader::Shader* def = assets_.shaderOf(shaderName);
+            if (!def) {
+                // Ohne Shaderblock: das gleichnamige Bild.
+                want(shaderName, false, false);
+                continue;
+            }
+            for (const auto& stage : def->stages) {
+                want(stage.map, false, def->noMipMaps);
+                want(stage.clampMap, true, def->noMipMaps);
                 // Bei einer Bildfolge alle Bilder, nicht nur das erste —
                 // sonst stockt sie beim ersten Ablauf Bild fuer Bild.
-                for (const auto& frame : anim->frames) requestTexture(frame);
-            } else {
-                requestTexture(shaderName);
+                for (const auto& frame : stage.animMaps) want(frame, false, def->noMipMaps);
             }
         }
     }
