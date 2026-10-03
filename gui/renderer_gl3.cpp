@@ -298,8 +298,13 @@ public:
         gl::BindFramebuffer(GL_FRAMEBUFFER, fbo_);
         setViewportRect(0, 0, 0, 0);
         glDisable(GL_SCISSOR_TEST);   // zum Loeschen die ganze Flaeche
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         glClearColor(r, g, b, a);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        // Ab hier nur Farbe, nie Alpha: ImGui::Image mischt das Bild mit
+        // seinem Alpha ins Fenster, und ein abdunkelnder Effekt (dst*src,
+        // Alpha 0) liess dort den Hintergrund der Leiste durchscheinen.
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
 
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LEQUAL);
@@ -321,6 +326,7 @@ public:
         // Nur die Tiefe. Die Farbe der zuletzt gezeichneten Kacheln bleibt
         // stehen — genau darum geht es.
         glClear(GL_DEPTH_BUFFER_BIT);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);  // nur Farbe, siehe beginViewport
 
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LEQUAL);
@@ -337,8 +343,12 @@ public:
     void clearViewportRect(float r, float g, float b, float a) override {
         // glClear achtet auf den Ausschnitt — den hat setViewportRect schon
         // gesetzt. Mehr braucht es hier nicht.
+        // glClear beachtet die Schreibmaske: zum Loeschen Alpha mitschreiben,
+        // danach wieder nur Farbe.
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         glClearColor(r, g, b, a);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE);
     }
 
     void setViewportRect(int x, int y, int width, int height) override {
@@ -488,6 +498,8 @@ public:
         // Fuellart zuruecksetzen, sonst zeichnet ImGui seine Flaechen als
         // Drahtgitter — der Zustand gehoert dem Kontext, nicht uns.
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        // ImGui zeichnet mit Alpha.
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         gl::BindVertexArray(0);
         gl::UseProgram(0);
         gl::BindFramebuffer(GL_FRAMEBUFFER, 0);

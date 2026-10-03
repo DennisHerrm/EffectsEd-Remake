@@ -178,6 +178,10 @@ uint32_t effectiveFlags(const Primitive& p) {
     if (!p.deathFx.empty()) flags |= kFlagDeathRunsFx;
     if (!p.emitFx.empty()) flags |= kFlagEmitFx;
     if (!p.models.empty()) flags |= kFlagAttachedModel;
+    // ParseMin/ParseMax (FxTemplate.cpp): "mFlags |= (FX_USE_BBOX |
+    // FX_APPLY_PHYSICS)" — eine Begrenzungsbox schaltet Physik und
+    // Box-Kollision selbst ein.
+    if (p.min.set || p.max.set) flags |= kFlagUseBBox | kFlagApplyPhysics;
     return flags;
 }
 

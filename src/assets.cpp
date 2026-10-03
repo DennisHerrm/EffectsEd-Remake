@@ -719,80 +719,6 @@ ResolvedTexture findSound(const Index& index, const std::string& basePath,
     return out;
 }
 
-Index scanAll(const std::vector<std::string>& basePaths, jobs::Pool* pool,
-              jobs::Cancellation* cancel) {
-    Index combined;
-    if (basePaths.empty()) {
-        combined.notes.push_back("no game path set");
-        return combined;
-    }
-
-    for (const auto& base : basePaths) {
-        if (cancel && cancel->cancelled()) break;
-        Index one = scan(base, pool, cancel);
-
-        // Die Wurzel je Fund merken, damit man spaeter weiss, wo eine Datei
-        // herkommt. Ohne das koennte man sie nicht mehr oeffnen.
-        for (const auto& archive : one.archives) combined.archives.push_back(archive);
-        for (auto& entry : one.shaderMaps) combined.shaderMaps.push_back(entry);
-        for (auto& entry : one.shaderTexMods) {
-            combined.shaderTexMods.push_back(std::move(entry));
-        }
-        for (auto& entry : one.shaderRgbWaves) {
-            combined.shaderRgbWaves.push_back(std::move(entry));
-        }
-        // Einmal. Hier stand dieselbe Schleife zweimal; die zweite schob die
-        // schon verschobenen Eintraege noch einmal hinterher — mit leerem
-        // Namen. Fuer die Suche harmlos, aber doppelt so viele Eintraege.
-        for (auto& entry : one.shaderAlphaWaves) {
-            combined.shaderAlphaWaves.push_back(std::move(entry));
-        }
-        for (auto& entry : one.shaderAnims) {
-            combined.shaderAnims.push_back(std::move(entry));
-        }
-        // Erster Ordner zuerst: shaderOf nimmt den ersten Treffer.
-        for (auto& entry : one.shaderDefs) {
-            combined.shaderDefs.push_back(std::move(entry));
-        }
-        for (auto& entry : one.effectSources) {
-            combined.effectSources.push_back(std::move(entry));
-        }
-        for (auto& entry : one.shaderBlends) combined.shaderBlends.push_back(entry);
-        combined.roots.push_back(base);
-
-        auto merge = [](std::vector<std::string>& into,
-                        const std::vector<std::string>& from) {
-            into.insert(into.end(), from.begin(), from.end());
-        };
-        merge(combined.shaders, one.shaders);
-        merge(combined.textures, one.textures);
-        merge(combined.models, one.models);
-        merge(combined.sounds, one.sounds);
-        merge(combined.effects, one.effects);
-
-        combined.pk3Count += one.pk3Count;
-        combined.filesSeen += one.filesSeen;
-        combined.shaderFilesRead += one.shaderFilesRead;
-        for (const auto& note : one.notes) combined.notes.push_back(note);
-    }
-
-    // Die Listen muessen sortiert und doppelfrei sein — hasShader und
-    // findTexture suchen binaer darin.
-    //
-    // Bei shaderMaps und shaderBlends wird NICHT sortiert: dort gewinnt der
-    // erste Eintrag, und der kommt aus dem zuerst durchsuchten Ordner. Genau
-    // das ist die Ueberschreibregel.
-    auto tidy = [](std::vector<std::string>& list) {
-        std::sort(list.begin(), list.end());
-        list.erase(std::unique(list.begin(), list.end()), list.end());
-    };
-    tidy(combined.shaders);
-    tidy(combined.textures);
-    tidy(combined.models);
-    tidy(combined.sounds);
-    tidy(combined.effects);
-    return combined;
-}
 
 ResolvedTexture findEffect(const Index& index, const std::string& basePath,
                            const std::string& name) {
@@ -1060,6 +986,7 @@ void sortUnique(std::vector<std::string>& list) {
 struct ShaderSource {
     std::string key;      // Pfad im Spiel, klein: "shaders/fx.shader"
     size_t rank = 0;      // Platz in der Suchreihenfolge, 0 = zuerst
+    size_t position = 0;  // im Archiv: Platz im Verzeichnis; ausgepackt: Fundfolge
     std::string archive;  // leer: ausgepackt
     std::string inner;    // Name im Archiv
     fs::path file;        // die ausgepackte Datei
@@ -1080,31 +1007,40 @@ struct ShaderSource {
 //
 //   1. Jeder Dateiname zaehlt einmal (FS_ListFiles liefert ihn einmal), und
 //      FS_ReadFile liest die Fassung, die in der Suchreihenfolge zuerst kommt.
-//   2. Die Liste ist alphabetisch (FS_SortFileList, mit FS_PathCmp).
-//   3. Zusammengehaengt wird RUECKWAERTS, und FindShaderInShaderText nimmt
-//      den ersten Treffer. Ein Shader, der in zwei Dateien steht, kommt also
-//      aus der alphabetisch LETZTEN.
+//   2. Die Liste ist NICHT sortiert. FS_ListFilteredFiles (SP, files.cpp)
+//      laeuft die Suchpfade ab — hoechster Rang zuerst, in einem Archiv in
+//      der Folge seines Verzeichnisses — und haengt jeden neuen Namen hinten
+//      an. Hier stand "alphabetisch (FS_SortFileList)": das gilt fuer die
+//      Dateinamen-Ergaenzung der Konsole, nicht fuer diese Liste.
+//   3. Zusammengehaengt wird RUECKWAERTS, und der erste Treffer gewinnt
+//      (ShaderEntryPtrs_Insert behaelt den ersten). Ein Shadername, der in
+//      zwei Dateien steht, kommt also aus der Datei, die in der Liste zuletzt
+//      steht — der aus der Quelle mit dem NIEDRIGSTEN Rang. Das ist gegen die
+//      Erwartung, aber so steht es im Code (Abgleich vom 03.10.2026: 371 von
+//      5541 Shaderbezuegen in Movie Duels betroffen, etwa gfx/exp/expa1-5).
 //
-// Wir lasen in Verzeichnisreihenfolge, und die Archive je nach Arbeitsfaden
-// in wechselnder Reihenfolge — bei doppelten Shadernamen gewann, wer zuerst
-// fertig war.
+// Ueber ALLE Spielordner zusammen, nicht je Ordner: die Engine haengt den
+// Text aller Suchpfade aneinander (scanAll sammelt dafuer erst und liest dann).
 std::vector<ShaderSource> engineShaderOrder(std::vector<ShaderSource> sources) {
-    std::sort(sources.begin(), sources.end(),
-              [](const ShaderSource& a, const ShaderSource& b) {
-                  const int order = enginePathCompare(a.key, b.key);
-                  if (order != 0) return order < 0;
-                  return a.rank < b.rank;
-              });
+    std::stable_sort(sources.begin(), sources.end(),
+                     [](const ShaderSource& a, const ShaderSource& b) {
+                         if (a.rank != b.rank) return a.rank < b.rank;
+                         return a.position < b.position;
+                     });
     std::vector<ShaderSource> unique;
+    std::set<std::string> listed;
     for (auto& source : sources) {
-        if (!unique.empty() && enginePathCompare(unique.back().key, source.key) == 0) {
-            continue;  // dieselbe Datei, aber weiter hinten im Suchpfad
-        }
+        // Derselbe Dateiname weiter hinten im Suchpfad: nicht noch einmal.
+        if (!listed.insert(source.key).second) continue;
         unique.push_back(std::move(source));
     }
     std::reverse(unique.begin(), unique.end());
     return unique;
 }
+
+// Die Dateien lesen und die Shadertabellen des Bestands fuellen.
+void readShaderSources(Index& index, const std::vector<ShaderSource>& ordered,
+                       jobs::Cancellation* cancel);
 
 // Aus den gelesenen Shadern die Tabellen des Bestands bauen.
 //
@@ -1232,8 +1168,11 @@ Index scanArchive(const std::string& archivePath) {
 }
 
 
-Index scan(const std::string& basePath, jobs::Pool* pool,
-           jobs::Cancellation* cancel) {
+namespace {
+// collect != nullptr: die .shader-Dateien nur sammeln (scanAll liest sie
+// danach ueber alle Ordner zusammen), sonst gleich lesen.
+Index scanImpl(const std::string& basePath, jobs::Pool* pool, jobs::Cancellation* cancel,
+               std::vector<ShaderSource>* collect) {
     Index index;
     std::error_code ec;
     const fs::path base = paths::fromUtf8(basePath);
@@ -1273,6 +1212,7 @@ Index scan(const std::string& basePath, jobs::Pool* pool,
         if (classify(relative) == Kind::Shader) {
             ShaderSource source;
             source.key = comparablePath(relative);
+            source.position = shaderSources.size();
             source.file = it->path();
             shaderSources.push_back(std::move(source));
             continue;
@@ -1313,11 +1253,13 @@ Index scan(const std::string& basePath, jobs::Pool* pool,
             index.notes.push_back(paths::toUtf8(pk3Files[i].filename()) + ": " + error);
             return;
         }
-        for (const auto& name : names) {
+        for (size_t n = 0; n < names.size(); ++n) {
+            const auto& name = names[n];
             if (classify(name) == Kind::Shader) {
                 ShaderSource source;
                 source.key = comparablePath(name);
                 source.rank = i;  // pk3Files steht schon in Suchreihenfolge
+                source.position = n;  // Folge im Verzeichnis des Archivs
                 source.archive = paths::toUtf8(pk3Files[i]);
                 source.inner = name;
                 shaderSources.push_back(std::move(source));
@@ -1369,8 +1311,24 @@ Index scan(const std::string& basePath, jobs::Pool* pool,
     // Zuletzt die .shader-Dateien. Nur diese muessen tatsaechlich gelesen
     // werden, weil die Shadernamen im Inhalt stehen und nicht im Dateinamen.
     // Reihenfolge und Auswahl wie in der Engine (engineShaderOrder).
+    if (collect) {
+        for (auto& source : shaderSources) collect->push_back(std::move(source));
+    } else {
+        readShaderSources(index, engineShaderOrder(std::move(shaderSources)), cancel);
+    }
+
+    sortUnique(index.shaders);
+    sortUnique(index.textures);
+    sortUnique(index.models);
+    sortUnique(index.sounds);
+    sortUnique(index.effects);
+    return index;
+}
+
+void readShaderSources(Index& index, const std::vector<ShaderSource>& ordered,
+                       jobs::Cancellation* cancel) {
     shader::Library library;
-    for (const auto& source : engineShaderOrder(std::move(shaderSources))) {
+    for (const auto& source : ordered) {
         if (cancel && cancel->cancelled()) break;
         std::string text;
         if (source.archive.empty()) {
@@ -1396,13 +1354,99 @@ Index scan(const std::string& basePath, jobs::Pool* pool,
 
     // Erst jetzt einsammeln — vorher fehlten die aus den Archiven.
     collectShaderInfo(index, library);
+}
 
-    sortUnique(index.shaders);
-    sortUnique(index.textures);
-    sortUnique(index.models);
-    sortUnique(index.sounds);
-    sortUnique(index.effects);
-    return index;
+}  // namespace
+
+Index scan(const std::string& basePath, jobs::Pool* pool, jobs::Cancellation* cancel) {
+    return scanImpl(basePath, pool, cancel, nullptr);
+}
+
+Index scanAll(const std::vector<std::string>& basePaths, jobs::Pool* pool,
+              jobs::Cancellation* cancel) {
+    Index combined;
+    if (basePaths.empty()) {
+        combined.notes.push_back("no game path set");
+        return combined;
+    }
+
+    // Die .shader-Dateien aller Ordner, mit Rang ueber alle Ordner hinweg:
+    // Ordner i kommt ganz nach Ordner i-1 (in jedem Ordner zaehlen die Archive
+    // und dann die ausgepackten Dateien).
+    std::vector<ShaderSource> allShaderSources;
+    size_t folderIndex = 0;
+    for (const auto& base : basePaths) {
+        if (cancel && cancel->cancelled()) break;
+        std::vector<ShaderSource> folderSources;
+        Index one = scanImpl(base, pool, cancel, &folderSources);
+        for (auto& source : folderSources) {
+            source.rank += folderIndex << 20;
+            allShaderSources.push_back(std::move(source));
+        }
+        ++folderIndex;
+
+        // Die Wurzel je Fund merken, damit man spaeter weiss, wo eine Datei
+        // herkommt. Ohne das koennte man sie nicht mehr oeffnen.
+        for (const auto& archive : one.archives) combined.archives.push_back(archive);
+        for (auto& entry : one.shaderMaps) combined.shaderMaps.push_back(entry);
+        for (auto& entry : one.shaderTexMods) {
+            combined.shaderTexMods.push_back(std::move(entry));
+        }
+        for (auto& entry : one.shaderRgbWaves) {
+            combined.shaderRgbWaves.push_back(std::move(entry));
+        }
+        // Einmal. Hier stand dieselbe Schleife zweimal; die zweite schob die
+        // schon verschobenen Eintraege noch einmal hinterher — mit leerem
+        // Namen. Fuer die Suche harmlos, aber doppelt so viele Eintraege.
+        for (auto& entry : one.shaderAlphaWaves) {
+            combined.shaderAlphaWaves.push_back(std::move(entry));
+        }
+        for (auto& entry : one.shaderAnims) {
+            combined.shaderAnims.push_back(std::move(entry));
+        }
+        // Erster Ordner zuerst: shaderOf nimmt den ersten Treffer.
+        for (auto& entry : one.shaderDefs) {
+            combined.shaderDefs.push_back(std::move(entry));
+        }
+        for (auto& entry : one.effectSources) {
+            combined.effectSources.push_back(std::move(entry));
+        }
+        for (auto& entry : one.shaderBlends) combined.shaderBlends.push_back(entry);
+        combined.roots.push_back(base);
+
+        auto merge = [](std::vector<std::string>& into,
+                        const std::vector<std::string>& from) {
+            into.insert(into.end(), from.begin(), from.end());
+        };
+        merge(combined.shaders, one.shaders);
+        merge(combined.textures, one.textures);
+        merge(combined.models, one.models);
+        merge(combined.sounds, one.sounds);
+        merge(combined.effects, one.effects);
+
+        combined.pk3Count += one.pk3Count;
+        combined.filesSeen += one.filesSeen;
+        combined.shaderFilesRead += one.shaderFilesRead;
+        for (const auto& note : one.notes) combined.notes.push_back(note);
+    }
+
+    // Die Listen muessen sortiert und doppelfrei sein — hasShader und
+    // findTexture suchen binaer darin.
+    //
+    // Bei shaderMaps und shaderBlends wird NICHT sortiert: dort gewinnt der
+    // erste Eintrag, und der kommt aus dem zuerst durchsuchten Ordner. Genau
+    // das ist die Ueberschreibregel.
+    auto tidy = [](std::vector<std::string>& list) {
+        std::sort(list.begin(), list.end());
+        list.erase(std::unique(list.begin(), list.end()), list.end());
+    };
+    readShaderSources(combined, engineShaderOrder(std::move(allShaderSources)), cancel);
+    tidy(combined.shaders);
+    tidy(combined.textures);
+    tidy(combined.models);
+    tidy(combined.sounds);
+    tidy(combined.effects);
+    return combined;
 }
 
 }  // namespace efx::assets

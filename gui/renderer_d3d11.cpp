@@ -23,6 +23,16 @@
 using Microsoft::WRL::ComPtr;
 
 namespace efx::render {
+
+// Die Vorschau schreibt NUR Farbe, nie Alpha (Fehlersuche 03.10.2026).
+// ImGui::Image mischt das Vorschaubild mit dessen Alpha ins Fenster; ein
+// Teilchen ohne useAlpha hat Eckpunkt-Alpha 0, und mit "Alpha mitschreiben"
+// stand dort 0 im Bild — an jeder Stelle mit einem Effekt schien der
+// Hintergrund der Leiste durch, statt Effekt und Raum zu zeigen. Unter
+// Direct3D, der Voreinstellung, war damit der groesste Teil aller Effekte
+// unsichtbar. Alpha setzt allein das Loeschen (auf 1).
+constexpr UINT8 kPreviewWriteMask =
+    D3D11_COLOR_WRITE_ENABLE_RED | D3D11_COLOR_WRITE_ENABLE_GREEN | D3D11_COLOR_WRITE_ENABLE_BLUE;
 namespace {
 
 // Direct3D und den Shaderuebersetzer zur LAUFZEIT laden.
@@ -381,7 +391,17 @@ public:
             1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  0, 0, 0, 1};
         setCamera(identity, identity);
 
-        setBlend(Blend::Opaque);
+        // Wie glClear: ohne Ruecksicht auf den Zustand des letzten Zeichnens.
+        // Hier blieb das Wegschneiden der Rueckseiten eines Modells stehen,
+        // das Viereck galt als Rueckseite und wurde verworfen — die Kachel
+        // behielt das Bild des vorigen Effekts.
+        setCulling(Cull::None);
+        setFill(Fill::Solid);
+        setAlphaTest(0);
+        setDepthTest(false);
+        // Das einzige Zeichnen MIT Alpha: die Kachel wird undurchsichtig.
+        const float factor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        context_->OMSetBlendState(clearBlend_.Get(), factor, 0xFFFFFFFF);
 
         // KEIN Tiefenschreiben.
         //
@@ -403,6 +423,8 @@ public:
         // Viereck soll nur Farbe hinterlassen.
         setDepthWrite(false);
         drawTriangles(quad, 4, order, 6, kNoTexture);
+        setDepthTest(true);
+        setBlend(Blend::Opaque);
     }
 
     void setViewportRect(int x, int y, int width, int height) override {
@@ -505,11 +527,11 @@ public:
             target.SrcBlend = d3dFactor(src);
             target.DestBlend = d3dFactor(dst);
             target.BlendOp = D3D11_BLEND_OP_ADD;
-            // Der Alphakanal des Ziels wird wie bisher einfach ueberschrieben.
             target.SrcBlendAlpha = D3D11_BLEND_ONE;
             target.DestBlendAlpha = D3D11_BLEND_ZERO;
             target.BlendOpAlpha = D3D11_BLEND_OP_ADD;
-            target.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+            // Nur Farbe, nie Alpha — siehe kPreviewWriteMask.
+            target.RenderTargetWriteMask = kPreviewWriteMask;
             ComPtr<ID3D11BlendState> state;
             if (FAILED(device_->CreateBlendState(&bd, &state))) return;
             found = factorBlends_.emplace(key, state).first;
@@ -918,8 +940,15 @@ private:
             target.SrcBlendAlpha = D3D11_BLEND_ONE;
             target.DestBlendAlpha = D3D11_BLEND_ZERO;
             target.BlendOpAlpha = D3D11_BLEND_OP_ADD;
-            target.RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+            target.RenderTargetWriteMask = kPreviewWriteMask;
             if (FAILED(device_->CreateBlendState(&bd, &blendStates_[i]))) return false;
+        }
+        // Nur zum Loeschen einer Kachel: undurchsichtig, mit Alpha.
+        {
+            D3D11_BLEND_DESC bd{};
+            bd.RenderTarget[0].BlendEnable = FALSE;
+            bd.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+            if (FAILED(device_->CreateBlendState(&bd, &clearBlend_))) return false;
         }
 
         D3D11_DEPTH_STENCIL_DESC dsd{};
@@ -1066,6 +1095,7 @@ private:
     ComPtr<ID3D11SamplerState> clampSampler_;
     std::unordered_set<ID3D11ShaderResourceView*> clampTextures_;
     ComPtr<ID3D11BlendState> blendStates_[5];
+    ComPtr<ID3D11BlendState> clearBlend_;
     std::map<int, ComPtr<ID3D11BlendState>> factorBlends_;
     ComPtr<ID3D11DepthStencilState> depthWriteState_;
     ComPtr<ID3D11DepthStencilState> depthReadState_;
