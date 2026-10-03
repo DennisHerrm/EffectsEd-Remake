@@ -90,7 +90,7 @@ std::string currentStep();
 
 // Alle bisherigen Zeilen. Für den Menüpunkt „Protokoll anzeigen" und für den
 // Fall, dass die Datei nicht geschrieben werden konnte.
-const std::vector<std::string>& lines();
+std::vector<std::string> lines();  // Kopie, fadensicher
 
 // Kopfzeilen mit Angaben zur Umgebung. Der Aufrufer liefert sie, weil sie
 // betriebssystemabhängig sind; hier steht nur, wie sie im Protokoll landen.

@@ -74,6 +74,13 @@ struct Document {
     timeline::Clock clock;
     bool pendingRestart = false;
     undo::Stack undo;
+    // undo.currentId() beim letzten Oeffnen/Speichern: der Stand, der auf der
+    // Platte liegt. Nach Rueckgaengig/Wiederholen ist das Dokument genau dann
+    // geaendert, wenn es nicht mehr dieser Stand ist.
+    uint64_t savedUndoId = 0;
+    // Die Datei hatte Aufbaufehler und ist nur teilweise (oder gar nicht)
+    // gelesen. Speichern geht dann nie ueber filePath, sondern fragt.
+    bool unreadableOriginal = false;
     bool paused = false;
 
     // Wie der Reiter beschriftet wird: Dateiname, oder „(unbenannt)".
@@ -257,6 +264,9 @@ public:
     // Freigeben darf man sie nicht: der Renderer, dem sie gehörten, existiert
     // nicht mehr. Also nur vergessen.
     void forgetGraphicsResources();
+    // Vor dem Abbau des Renderers: alle Texturen, die die App von ihm hat,
+    // ueber IHN freigeben. Danach erst forgetGraphicsResources.
+    void releaseGraphicsResources(render::Renderer* renderer);
 
 private:
     void drawMenuBar();
@@ -290,6 +300,10 @@ private:
     const void* listEditing_ = nullptr;
     int listEditRow_ = -1;
     bool listEditFocus_ = false;
+    // Eine Liste hat die Entf-Taste in diesem Bild selbst verbraucht (Eintrag
+    // entfernt). Ohne das loeschte handleShortcuts im selben Bild auch noch
+    // das ganze Segment.
+    bool deleteKeyConsumed_ = false;
     bool editFlags(Primitive& primitive);
 
     // Ein Gruppenrahmen wie im Original: Titel oben links, Inhalt eingerueckt,
@@ -387,6 +401,7 @@ private:
     const Document& doc() const;
 
     void newDocument();
+    void flushPendingFieldEdit();
     // Die Achsen als 3 Bildpunkte breite Baender ueber dem Effekt.
     void drawAxesOnTop(render::Renderer* renderer, const camera::Matrix& view, float viewHeight);
     scene::Mesh axisQuads_;
@@ -660,6 +675,9 @@ private:
     char renameBuffer_[64] = {};
     // Ein neues Segment an dieser Stelle einfuegen.
     bool insertSegmentAt(int at);
+    // Die Engine nimmt hoechstens so viele Segmente je Effekt
+    // (FX_MAX_EFFECT_COMPONENTS in FxScheduler.h).
+    static constexpr size_t kMaxSegments = 24;
     // Baut die Vorschau neu und behaelt Zeit und Zustand der Uhr.
     // Holt die Windfahne in den Raum zurueck — auch nach einem Wechsel des
     // Masstabs, nicht nur beim Ziehen.

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <string>
 
 namespace efx::gp2 {
 namespace {
@@ -106,12 +107,32 @@ std::string_view getToken(Cursor& c, bool allowLineBreaks, bool readToEOL = fals
     return c.slice(start, c.pos());
 }
 
-bool parseGroup(Cursor& c, Group& group, bool topLevel, std::vector<Error>& errors) {
+// Tiefer schachtelt keine echte Datei (Effekte: zwei Ebenen, Shader: zwei).
+// Ohne Grenze lief eine Datei aus "a {" x 3000 den Stapel voll und riss das
+// Programm mit — und Effekte aus .pk3 werden schon beim Blaettern in der
+// Bibliothek gelesen.
+constexpr int kMaxDepth = 64;
+
+bool parseGroup(Cursor& c, Group& group, bool topLevel, std::vector<Error>& errors,
+                int depth = 0) {
     for (;;) {
+        // Erst Leerraum und Kommentare ueberspringen, DANN die Zeile nehmen —
+        // sonst steht da die Zeile vor dem Schluessel (hinter Leerzeilen
+        // sogar noch weiter vorn), und jede Meldung zeigt auf die falsche.
+        skipWhitespaceAndComments(c, true);
         int lineOfToken = c.line();
+        const bool quotedEmpty = c.peek() == '"' && c.peek(1) == '"';
         std::string_view token = getToken(c, true);
 
         if (token.empty()) {
+            // Ein leerer Schluessel ("") beendet das Lesen — wie im Spiel,
+            // dessen GP2 dasselbe Token als Dateiende nimmt. Aber nicht
+            // still: alles dahinter waere beim naechsten Speichern weg.
+            if (quotedEmpty && !c.eof()) {
+                errors.push_back({lineOfToken, "Leerer Schluessel (\"\") — das Spiel liest ab hier "
+                                               "nichts mehr"});
+                return false;
+            }
             if (topLevel) return true;
             errors.push_back({lineOfToken, "Datei endet mitten in Gruppe \"" +
                                                group.name + "\" — es fehlt eine }"});
@@ -130,12 +151,17 @@ bool parseGroup(Cursor& c, Group& group, bool topLevel, std::vector<Error>& erro
         std::string_view next = getToken(c, true, /*readToEOL=*/true);
 
         if (next == "{") {
+            if (depth + 1 > kMaxDepth) {
+                errors.push_back({lineOfToken, "Zu tief verschachtelt (mehr als " +
+                                                   std::to_string(kMaxDepth) + " Ebenen)"});
+                return false;
+            }
             group.subGroups.push_back(Group{});
             Group& sub = group.subGroups.back();
             sub.name = key;
             sub.line = lineOfToken;
             sub.sourceBegin = keyBegin;
-            if (!parseGroup(c, sub, false, errors)) return false;
+            if (!parseGroup(c, sub, false, errors, depth + 1)) return false;
             sub.sourceEnd = c.pos();  // direkt hinter der `}`
         } else if (next == "[") {
             Property prop;
@@ -143,6 +169,7 @@ bool parseGroup(Cursor& c, Group& group, bool topLevel, std::vector<Error>& erro
             prop.wasList = true;
             prop.line = lineOfToken;
             for (;;) {
+                skipWhitespaceAndComments(c, true);
                 int itemLine = c.line();
                 std::string_view item = getToken(c, true, /*readToEOL=*/true);
                 if (item.empty()) {

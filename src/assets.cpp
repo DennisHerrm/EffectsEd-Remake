@@ -8,12 +8,21 @@
 #include <set>
 
 #include "efx/inflate.h"
+#include "efx/paths.h"
 #include "efx/shader.h"
 
 namespace fs = std::filesystem;
 
 namespace efx::assets {
 namespace {
+
+// Ein Pfad als UTF-8 mit "/" — fuer Namen und Wurzeln im Bestand. Vorher
+// generic_string(): unter MSVC ANSI-Codepage, und ein Ordner "Jörg" kam
+// verstuemmelt im Bestand an.
+std::string u8generic(const fs::path& p) {
+    const std::u8string text = p.generic_u8string();
+    return std::string(text.begin(), text.end());
+}
 
 std::string toLower(std::string text) {
     std::transform(text.begin(), text.end(), text.begin(),
@@ -254,7 +263,7 @@ std::vector<std::string> readZipDirectory(const std::string& path,
         return names;
     };
 
-    std::ifstream file(path, std::ios::binary);
+    std::ifstream file(paths::fromUtf8(path), std::ios::binary);
     if (!file) return fail("cannot open");
 
     file.seekg(0, std::ios::end);
@@ -333,7 +342,7 @@ std::vector<unsigned char> readFromZip(const std::string& archivePath,
         return empty;
     };
 
-    std::ifstream file(archivePath, std::ios::binary);
+    std::ifstream file(paths::fromUtf8(archivePath), std::ios::binary);
     if (!file) return fail("cannot open archive");
 
     file.seekg(0, std::ios::end);
@@ -391,7 +400,15 @@ std::vector<unsigned char> readFromZip(const std::string& archivePath,
         if (!dir.text(p + 46, nameLength, entryName)) break;
         p += 46u + nameLength + extraLength + commentLength;
 
-        if (toLower(entryName) != wanted) continue;
+        // Wie beim Aufbau des Bestands (normaliseName) und wie die Engine:
+        // "\" gilt wie "/", ein fuehrender "/" zaehlt nicht. Vorher stand ein
+        // solcher Eintrag im Bestand, liess sich aber nie lesen.
+        std::string compared = toLower(entryName);
+        for (char& ch : compared) {
+            if (ch == '\\') ch = '/';
+        }
+        while (!compared.empty() && compared.front() == '/') compared.erase(compared.begin());
+        if (compared != wanted) continue;
 
         // Gefunden. Jetzt zum lokalen Kopf springen — dort steht, wie lang
         // Name und Zusatzfeld dieses Eintrags sind, und die koennen von den
@@ -511,7 +528,7 @@ ResolvedTexture findTexture(const Index& index, const std::string& basePath,
         const std::string relative = stem + ext;
         for (const auto& place : places) {
             if (place.archive.empty()) {
-                if (fs::is_regular_file(fs::path(place.root) / relative, ec)) {
+                if (fs::is_regular_file(paths::fromUtf8(place.root) / paths::fromUtf8(relative), ec)) {
                     out.path = relative;
                     out.root = place.root;
                     out.found = true;
@@ -570,7 +587,7 @@ std::vector<std::string> discoverRoots(const std::string& folder, int maxDepth) 
     if (folder.empty()) return found;
 
     std::error_code ec;
-    const fs::path start(folder);
+    const fs::path start = paths::fromUtf8(folder);
     if (!fs::is_directory(start, ec)) return found;
 
     // Sieht der Ordner selbst wie ein Spielordner aus?
@@ -580,18 +597,18 @@ std::vector<std::string> discoverRoots(const std::string& folder, int maxDepth) 
              it.increment(inner)) {
             if (inner) break;
             if (it->is_regular_file(inner)) {
-                if (toLower(it->path().extension().string()) == ".pk3") return true;
+                if (toLower(paths::toUtf8(it->path().extension())) == ".pk3") return true;
                 continue;
             }
             if (!it->is_directory(inner)) continue;
-            const std::string name = toLower(it->path().filename().string());
+            const std::string name = toLower(paths::toUtf8(it->path().filename()));
             if (name == "shaders" || name == "effects" || name == "gfx") return true;
         }
         return false;
     };
 
     if (looksLikeRoot(start)) {
-        found.push_back(start.generic_string());
+        found.push_back(u8generic(start));
         return found;
     }
 
@@ -607,7 +624,7 @@ std::vector<std::string> discoverRoots(const std::string& folder, int maxDepth) 
                 if (ec) break;
                 if (!it->is_directory(ec)) continue;
                 if (looksLikeRoot(it->path())) {
-                    found.push_back(it->path().generic_string());
+                    found.push_back(u8generic(it->path()));
                     if (found.size() >= kMaxRoots) break;
                 } else {
                     next.push_back(it->path());
@@ -685,7 +702,7 @@ ResolvedTexture findSound(const Index& index, const std::string& basePath,
             std::binary_search(index.sounds.begin(), index.sounds.end(), relative);
         for (const auto& place : places) {
             if (place.archive.empty()) {
-                if (fs::is_regular_file(fs::path(place.root) / relative, ec)) {
+                if (fs::is_regular_file(paths::fromUtf8(place.root) / paths::fromUtf8(relative), ec)) {
                     out.path = relative;
                     out.root = place.root;
                     out.found = true;
@@ -798,7 +815,7 @@ ResolvedTexture findEffect(const Index& index, const std::string& basePath,
         std::binary_search(index.effects.begin(), index.effects.end(), stem);
     for (const auto& place : searchPlaces(index, basePath)) {
         if (place.archive.empty()) {
-            if (fs::is_regular_file(fs::path(place.root) / relative, ec)) {
+            if (fs::is_regular_file(paths::fromUtf8(place.root) / paths::fromUtf8(relative), ec)) {
                 out.path = relative;
                 out.root = place.root;
                 out.found = true;
@@ -832,7 +849,7 @@ ResolvedTexture findModel(const Index& index, const std::string& basePath,
         std::binary_search(index.models.begin(), index.models.end(), relative);
     for (const auto& place : searchPlaces(index, basePath)) {
         if (place.archive.empty()) {
-            if (fs::is_regular_file(fs::path(place.root) / relative, ec)) {
+            if (fs::is_regular_file(paths::fromUtf8(place.root) / paths::fromUtf8(relative), ec)) {
                 out.path = relative;
                 out.root = place.root;
                 out.found = true;
@@ -863,9 +880,9 @@ std::vector<unsigned char> readFile(const std::string& basePath,
     // Die beim Suchen gemerkte Wurzel benutzen, nicht die uebergebene: bei
     // mehreren Spielpfaden liegt die Datei unter einem davon, und welcher es
     // war, weiss nur der Fund.
-    const fs::path root = where.root.empty() ? fs::path(basePath)
-                                             : fs::path(where.root);
-    std::ifstream file(root / where.path, std::ios::binary);
+    const fs::path root = where.root.empty() ? paths::fromUtf8(basePath)
+                                             : paths::fromUtf8(where.root);
+    std::ifstream file(root / paths::fromUtf8(where.path), std::ios::binary);
     if (!file) {
         if (error) *error = "cannot open " + where.path;
         return {};
@@ -1219,7 +1236,7 @@ Index scan(const std::string& basePath, jobs::Pool* pool,
            jobs::Cancellation* cancel) {
     Index index;
     std::error_code ec;
-    const fs::path base(basePath);
+    const fs::path base = paths::fromUtf8(basePath);
     if (basePath.empty() || !fs::is_directory(base, ec)) {
         index.notes.push_back("base folder not found");
         return index;
@@ -1246,7 +1263,7 @@ Index scan(const std::string& basePath, jobs::Pool* pool,
         if (!it->is_regular_file(ec)) continue;
 
         const std::string relative =
-            fs::relative(it->path(), base, ec).generic_string();
+            u8generic(fs::relative(it->path(), base, ec));
         if (ec) continue;
 
         if (extensionOf(relative) == ".pk3") {
@@ -1260,7 +1277,7 @@ Index scan(const std::string& basePath, jobs::Pool* pool,
             shaderSources.push_back(std::move(source));
             continue;
         }
-        addName(index, relative, base.string());
+        addName(index, relative, paths::toUtf8(base));
     }
 
     // Die Archive in die Reihenfolge der Engine bringen.
@@ -1276,11 +1293,11 @@ Index scan(const std::string& basePath, jobs::Pool* pool,
               [&](const fs::path& a, const fs::path& b) {
                   std::error_code inner;
                   return enginePathCompare(
-                             fs::relative(a, base, inner).generic_string(),
-                             fs::relative(b, base, inner).generic_string()) > 0;
+                             u8generic(fs::relative(a, base, inner)),
+                             u8generic(fs::relative(b, base, inner))) > 0;
               });
     index.pk3Count = static_cast<int>(pk3Files.size());
-    for (const auto& archive : pk3Files) index.archives.push_back(archive.string());
+    for (const auto& archive : pk3Files) index.archives.push_back(paths::toUtf8(archive));
 
     // Dann die .pk3-Dateien. Jede kann ein eigener Faden lesen — das ist der
     // Fall, fuer den der Arbeitsverteiler gebaut wurde: zwanzig Dateien, jede
@@ -1289,11 +1306,11 @@ Index scan(const std::string& basePath, jobs::Pool* pool,
 
     auto readOnePk3 = [&](size_t i) {
         std::string error;
-        const auto names = readZipDirectory(pk3Files[i].string(), &error);
+        const auto names = readZipDirectory(paths::toUtf8(pk3Files[i]), &error);
 
         std::lock_guard<std::mutex> lock(mutex);
         if (!error.empty()) {
-            index.notes.push_back(pk3Files[i].filename().string() + ": " + error);
+            index.notes.push_back(paths::toUtf8(pk3Files[i].filename()) + ": " + error);
             return;
         }
         for (const auto& name : names) {
@@ -1301,11 +1318,11 @@ Index scan(const std::string& basePath, jobs::Pool* pool,
                 ShaderSource source;
                 source.key = comparablePath(name);
                 source.rank = i;  // pk3Files steht schon in Suchreihenfolge
-                source.archive = pk3Files[i].string();
+                source.archive = paths::toUtf8(pk3Files[i]);
                 source.inner = name;
                 shaderSources.push_back(std::move(source));
             } else {
-                addName(index, name, pk3Files[i].string());
+                addName(index, name, paths::toUtf8(pk3Files[i]));
             }
         }
     };
@@ -1334,7 +1351,7 @@ Index scan(const std::string& basePath, jobs::Pool* pool,
     {
         std::vector<std::pair<std::string, size_t>> rankOf;
         for (size_t i = 0; i < pk3Files.size(); ++i) {
-            rankOf.emplace_back(pk3Files[i].string(), i);
+            rankOf.emplace_back(paths::toUtf8(pk3Files[i]), i);
         }
         auto rank = [&](const std::string& source) {
             for (const auto& entry : rankOf) {
@@ -1361,7 +1378,7 @@ Index scan(const std::string& basePath, jobs::Pool* pool,
             if (!file) continue;
             text.assign((std::istreambuf_iterator<char>(file)),
                         std::istreambuf_iterator<char>());
-            shader::parseInto(library, text, source.file.filename().string());
+            shader::parseInto(library, text, paths::toUtf8(source.file.filename()));
         } else {
             // Shader aus den Archiven. Lange blieben sie ungelesen, weil ihre
             // Namen im Dateiinhalt stehen und nicht im Dateinamen.

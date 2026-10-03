@@ -66,7 +66,7 @@ Image decodePng(const unsigned char* data, size_t size) {
             bitDepth = data[body + 8];
             colourType = data[body + 9];
             const int interlace = data[body + 12];
-            if (width <= 0 || height <= 0 || width > 16384 || height > 16384) {
+            if (implausibleSize(width, height)) {
                 return fail("implausible PNG size");
             }
             if (interlace != 0) {

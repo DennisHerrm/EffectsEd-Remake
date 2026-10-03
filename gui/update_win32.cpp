@@ -69,6 +69,7 @@ struct Shared {
     UpdateInfo status;
     bool windowOpen = false;
     bool hintDismissed = false;  // "Spaeter": der Hinweis unten verschwindet bis zum naechsten Fund
+    std::string installedTag;    // in dieser Sitzung schon installiert
     std::atomic<bool> busy{false};
 };
 Shared& shared() {
@@ -125,10 +126,17 @@ fs::path exePath() {
     }
 }
 
-fs::path downloadFolder() {
+fs::path downloadRoot() {
     wchar_t temp[MAX_PATH] = {};
     GetTempPathW(MAX_PATH, temp);
     return fs::path(temp) / L"efxed_update";
+}
+
+// Je Prozess ein eigener Ordner. Vorher teilten sich alle Instanzen
+// %TEMP%\efxed_update — und eine zweite, die gerade startete, raeumte ihn
+// weg, waehrend die erste noch Eintraege aus update.zip las.
+fs::path downloadFolder() {
+    return downloadRoot() / std::to_wstring(GetCurrentProcessId());
 }
 
 // --- HTTP ------------------------------------------------------------------
@@ -303,6 +311,14 @@ void checkJob() {
     diag::info("update: latest release " + release.tag + ", installed " + localVersion() +
                (newer ? " -> NEWER" : " -> current"));
     std::lock_guard<std::mutex> lock(shared().mutex);
+    // Schon installiert (nur noch nicht neu gestartet): nicht noch einmal
+    // anbieten. Ein zweites Installieren in derselben Sitzung trifft auf die
+    // umbenannte laufende exe — das ist der Fall, der die alte zurueckholte.
+    if (newer && release.tag == shared().installedTag) {
+        shared().status.release = release;
+        shared().status.state = UpdatePhase::Installed;
+        return;
+    }
     shared().status.release = release;
     shared().status.state = newer ? UpdatePhase::Available : UpdatePhase::Current;
     if (newer) shared().hintDismissed = false;
@@ -355,7 +371,11 @@ void installJob(const update::Release& release) {
         const std::string relative = update::targetInFolder(name, top);
         if (relative.empty()) continue;
         const std::vector<unsigned char> content = assets::readFromZip(zipPath, name, &error);
-        if (content.empty() && !error.empty()) return fail(format(Str::UpdErrZip, error.c_str()));
+        if (content.empty() && !error.empty()) {
+            // Was bis hierher schon als .neu liegt, wieder weg.
+            for (const Pending& done : pending) DeleteFileW(done.fresh.c_str());
+            return fail(format(Str::UpdErrZip, error.c_str()));
+        }
         // Die Programmdatei heisst im Paket efxed.exe — hier vielleicht
         // anders, wenn der Anwender sie umbenannt hat. Ersetzt wird die, die
         // gerade laeuft.
@@ -384,12 +404,28 @@ void installJob(const update::Release& release) {
             // Die laufende .exe nur umbenennen — ueberschreiben geht nicht.
             fs::path old = exe;
             old += L".alt";
-            DeleteFileW(old.c_str());
-            if (!MoveFileExW(exe.c_str(), old.c_str(), MOVEFILE_REPLACE_EXISTING) ||
-                !MoveFileExW(p.fresh.c_str(), exe.c_str(),
+            // Laesst sich .alt nicht loeschen, IST .alt das laufende Programm:
+            // in dieser Sitzung wurde schon einmal installiert. Dann laeuft
+            // die Datei unter dem exe-Namen gar nicht, und die neue kommt
+            // einfach darueber. Vorher lief hier der "Rueckweg" auch ohne
+            // gelungenen ersten Schritt — und schob die ALTE laufende exe
+            // wieder an den Platz der neuen.
+            const bool oldDeletable =
+                DeleteFileW(old.c_str()) || GetLastError() == ERROR_FILE_NOT_FOUND;
+            bool movedAway = false;
+            if (oldDeletable) {
+                movedAway = MoveFileExW(exe.c_str(), old.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
+                if (!movedAway) {
+                    problem = format(Str::UpdErrReplace, p.relative.c_str(),
+                                     static_cast<unsigned long>(GetLastError()));
+                    break;
+                }
+            }
+            if (!MoveFileExW(p.fresh.c_str(), exe.c_str(),
                              MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
                 const DWORD code = GetLastError();
-                MoveFileExW(old.c_str(), exe.c_str(), MOVEFILE_REPLACE_EXISTING);  // zurueck
+                // Zurueck nur, was dieser Durchgang selbst beiseitegelegt hat.
+                if (movedAway) MoveFileExW(old.c_str(), exe.c_str(), MOVEFILE_REPLACE_EXISTING);
                 problem = format(Str::UpdErrReplace, p.relative.c_str(), static_cast<unsigned long>(code));
                 break;
             }
@@ -411,6 +447,8 @@ void installJob(const update::Release& release) {
             s.message = problem;
         } else {
             s.state = UpdatePhase::Installed;
+            // modify() haelt die Sperre schon.
+            shared().installedTag = release.tag;
         }
     });
 }
@@ -470,8 +508,22 @@ void atStartup(bool checkNow) {
     fs::path old = exePath();
     old += L".alt";
     DeleteFileW(old.c_str());
+    // Nur Ordner von Prozessen, die nicht mehr laufen — eine zweite Instanz
+    // kann gerade mitten im Installieren sein.
     std::error_code ec;
-    fs::remove_all(downloadFolder(), ec);
+    for (const auto& entry : fs::directory_iterator(downloadRoot(), ec)) {
+        const DWORD pid = static_cast<DWORD>(std::wcstoul(entry.path().filename().c_str(), nullptr, 10));
+        bool alive = false;
+        if (pid != 0 && pid != GetCurrentProcessId()) {
+            if (HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid)) {
+                DWORD code = 0;
+                alive = GetExitCodeProcess(process, &code) && code == STILL_ACTIVE;
+                CloseHandle(process);
+            }
+        }
+        std::error_code inner;
+        if (!alive) fs::remove_all(entry.path(), inner);
+    }
     // Im Selbsttest nie von selbst ins Netz.
     if (checkNow && !selbsttestAktiv()) check(true);
 }

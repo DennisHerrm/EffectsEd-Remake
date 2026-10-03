@@ -1524,6 +1524,266 @@ public:
         return s;
     }
 
+    // --- Fehlersuche vom 03.10.2026 --------------------------------------------
+    //
+    // Jede Pruefung hier schlug VOR der Behebung fehl; sie bleiben, damit die
+    // Fehler nicht wiederkommen.
+    static std::vector<Schritt> teilFehlersuche() {
+        std::vector<Schritt> s;
+        s.push_back(teil("fehlersuche"));
+
+        // 1. Entf auf einem Listeneintrag loeschte auch das ganze Segment.
+        frischesDokument(s);
+        neuesSegment(s, PrimitiveType::Particle);
+        neuesSegment(s, PrimitiveType::Particle);
+        s.push_back(tu("zwei Shader im zweiten Segment", [] {
+            gewaehlt()->shaders = {"gfx/eins", "gfx/zwei"};
+            app->recordChange("test");
+        }));
+        s.push_back(klick(tr(Str::TabColor), "properties"));
+        s.push_back(warte(2));
+        s.push_back(klickMarke("shaders/eintrag0"));
+        s.push_back(warte(2));
+        s.push_back(taste(ImGuiKey_Delete));
+        s.push_back(warte(3));
+        s.push_back(pruefSchritt("Entf auf einem Shadereintrag loescht nur den Eintrag, nicht das Segment", [] {
+            return anzahlSegmente() == 2 && gewaehlt() != nullptr && gewaehlt()->shaders.size() == 1 &&
+                   gewaehlt()->shaders[0] == "gfx/zwei";
+        }));
+        s.push_back(taste(ImGuiKey_Z, true));
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("ein Strg+Z holt den Eintrag zurueck", [] {
+            return anzahlSegmente() == 2 && gewaehlt() != nullptr && gewaehlt()->shaders.size() == 2;
+        }));
+
+        // 2. Rueckgaengig nach dem Speichern liess das Dokument "sauber".
+        frischesDokument(s);
+        neuesSegment(s, PrimitiveType::Particle);
+        const std::string pfadUndo = arbeitsOrdner + "/fehlersuche_undo.efx";
+        s.push_back(dateiAntwort(pfadUndo));
+        s.push_back(taste(ImGuiKey_S, true));
+        s.push_back(pruefSchritt("gespeichert, nicht geaendert", [] { return !doc().dirty; }));
+        s.push_back(taste(ImGuiKey_Z, true));
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("nach Strg+Z weicht es von der Datei ab: geaendert-Stern", [] { return doc().dirty; }));
+        s.push_back(taste(ImGuiKey_Y, true));
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("Strg+Y zurueck auf den gespeicherten Stand: wieder sauber", [] { return !doc().dirty; }));
+
+        // 3. Eine angefangene Feldeingabe landete im falschen Dokument.
+        frischesDokument(s);
+        neuesSegment(s, PrimitiveType::Particle);
+        s.push_back(klick(tr(Str::TabGeneration), "properties"));
+        s.push_back(warte(2));
+        // In einem Schritt: beim Klick auf "+" ist der Knopf noch gedrueckt,
+        // also "ein Element aktiv" — das Aufzeichnen der Eingabe wartet, bis
+        // der Reiter schon gewechselt hat.
+        s.push_back(tu("Eingabe Life 1234 angefangen, dann neuer Reiter (+-Knopf)", [] {
+            gewaehlt()->life = Range::single(1234.0f);
+            doc().dirty = true;
+            app->fieldEditOpen_ = true;
+            app->newDocument();
+        }));
+        s.push_back(warte(3));
+        s.push_back(pruefSchritt("der neue Reiter bekommt die Aenderung des alten nicht", [] {
+            return app->documents_.size() == 2 && !app->documents_[1].dirty &&
+                   !app->documents_[1].undo.canUndo();
+        }));
+        s.push_back(tu("zurueck zum ersten Reiter", [] { app->activateDocument(0); }));
+        s.push_back(warte(2));
+        s.push_back(taste(ImGuiKey_Z, true));
+        s.push_back(taste(ImGuiKey_Y, true));
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("im ersten Reiter ist die Eingabe ein eigener Rueckgaengig-Schritt", [] {
+            return gewaehlt() != nullptr && gewaehlt()->life.min == 1234.0f;
+        }));
+
+        // 4. OK in den Wiedergabe-Einstellungen schrieb still "repeatDelay 300".
+        frischesDokument(s);
+        const std::string pfadOhneRepeat = arbeitsOrdner + "/fehlersuche_ohne_repeat.efx";
+        s.push_back(tu("Datei ohne repeatDelay", [pfadOhneRepeat] {
+            schreibeDatei(pfadOhneRepeat, "Particle\n{\n\tlife\t500\n\tshaders\n\t[\n\t\tgfx/x\n\t]\n}\n");
+        }));
+        s.push_back(dateiAntwort(pfadOhneRepeat));
+        menue(s, Str::MenuFile, Str::FileOpen);
+        s.push_back(pruefSchritt("geoeffnet, ohne repeatDelay", [] {
+            return !effekt().repeatDelaySet && !doc().dirty;
+        }));
+        wiedergabeDialog(s);
+        s.push_back(klick(tr(Str::MsgOk), "###playback"));
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("OK ohne Aenderung im Dialog veraendert den Effekt nicht", [] {
+            return !effekt().repeatDelaySet && !doc().dirty;
+        }));
+
+        // 5. Ein Reiter links vom aktiven wird geschlossen: der aktive wechselte.
+        frischesDokument(s);
+        s.push_back(tu("drei saubere Reiter a, b, c; b aktiv", [] {
+            app->documents_.clear();
+            for (const char* name : {"a", "b", "c"}) {
+                app->documents_.emplace_back();
+                app->documents_.back().filePath = arbeitsOrdner + "/" + name + ".efx";
+                app->documents_.back().undo.reset(app->documents_.back().effect);
+            }
+            app->activeDocument_ = 0;
+            app->activateDocument(1);
+        }));
+        s.push_back(warte(3));
+        s.push_back(tu("Reiter a schliessen (wie sein X)", [] { app->requestCloseDocument(0); }));
+        s.push_back(warte(3));
+        s.push_back(pruefSchritt("danach ist weiter b aktiv, nicht c", [] {
+            return app->documents_.size() == 2 && doc().filePath == arbeitsOrdner + "/b.efx";
+        }));
+
+        // 6. Einfuegen ueber/unter umging die Grenze von 24 Segmenten.
+        frischesDokument(s);
+        s.push_back(tu("24 Segmente", [] {
+            for (int i = 0; i < 24; ++i) {
+                Primitive p;
+                p.type = PrimitiveType::Particle;
+                effekt().primitives.push_back(p);
+            }
+            doc().segmentEnabled.assign(effekt().primitives.size(), true);
+            doc().selectedPrimitive = 0;
+            app->recordChange("test");
+        }));
+        s.push_back(tu("Einfuegen darunter (Kontextmenue)", [] { app->insertSegmentAt(1); }));
+        s.push_back(allesZu());
+        s.push_back(pruefSchritt("Einfuegen haelt die Grenze von 24 Segmenten ein", [] {
+            return anzahlSegmente() == 24;
+        }));
+
+        // 7. Eine Datei mit einem Aufbaufehler oeffnet leer; Strg+S schrieb
+        //    das leere (oder neu angefangene) Dokument ueber das Original.
+        frischesDokument(s);
+        const std::string pfadKaputt = arbeitsOrdner + "/fehlersuche_kaputt.efx";
+        const std::string kaputt = "Particle\n{\n\tlife\t100\n}\nSound\n{\n\tsounds\n\t[\n\t\tx.wav\n\t]\n";
+        s.push_back(tu("Datei mit fehlender }", [pfadKaputt, kaputt] { schreibeDatei(pfadKaputt, kaputt); }));
+        s.push_back(dateiAntwort(pfadKaputt));
+        menue(s, Str::MenuFile, Str::FileOpen);
+        s.push_back(allesZu());
+        neuesSegment(s, PrimitiveType::Line);
+        const std::string pfadAnders = arbeitsOrdner + "/fehlersuche_kaputt_neu.efx";
+        s.push_back(tu("alte Ausweichdatei weg", [pfadAnders] { std::error_code ec; fs::remove(pfadAnders, ec); }));
+        s.push_back(dateiAntwort(pfadAnders));
+        s.push_back(taste(ImGuiKey_S, true));
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("Strg+S ueberschreibt die unlesbare Datei nicht", [pfadKaputt, kaputt] {
+            return leseDatei(pfadKaputt) == kaputt;
+        }));
+        s.push_back(pruefSchritt("sondern fragt nach einem neuen Ziel", [pfadAnders] {
+            return fs::exists(pfadAnders) && doc().filePath == pfadAnders;
+        }));
+        s.push_back(tu("Dateiantworten leeren", [] { dateiAntworten.clear(); }));
+
+        // 8. Eine nicht lesbare Datei liess einen leeren Reiter zurueck.
+        frischesDokument(s);
+        neuesSegment(s, PrimitiveType::Particle);
+        s.push_back(tu("Datei, die es nicht gibt, oeffnen", [] {
+            app->openFile(arbeitsOrdner + "/gibt_es_nicht.efx");
+        }));
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("kein zusaetzlicher leerer Reiter, der alte bleibt vorn", [] {
+            return app->documents_.size() == 1 && anzahlSegmente() == 1;
+        }));
+
+        // 8b. Datei in einem Ordner mit Umlaut: oeffnen und speichern ueber
+        //     die echten Menues (der Dateidialog liefert UTF-8).
+        frischesDokument(s);
+        const std::string umlautOrdner = arbeitsOrdner + "/J\xC3\xB6rg";
+        const std::string umlautDatei = umlautOrdner + "/f\xC3\xBC" "nf.efx";
+        s.push_back(tu("Datei unter .../Joerg (mit oe) anlegen", [umlautOrdner, umlautDatei] {
+            std::error_code ec;
+            fs::create_directories(paths::fromUtf8(umlautOrdner), ec);
+            std::ofstream(paths::fromUtf8(umlautDatei), std::ios::binary)
+                << "Particle\n{\n\tlife\t321\n\tshaders\n\t[\n\t\tgfx/x\n\t]\n}\n";
+        }));
+        s.push_back(dateiAntwort(umlautDatei));
+        menue(s, Str::MenuFile, Str::FileOpen);
+        s.push_back(pruefSchritt("Datei aus einem Ordner mit Umlaut oeffnet", [] {
+            return anzahlSegmente() == 1 && gewaehlt() && gewaehlt()->life.min == 321.0f;
+        }));
+        s.push_back(tu("aendern", [] {
+            gewaehlt()->life = Range::single(654.0f);
+            app->recordChange("test");
+        }));
+        s.push_back(taste(ImGuiKey_S, true));
+        s.push_back(pruefSchritt("und speichert dorthin zurueck", [umlautDatei] {
+            std::ifstream in(paths::fromUtf8(umlautDatei), std::ios::binary);
+            std::stringstream text;
+            text << in.rdbuf();
+            return text.str().find("654") != std::string::npos && !doc().dirty;
+        }));
+
+        // 9. Ein zweites "Installieren" in derselben Sitzung legte die ALTE
+        //    exe wieder ueber die neue (der Rueckweg lief, obwohl der erste
+        //    Schritt gar nicht geklappt hatte). Steht am Ende: danach ist die
+        //    laufende Datei efxed.exe.alt, und efxed.exe ist die Attrappe.
+        s.push_back(tu("Update-Quelle mit einer exe im Paket", [] {
+            const fs::path quelle = fs::path(arbeitsOrdner) / "updatequelle_exe";
+            std::error_code ec;
+            fs::create_directories(quelle, ec);
+            std::ofstream(quelle / "latest.json", std::ios::binary)
+                << "{\"tag_name\": \"v1.18.0-rev99998\", \"assets\": ["
+                   "{\"name\": \"efxed-exe.zip\", \"size\": 100, \"browser_download_url\": "
+                   "\"https://github.com/x/y/releases/download/v1/efxed-exe.zip\"},"
+                   "{\"name\": \"efxed-exe-win7.zip\", \"size\": 100, \"browser_download_url\": "
+                   "\"https://github.com/x/y/releases/download/v1/efxed-exe-win7.zip\"}]}";
+            const auto bytes = zipStored({{"efxed/efxed.exe", "NEUE EXE (Attrappe)"}});
+            for (const char* name : {"efxed-exe.zip", "efxed-exe-win7.zip"}) {
+                std::ofstream f(quelle / name, std::ios::binary);
+                f.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+            }
+            _putenv_s("EFXED_UPDATE_QUELLE", quelle.string().c_str());
+            _putenv_s("EFXED_UPDATE_LOKAL", "1.18.0-rev77");
+        }));
+        menue(s, Str::MenuHelp, Str::HelpCheckUpdates);
+        s.push_back(warteSekunden("Antwort", [] {
+            const auto z = updater::status().state;
+            return z != updater::UpdatePhase::Checking && z != updater::UpdatePhase::Idle;
+        }, 20.0));
+        s.push_back(klick(tr(Str::UpdInstall), "###update"));
+        s.push_back(warteSekunden("installiert", [] {
+            const auto z = updater::status().state;
+            return z == updater::UpdatePhase::Installed || z == updater::UpdatePhase::Failed;
+        }, 20.0));
+        const auto exeInhalt = [] {
+            wchar_t p[MAX_PATH] = {};
+            GetModuleFileNameW(nullptr, p, MAX_PATH);
+            return liesDatei(fs::path(p).string());
+        };
+        s.push_back(pruefSchritt("erstes Installieren: die neue exe liegt an ihrem Platz", [exeInhalt] {
+            return exeInhalt() == "NEUE EXE (Attrappe)";
+        }));
+        s.push_back(klick(tr(Str::UpdLater), "###update"));
+        menue(s, Str::MenuHelp, Str::HelpCheckUpdates);
+        s.push_back(warteSekunden("Antwort", [] {
+            const auto z = updater::status().state;
+            return z != updater::UpdatePhase::Checking && z != updater::UpdatePhase::Idle;
+        }, 20.0));
+        s.push_back(pruefSchritt("nochmal suchen: es ist schon installiert, kein zweites Installieren", [] {
+            return updater::status().state == updater::UpdatePhase::Installed &&
+                   finde(tr(Str::UpdInstall), "###update") == nullptr;
+        }));
+        s.push_back(tu("trotzdem ein zweites Installieren (wie 'Erneut' nach einem Fehler)", [] {
+            updater::install();
+        }));
+        s.push_back(warteSekunden("fertig", [] {
+            const auto z = updater::status().state;
+            return z != updater::UpdatePhase::Downloading;
+        }, 20.0));
+        s.push_back(pruefSchritt("das zweite Installieren legt NICHT die alte exe zurueck", [exeInhalt] {
+            return exeInhalt() == "NEUE EXE (Attrappe)";
+        }));
+        s.push_back(klick(tr(Str::UpdLater), "###update"));
+        s.push_back(tu("aufraeumen", [] {
+            _putenv_s("EFXED_UPDATE_QUELLE", "");
+            _putenv_s("EFXED_UPDATE_LOKAL", "");
+        }));
+        s.push_back(allesZu());
+        return s;
+    }
+
     static std::vector<Schritt> teilArchiv() {
         std::vector<Schritt> s;
         s.push_back(teil("archiv"));
@@ -3036,6 +3296,13 @@ public:
         std::vector<Schritt> s;
         s.push_back(teil("ende"));
         s.push_back(allesZu());
+        // Fehlersuche 03.10.2026: beim Abbau des Renderers blieben unter
+        // Direct3D alle Texturen der App liegen (jede haelt das Geraet).
+        s.push_back(pruefSchritt("Abbau: alle Texturen der App werden ueber den Renderer freigegeben", [] {
+            app->releaseGraphicsResources(renderer);
+            const long long alive = renderer ? renderer->liveTextureCount() : -1;
+            return alive <= 0;
+        }));
         s.push_back(tu("Ergebnis schreiben und beenden", [] {
             std::ostringstream o;
             o << "efxed Selbsttest: " << ok << " OK, " << fehler << " FEHLER\n";
@@ -3071,6 +3338,7 @@ public:
             {"spinner", &teilSpinner},
             {"archiv", &teilArchiv},
             {"update", &teilUpdate},
+            {"fehlersuche", &teilFehlersuche},
             {"felder", &teilFelder},
         };
         // Nicht in "alles": dauert mit allen Effekten mehrere Minuten.

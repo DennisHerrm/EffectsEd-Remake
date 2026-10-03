@@ -467,6 +467,7 @@ bool App::editStringList(const char* id, const char* label,
     ImGui::EndGroup();
 
     if (removeAt >= 0 && removeAt < static_cast<int>(list.size())) {
+        deleteKeyConsumed_ = true;
         list.erase(list.begin() + removeAt);
         if (editingThis) {
             listEditing_ = nullptr;

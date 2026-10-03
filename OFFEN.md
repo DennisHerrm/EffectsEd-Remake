@@ -51,6 +51,34 @@ Geprüft wird mit drei Läufen, alle grün:
 - **Selbsttest-Teil `updatenetz`** braucht Netz und ein veröffentlichtes
   Release; er läuft deshalb nicht in `alles`.
 
+### Aus der Fehlersuche vom 03.10.2026: vermutet, aber nicht bestätigt
+
+Alles, was sich mit einem fehlschlagenden Test belegen liess, ist behoben
+(Tests: `testAudit*` in tests/tests.cpp, Selbsttest-Teil `fehlersuche`). Offen
+blieb, was nur aus dem Lesen des Codes folgt:
+
+- Mehr als 32 Aufpralle: danach fliegt ein Teilchen ohne weitere Kollision
+  weiter (sim.cpp, kMaxBounces); bei Ecktreffern kann der Rest eines 8-ms-
+  Schritts durch eine Wand tunneln.
+- MP3, das mitten in der Datei zwischen Mono und Stereo wechselt: die
+  Kanalzahl kommt nur aus dem ersten Rahmen (sound.cpp).
+- TGA-Kleinigkeiten: Farbtabellen mit Startindex, 15/16-Bit-Tabelleneinträge,
+  16-Bit-Grau mit Alpha, 16-Bit-Indizes.
+- WM_DPICHANGED wird nicht behandelt: zieht man das Fenster auf einen
+  Bildschirm mit anderer Skalierung, bleibt die Schrift in der alten Grösse.
+- Der Absturzschreiber reserviert Speicher und ruft SymInitialize im
+  Ausnahmefilter; bei einem Stapelüberlauf kann er selbst scheitern.
+- Listen-Auswahl und -Bearbeitung hängen an der Adresse des Vektors im
+  Segment; nach Löschen/Verschieben kann eine andere Liste sie erben (kein
+  Absturz, die Zeilen sind geprüft).
+- Dateien, die während eines offenen Dialogs aufs Fenster gezogen werden,
+  öffnen sofort; der Dialog wirkt danach auf das neue Dokument.
+- Nachlegen ("Repeat for", "every frame") und Zurückspulen: vergessene
+  Generationen werden nicht neu angelegt, bis die Uhr wieder an der alten
+  Stelle ist.
+- Nicht reproduzierbar war: "life 1e12 mit Vorlauf gibt keine Teilchen". Die
+  dahinterliegende Umwandlung (Überlauf beim int) ist trotzdem behoben.
+
 ## Ergebnisse des Bildvergleichs mit dem Original
 
 Siehe `ABGLEICH.md`, Abschnitt „Bildvergleich". Was dort als „efxed falsch"

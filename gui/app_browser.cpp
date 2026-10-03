@@ -962,6 +962,7 @@ void App::openBrowserEntry(const BrowserEntry& entry) {
     doc().selectedPrimitive = doc().effect.primitives.empty() ? -1 : 0;
     doc().segmentEnabled.assign(doc().effect.primitives.size(), true);
     doc().undo.reset(doc().effect);
+    doc().savedUndoId = doc().undo.currentId();
     refreshDiagnostics();
     buildPreviewStopped();
     diag::info("browser: opened " + entry.name);

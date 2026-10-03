@@ -385,8 +385,11 @@ void System::play(const Effect& effect, unsigned seed,
         // Gedeckelt, damit ein Effekt mit `repeatDelay 1` und langem Leben
         // nicht Zehntausende Teilchen erzeugt.
         constexpr int kMaxGenerations = 16;
-        const int wanted = static_cast<int>(std::ceil(longest / delay));
-        const int generations = wanted < kMaxGenerations ? wanted : kMaxGenerations;
+        // In float vergleichen, erst dann umwandeln: bei life 1e12 lief
+        // ceil(...) als int ueber (undefiniertes Verhalten).
+        const float wanted = std::ceil(longest / delay);
+        const int generations =
+            wanted < static_cast<float>(kMaxGenerations) ? static_cast<int>(wanted) : kMaxGenerations;
 
         // Die Ausgangswerte wiederholen sich PERIODISCH — nicht identisch.
         //
@@ -525,7 +528,7 @@ void System::playInto(const Effect& effect, sim::Random& random,
                       const std::vector<bool>& enabledMask,
                       const PlayContext& context, int depth, float atMs,
                       const camera::Vec3& atPosition) {
-    if (depth >= kMaxEffectDepth) return;
+    if (depth >= kMaxEffectDepth || live_.size() >= kMaxLiveItems) return;
 
     // Bequeme Namen fuer den Rumpf. Die Zeiger im Kontext sind nie null —
     // `play` setzt sie, und `playInto` ist privat.
@@ -534,7 +537,13 @@ void System::playInto(const Effect& effect, sim::Random& random,
     const Axis& axis = context.axis;
 
     for (const auto& spawn : sim::schedule(effect, random, enabledMask)) {
+        if (live_.size() >= kMaxLiveItems) break;
         const Primitive& p = effect.primitives[spawn.primitiveIndex];
+        // Kinder nur, wenn sie noch eine Ebene und Platz haben. Vorher lief
+        // auf der letzten Ebene der ganze Aufwand (Lader, die 8-ms-Schritte
+        // eines Emitters) fuer Kinder, die sofort wieder umkehrten.
+        const bool mayStartChildren =
+            static_cast<bool>(loader) && depth + 1 < kMaxEffectDepth && live_.size() < kMaxLiveItems;
 
         // Die Flags, wie die Engine sie sieht: mit den Bits, die der Parser
         // beim Lesen von impactfx, deathfx, emitfx und models selbst setzt
@@ -927,7 +936,7 @@ void System::playInto(const Effect& effect, sim::Random& random,
         ownContext.axis = own;
 
         if (p.type == PrimitiveType::FxRunner) {
-            if (!p.playFx.empty() && loader) {
+            if (!p.playFx.empty() && mayStartChildren) {
                 if (const Effect* child = loader(pickEffect(p.playFx))) {
                     ++startedEffects_;
                     playInto(*child, random, {}, ownContext, depth + 1, item.spawnMs,
@@ -957,7 +966,7 @@ void System::playInto(const Effect& effect, sim::Random& random,
         // CPrimitiveTemplate) — vorher 0, und ein Emitter ohne density
         // sendete gar nichts.
         if (p.type == PrimitiveType::Emitter && (flags & kFlagEmitFx) != 0 &&
-            !p.emitFx.empty() && loader) {
+            !p.emitFx.empty() && mayStartChildren) {
             const float density = pickOr(p.density, kDefaultDensity, random);
             const float variance = pickOr(p.variance, kDefaultVariance, random);
             if (density > 0.0f) {
@@ -1011,7 +1020,16 @@ void System::playInto(const Effect& effect, sim::Random& random,
                     };
                     float oldTime = item.spawnMs;
                     int emitted = 0;
-                    for (float frame = item.spawnMs; frame < item.deathMs && emitted < kMaxEmitted;
+                    // Die Suche beginnt bei der letzten Aussendung. Sendet ein
+                    // Emitter nie aus (liegt still, oder kommt zur Ruhe), laeuft
+                    // sie in jedem Bild wieder vom Anfang — quadratisch in der
+                    // Lebensdauer: bei life 300000 rund 16 s, bei 1e6 Minuten.
+                    // Die Engine verteilt das auf die Bilder; die Vorschau
+                    // rechnet alles auf einmal und braucht deshalb eine Grenze.
+                    constexpr long long kMaxTrailSteps = 2000000;
+                    long long trailSteps = 0;
+                    for (float frame = item.spawnMs; frame < item.deathMs && emitted < kMaxEmitted &&
+                                                      trailSteps < kMaxTrailSteps;
                          frame += kFrameMs) {
                         const float previous = std::max(item.spawnMs, frame - kFrameMs);
                         camera::Vec3 base = item.positionAt(previous);
@@ -1019,6 +1037,7 @@ void System::playInto(const Effect& effect, sim::Random& random,
                         float step = density + random.range(-1.0f, 1.0f) * variance;
                         float dif = 0.0f;
                         for (float t = oldTime; t <= frame; t += kTrailRateMs) {
+                            if (++trailSteps > kMaxTrailSteps) break;
                             dif += kTrailRateMs;
                             const camera::Vec3 v = oldVelocity + accel * (dif * 0.001f);
                             const float ftime = dif * 0.001f;
@@ -1066,7 +1085,7 @@ void System::playInto(const Effect& effect, sim::Random& random,
         // die Liste da ist: ParseImpactFxStrings setzt es selbst, zusammen
         // mit FX_APPLY_PHYSICS (siehe efx::effectiveFlags). Hier stand "ein
         // gesetztes impactfx allein tut nichts" — im Spiel tut es sehr wohl.
-        if (item.hasPath && !p.impactFx.empty() && loader &&
+        if (item.hasPath && !p.impactFx.empty() && mayStartChildren &&
             (flags & kFlagImpactRunsFx) != 0) {
             const Effect* child = loader(pickEffect(p.impactFx));
             if (!child) {
@@ -1117,7 +1136,7 @@ void System::playInto(const Effect& effect, sim::Random& random,
         // Der dritte Punkt ist der ueberraschendste: ein Todeseffekt zeigt in
         // eine beliebige Richtung, egal wohin die Primitive flog.
         const bool killedByImpact = item.hasPath && item.path.killed;
-        if (!p.deathFx.empty() && loader &&
+        if (!p.deathFx.empty() && mayStartChildren &&
             (flags & kFlagDeathRunsFx) != 0 && !killedByImpact) {
             if (const Effect* child = loader(pickEffect(p.deathFx))) {
                 ++startedEffects_;
@@ -1145,7 +1164,7 @@ void System::playInto(const Effect& effect, sim::Random& random,
         // (FxScheduler.cpp, siehe org2fromTrace oben). Ohne Treffer gibt es
         // keine Flaeche und keine Normale — dann nichts.
         if (traceHit && (p.spawnFlags & kSpawnTraceImpactFx) != 0 &&
-            !p.impactFx.empty() && loader) {
+            !p.impactFx.empty() && mayStartChildren) {
             if (const Effect* child = loader(pickEffect(p.impactFx))) {
                 ++startedEffects_;
                 PlayContext traceContext = context;

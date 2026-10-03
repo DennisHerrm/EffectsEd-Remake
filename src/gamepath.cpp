@@ -1,5 +1,6 @@
 #include "efx/i18n.h"
 #include "efx/gamepath.h"
+#include "efx/paths.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -21,7 +22,7 @@ int countByExtension(const fs::path& dir, const char* extension, int limit) {
     for (const auto& entry : fs::directory_iterator(dir, ec)) {
         if (ec) break;
         if (!entry.is_regular_file(ec)) continue;
-        std::string ext = entry.path().extension().string();
+        std::string ext = paths::toUtf8(entry.path().extension());
         std::transform(ext.begin(), ext.end(), ext.begin(),
                        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         if (ext == extension) {
@@ -66,7 +67,7 @@ Inspection inspect(const std::string& rawPath) {
     }
 
     std::error_code ec;
-    const fs::path dir(normalise(rawPath));
+    const fs::path dir = paths::fromUtf8(normalise(rawPath));
     if (!fs::is_directory(dir, ec)) {
         result.status = Status::Missing;
         return result;

@@ -19,7 +19,7 @@ using i18n::Str;
 using i18n::tr;
 
 std::string readWholeFile(const std::string& path, bool& ok) {
-    std::ifstream in(path, std::ios::binary);
+    std::ifstream in(paths::fromUtf8(path), std::ios::binary);
     ok = in.good();
     std::ostringstream buffer;
     buffer << in.rdbuf();
@@ -99,10 +99,25 @@ timeline::EndMode App::playbackEndMode() const {
                                                                 : timeline::EndMode::Stop;
 }
 
+void App::flushPendingFieldEdit() {
+    // Eine angefangene Feldeingabe wird erst aufgezeichnet, wenn kein Element
+    // mehr aktiv ist — beim Klick auf einen Reiter oder "+" ist das erst der
+    // Fall, wenn der Reiter schon gewechselt hat. Dann landete die Aenderung
+    // im Rueckgaengig-Stapel des FALSCHEN Dokuments. Deshalb vor jedem
+    // Wechsel hier abschliessen, solange doc() noch das richtige ist.
+    if (!fieldEditOpen_) return;
+    fieldEditOpen_ = false;
+    recordChange(tr(Str::UndoFieldChange));
+}
+
 void App::newDocument() {
+    flushPendingFieldEdit();
+    // Wie beim Reiterwechsel: die Wiedergabe des bisherigen anhalten.
+    pressStop();
     documents_.emplace_back();
     activeDocument_ = static_cast<int>(documents_.size()) - 1;
     doc().undo.reset(doc().effect);
+    doc().savedUndoId = doc().undo.currentId();
     // Die Wiederholart gilt fuer alle Dokumente, wie im Original (dort gibt
     // es nur die eine Einstellung).
     doc().clock.setEndMode(playbackEndMode());
@@ -111,6 +126,7 @@ void App::newDocument() {
 void App::activateDocument(int index) {
     if (index < 0 || index >= static_cast<int>(documents_.size())) return;
     if (index == activeDocument_) return;
+    flushPendingFieldEdit();
     // Die Wiedergabe des bisherigen Reiters anhalten. Sonst laufen Klaenge
     // eines Effekts weiter, den man gar nicht mehr sieht.
     // pressStop und nicht drei Einzelzeilen: sonst blieb ein laufendes
@@ -124,14 +140,27 @@ void App::activateDocument(int index) {
 
 void App::closeDocument(int index) {
     if (index < 0 || index >= static_cast<int>(documents_.size())) return;
+    flushPendingFieldEdit();
+    // Der aktive Reiter wird geschlossen: seine Wiedergabe gehoert zu ihm.
+    if (index == activeDocument_) pressStop();
     documents_.erase(documents_.begin() + index);
+    // Lag der geschlossene Reiter LINKS vom aktiven, rueckt der aktive eins
+    // nach vorn. Vorher blieb die Nummer stehen, und man arbeitete ploetzlich
+    // im Reiter rechts daneben weiter.
+    if (index < activeDocument_) --activeDocument_;
     if (documents_.empty()) {
         documents_.emplace_back();
         documents_.back().clock.setEndMode(playbackEndMode());
+        documents_.back().undo.reset(documents_.back().effect);
+        documents_.back().savedUndoId = documents_.back().undo.currentId();
     }
     if (activeDocument_ >= static_cast<int>(documents_.size())) {
         activeDocument_ = static_cast<int>(documents_.size()) - 1;
     }
+    // Die Reiter heissen "###doc<Nummer>": nach dem Entfernen traegt der
+    // rechte Nachbar die alte Nummer, und ImGui hielte IHN fuer ausgewaehlt.
+    // Also die Auswahl ausdruecklich setzen — ausser die Bibliothek ist vorn.
+    if (!startTabActive_) wantDocumentTab_ = true;
     audio_.stopAll();
 }
 App::~App() = default;
@@ -330,10 +359,9 @@ void App::shutdown() {
     settings_.spawnResetSeconds = playback_.resetLocationAfter;
 
     diag::Step step("Write settings");
-    std::ofstream out(paths::settingsPath(), std::ios::binary);
-    if (out.good()) {
-        out << settings_.toIni();
-    } else {
+    // Ganz oder gar nicht: vorher wurde die Datei erst geleert, und ein
+    // Absturz mittendrin liess halbe Einstellungen zurueck (Spielpfad weg).
+    if (!paths::writeFileReplacing(paths::settingsPath(), settings_.toIni())) {
         step.fail("file not writable");
     }
 }
@@ -350,6 +378,19 @@ void App::clearRendererChange() { rendererChangePending_ = false; }
 
 
 bool App::openFile(const std::string& path) {
+    diag::Step step("Open file");
+    diag::info(path);
+
+    // Erst lesen, dann einen Reiter aufmachen: vorher blieb bei einer Datei,
+    // die es nicht (mehr) gibt — etwa aus der Liste der letzten Dateien —
+    // ein leerer Reiter zurueck, und der bisherige war nicht mehr vorn.
+    bool ok = false;
+    const std::string text = readWholeFile(path, ok);
+    if (!ok) {
+        step.fail("not readable");
+        return false;
+    }
+
     // In einen neuen Reiter, wenn der aktuelle schon belegt ist.
     //
     // Ein leerer, unveraenderter Reiter wird dagegen wiederverwendet — sonst
@@ -359,17 +400,12 @@ bool App::openFile(const std::string& path) {
         newDocument();
     }
 
-    diag::Step step("Open file");
-    diag::info(path);
-
-    bool ok = false;
-    const std::string text = readWholeFile(path, ok);
-    if (!ok) {
-        step.fail("not readable");
-        return false;
-    }
-
     ReadResult result = read(text);
+    // Mit Aufbaufehlern (fehlende }, ...) liest das Spiel die Datei gar
+    // nicht, und hier kommt ein leerer oder unvollstaendiger Effekt heraus.
+    // Den darf "Speichern" nicht ueber die Datei schreiben — sonst ist das
+    // Original weg. Speichern fragt dann nach einem neuen Namen.
+    doc().unreadableOriginal = result.hasErrors();
     doc().effect = std::move(result.effect);
     doc().parseDiagnostics = std::move(result.diagnostics);
     // Eine laufende Vorschau gehoert zur alten Datei — die wird weggeworfen,
@@ -383,6 +419,7 @@ bool App::openFile(const std::string& path) {
     settings_.addRecentFile(path);
     doc().selectedPrimitive = doc().effect.primitives.empty() ? -1 : 0;
     doc().dirty = false;
+    doc().savedUndoId = doc().undo.currentId();
     // Wie im Original: liegt die Datei unter ".../base/", ist das der
     // Spielpfad — aber nur, wenn noch keiner eingestellt ist. Ein gewaehlter
     // Pfad wird nie still ersetzt.
@@ -420,17 +457,21 @@ bool App::saveFile(const std::string& path) {
         return false;
     }
 
-    std::ofstream out(path, std::ios::binary);
-    if (!out.good()) {
+    // Ganz oder gar nicht (paths::writeFileReplacing): vorher wurde die
+    // Datei zuerst geleert, das Schreiben selbst nie geprueft — bei voller
+    // Platte war das Original weg, und das Dokument galt als gespeichert.
+    if (!paths::writeFileReplacing(path, text)) {
         step.fail("file not writable");
         return false;
     }
-    out << text;
     doc().filePath = path;
     // Auch beim Speichern eintragen: wer eine Datei unter neuem Namen
     // ablegt, will sie danach ebenso schnell wiederfinden.
     settings_.addRecentFile(path);
     doc().dirty = false;
+    doc().savedUndoId = doc().undo.currentId();
+    // Jetzt liegt unter diesem Pfad ein vollstaendiger, lesbarer Effekt.
+    doc().unreadableOriginal = false;
     return true;
 }
 
@@ -451,6 +492,9 @@ void App::applyUndo() {
         }
         doc().segmentEnabled.assign(doc().effect.primitives.size(), true);
         refreshDiagnostics();
+        // Geaendert heisst: weicht vom gespeicherten Stand ab. Vorher blieb
+        // das Dokument nach Strg+Z "sauber", und Schliessen fragte nicht.
+        doc().dirty = doc().undo.currentId() != doc().savedUndoId;
         if (playing()) startPlayback();
     }
 }
@@ -465,6 +509,7 @@ void App::applyRedo() {
         }
         doc().segmentEnabled.assign(doc().effect.primitives.size(), true);
         refreshDiagnostics();
+        doc().dirty = doc().undo.currentId() != doc().savedUndoId;
         if (playing()) startPlayback();
     }
 }
@@ -1284,6 +1329,9 @@ void App::handleShortcuts() {
     // irgendein Element, und die Leertaste kam nie mehr an — im Original
     // gilt sie "application wide", egal wo der Fokus steht.
     const ImGuiIO& io = ImGui::GetIO();
+    // Nur fuer dieses Bild (auch wenn gleich ein return kommt).
+    const bool listTookDelete = deleteKeyConsumed_;
+    deleteKeyConsumed_ = false;
     if (io.WantTextInput) return;
     // Waehrend ein Fenster wie "Neues Segment" offen ist, gehoeren die Tasten
     // dem Fenster.
@@ -1326,7 +1374,9 @@ void App::handleShortcuts() {
     if ((ctrl || shift) && pressed(ImGuiKey_Delete)) cmdDeleteSegment();
     if (!ctrl && !shift && pressed(ImGuiKey_Space)) pressPlay();
     if (!ctrl && pressed(ImGuiKey_Insert)) showNewSegmentDialog_ = true;
-    if (!ctrl && !shift && pressed(ImGuiKey_Delete)) cmdDeleteSegment();
+    // Nicht, wenn eine Liste (Shader, Klaenge, Modelle) die Taste in diesem
+    // Bild schon fuer ihren Eintrag genommen hat.
+    if (!ctrl && !shift && pressed(ImGuiKey_Delete) && !listTookDelete) cmdDeleteSegment();
     if (pressed(ImGuiKey_F2)) startRename(doc().selectedPrimitive);
     // Shift+C wie im Original; Strg+Umschalt+C in die Zwischenablage.
     if (shift && !ctrl && pressed(ImGuiKey_C)) pendingScreenshot_ = 1;

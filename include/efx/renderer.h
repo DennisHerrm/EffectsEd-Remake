@@ -318,6 +318,9 @@ public:
     virtual TextureId createTexture(const unsigned char* rgba, int width,
                                     int height, bool clamp, bool mipmaps) = 0;
     virtual void destroyTexture(TextureId texture) = 0;
+    // Wie viele Texturen gerade leben (erzeugt, nicht freigegeben). Fuer den
+    // Selbsttest; -1 heisst: diese Schnittstelle zaehlt nicht mit.
+    virtual long long liveTextureCount() const { return -1; }
 };
 
 // Legt eine Schnittstelle an. Gibt bei Misserfolg nullptr zurück und füllt

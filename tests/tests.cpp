@@ -1,5 +1,8 @@
 // Testlauf ohne Fremdbibliothek: jeder Test meldet sich selbst.
 #include <algorithm>
+#include <limits>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -35,6 +38,7 @@
 #include "efx/jobs.h"
 #include "efx/md3.h"
 #include "efx/update.h"
+#include "efx/gp2.h"
 #include "efx/version.h"
 #include <map>
 #include <numeric>
@@ -466,6 +470,510 @@ void testWindIsDead() {
         check(d.id != efx::i18n::Str::VWindDead,
               "ohne Wind keine Windmeldung");
     }
+}
+
+// Gefunden bei der Fehlersuche vom 03.10.2026 (Bereich Leser/Schreiber).
+// Jede Pruefung hier schlug VOR der Behebung fehl.
+void testAuditParser() {
+    std::cout << "== Fehlersuche: Leser und Schreiber ==\n";
+
+    // Zeilennummern: der Schluessel steht in Zeile 4, nicht in Zeile 3
+    // (die Zeile wurde vor dem Ueberspringen der Leerzeilen genommen).
+    {
+        const auto parsed = efx::gp2::parse("Particle\n{\n\n\tname\ta\n\n\n\tlife\t5\n}\n");
+        const efx::gp2::Group* g = parsed.topLevel.findSubGroup("Particle");
+        check(g != nullptr && g->line == 1, "Zeilennummer der Gruppe");
+        check(g != nullptr && g->findProperty("name") && g->findProperty("name")->line == 4,
+              "Zeilennummer eines Schluessels hinter einer Leerzeile");
+        check(g != nullptr && g->findProperty("life") && g->findProperty("life")->line == 7,
+              "Zeilennummer hinter zwei Leerzeilen");
+    }
+
+    // Kurvenwoerter: die Pruefung muss sie lesen wie Leser und Engine —
+    // ohne Ruecksicht auf Gross-/Kleinschreibung und nur die ersten vier.
+    {
+        const auto collisions = [](const char* flags) {
+            const std::string text = std::string("Particle\n{\n\tsize\n\t{\n\t\tstart\t1\n\t\tend\t5\n\t\tflags\t") +
+                                     flags + "\n\t}\n\tshaders\n\t[\n\t\tx\n\t]\n}\n";
+            int n = 0;
+            for (const auto& d : efx::validate(efx::read(text).effect)) {
+                if (d.id == efx::i18n::Str::VCurveCollision) ++n;
+            }
+            return n;
+        };
+        check(collisions("NonLinear Wave") == 1, "Kurvenkonflikt auch bei Grossschreibung");
+        check(collisions("linear random linear linear nonlinear wave") == 0,
+              "Kurvenwoerter ab dem fuenften zaehlen nicht (die Engine liest sie nicht)");
+    }
+
+    // Shader: "}" am Zeilenende gehoert nicht zum Wert davor.
+    {
+        efx::shader::Library lib;
+        efx::shader::parseInto(lib,
+                               "gfx/a\n{\n\t{ map gfx/a.tga }\n}\n"
+                               "gfx/b\n{\n\t{\n\t\tmap gfx/b.tga\n\t}\n}\n",
+                               "audit.shader");
+        const efx::shader::Shader* a = lib.find("gfx/a");
+        const efx::shader::Shader* b = lib.find("gfx/b");
+        check(a != nullptr && a->stages.size() == 1 && a->stages[0].map == "gfx/a.tga",
+              "Shader: '{ map x }' auf einer Zeile");
+        check(b != nullptr && b->stages.size() == 1, "Shader: der folgende Shader geht nicht verloren");
+    }
+    {
+        efx::shader::Library lib;
+        efx::shader::parseInto(lib, "\"gfx/q\"\n{\n\t{\n\t\tmap \"gfx/q.tga\"\n\t}\n}\n", "audit.shader");
+        const efx::shader::Shader* q = lib.find("gfx/q");
+        check(q != nullptr && q->stages.size() == 1 && q->stages[0].map == "gfx/q.tga",
+              "Shader: Anfuehrungszeichen um Name und Bild werden entfernt");
+    }
+    {
+        efx::shader::Library lib;
+        efx::shader::parseInto(lib,
+                               "gfx/anim\n{\n\t{\n\t\tanimMap 10 gfx/1.tga gfx/2.tga /* alt: gfx/3.tga */\n\t}\n}\n",
+                               "audit.shader");
+        const efx::shader::Shader* s = lib.find("gfx/anim");
+        check(s != nullptr && s->stages.size() == 1 && s->stages[0].animMaps.size() == 2,
+              "Shader: /* Kommentar */ im animMap zaehlt nicht als Bilder");
+    }
+
+    // Werte mit // oder Leerzeichen-Kommentaren ueberleben das Speichern.
+    {
+        const efx::ReadResult r = efx::read(
+            "Particle\n{\n\tname\t\"a//b\"\n\tlife\t100\n\tshaders\n\t[\n\t\t\"gfx/x // y\"\n\t]\n}\n");
+        check(!r.effect.primitives.empty() && r.effect.primitives[0].name == "a//b", "Name mit // gelesen");
+        const efx::ReadResult again = efx::read(efx::write(r.effect));
+        check(!again.effect.primitives.empty() && again.effect.primitives[0].name == "a//b",
+              "Name mit // ueberlebt das Speichern");
+        check(!again.effect.primitives.empty() && again.effect.primitives[0].shaders.size() == 1 &&
+                  again.effect.primitives[0].shaders[0] == "gfx/x // y",
+              "Shadereintrag mit // ueberlebt das Speichern");
+    }
+
+    // Ein leerer Schluessel ("") beendet die Datei — wie im Spiel. Aber nicht
+    // still: sonst verschwindet beim Speichern der Rest ohne jeden Hinweis.
+    {
+        const efx::ReadResult r = efx::read(
+            "Particle\n{\n\tlife\t100\n}\n\"\"\nParticle\n{\n\tlife\t200\n}\n");
+        bool warned = false;
+        for (const auto& d : r.diagnostics) {
+            if (d.severity != efx::Severity::Info && d.line == 5) warned = true;
+        }
+        check(warned, "leerer Schluessel: Meldung statt still abgeschnittenem Rest");
+    }
+
+    // Zahlen: beide Fassungen (MSVC und MinGW) lesen gleich, wie das Spiel.
+    {
+        const auto lifeOf = [](const char* value, bool* set) {
+            const efx::ReadResult r = efx::read(std::string("Particle\n{\n\tlife\t") + value + "\n}\n");
+            *set = !r.effect.primitives.empty() && r.effect.primitives[0].life.set;
+            return *set ? r.effect.primitives[0].life.min : -1.0f;
+        };
+        bool set = false;
+        check(lifeOf("0x10", &set) == 0.0f && set, "0x10 ist 0 (keine Hexzahlen, wie atof im Spiel)");
+        check(lifeOf("1e-50", &set) == 0.0f && set, "1e-50 ist 0, nicht 'ungesetzt'");
+        const float big = lifeOf("1e39", &set);
+        check(set && std::isfinite(big) && big > 1e38f, "1e39 wird zum groessten float, nicht 'ungesetzt'");
+        check(lifeOf("100", &set) == 100.0f && set, "gewoehnliche Zahl");
+        check(lifeOf("-2.5e2", &set) == -250.0f && set, "Exponent und Vorzeichen");
+    }
+
+    // Flagwoerter mit demselben Bit bleiben, wie sie geschrieben waren.
+    {
+        const efx::ReadResult r = efx::read("Flash\n{\n\tflags\tlocalizedFlash\n\tlife\t100\n}\n");
+        const std::string saved = efx::write(r.effect);
+        check(saved.find("localizedFlash") != std::string::npos && saved.find("paperPhysics") == std::string::npos,
+              "localizedFlash bleibt localizedFlash");
+    }
+}
+
+// Eigene Funktion, weil sie vor der Behebung den ganzen Testlauf abstuerzen
+// liess (Stapelueberlauf in parseGroup).
+void testAuditDeepNesting() {
+    std::cout << "== Fehlersuche: tiefe Verschachtelung ==\n";
+    std::string text;
+    for (int i = 0; i < 20000; ++i) text += "a {\n";
+    for (int i = 0; i < 20000; ++i) text += "}\n";
+    const auto parsed = efx::gp2::parse(text);
+    check(!parsed.ok(), "20000 Ebenen: Fehlermeldung statt Absturz");
+    const efx::ReadResult r = efx::read(text);
+    check(r.hasErrors() && r.effect.primitives.empty(), "read(): Fehler, kein Absturz");
+}
+
+// Fehlersuche vom 03.10.2026, Bereich Bild-/Archivleser. Die Eingaben sind
+// genau die, mit denen der Fehler gefunden wurde (teils vom Fuzzer).
+std::vector<unsigned char> fromHex(const char* hex) {
+    std::vector<unsigned char> out;
+    for (size_t i = 0; hex[i] && hex[i + 1]; i += 2) {
+        out.push_back(static_cast<unsigned char>(std::stoi(std::string(hex + i, 2), nullptr, 16)));
+    }
+    return out;
+}
+
+// Ein Zip ohne Kompression, Namen genau wie angegeben (auch mit "\").
+std::vector<unsigned char> storedZip(const std::vector<std::pair<std::string, std::string>>& files) {
+    uint32_t table[256];
+    for (uint32_t n = 0; n < 256; ++n) {
+        uint32_t c = n;
+        for (int k = 0; k < 8; ++k) c = (c & 1u) ? 0xEDB88320u ^ (c >> 1) : c >> 1;
+        table[n] = c;
+    }
+    std::vector<unsigned char> out, central;
+    const auto u16 = [](std::vector<unsigned char>& v, uint32_t x) {
+        v.push_back(static_cast<unsigned char>(x));
+        v.push_back(static_cast<unsigned char>(x >> 8));
+    };
+    const auto u32 = [&](std::vector<unsigned char>& v, uint32_t x) {
+        u16(v, x & 0xFFFF);
+        u16(v, x >> 16);
+    };
+    for (const auto& [name, data] : files) {
+        uint32_t crc = 0xFFFFFFFFu;
+        for (unsigned char ch : data) crc = table[(crc ^ ch) & 0xFF] ^ (crc >> 8);
+        crc ^= 0xFFFFFFFFu;
+        const uint32_t offset = static_cast<uint32_t>(out.size());
+        u32(out, 0x04034b50); u16(out, 20); u16(out, 0); u16(out, 0); u16(out, 0); u16(out, 0);
+        u32(out, crc); u32(out, static_cast<uint32_t>(data.size())); u32(out, static_cast<uint32_t>(data.size()));
+        u16(out, static_cast<uint32_t>(name.size())); u16(out, 0);
+        out.insert(out.end(), name.begin(), name.end());
+        out.insert(out.end(), data.begin(), data.end());
+        u32(central, 0x02014b50); u16(central, 20); u16(central, 20); u16(central, 0); u16(central, 0);
+        u16(central, 0); u16(central, 0); u32(central, crc);
+        u32(central, static_cast<uint32_t>(data.size())); u32(central, static_cast<uint32_t>(data.size()));
+        u16(central, static_cast<uint32_t>(name.size())); u16(central, 0); u16(central, 0); u16(central, 0);
+        u16(central, 0); u32(central, 0); u32(central, offset);
+        central.insert(central.end(), name.begin(), name.end());
+    }
+    const uint32_t centralAt = static_cast<uint32_t>(out.size());
+    out.insert(out.end(), central.begin(), central.end());
+    u32(out, 0x06054b50); u16(out, 0); u16(out, 0);
+    u16(out, static_cast<uint32_t>(files.size())); u16(out, static_cast<uint32_t>(files.size()));
+    u32(out, static_cast<uint32_t>(central.size())); u32(out, centralAt); u16(out, 0);
+    return out;
+}
+
+void testAuditBinary() {
+    std::cout << "== Fehlersuche: Bild- und Archivleser ==\n";
+
+    // TGA mit Farbtabelle aus 0-Bit-Eintraegen: las palette[0] eines leeren
+    // Vektors (Nullzeiger) — Absturz.
+    {
+        const auto bytes = fromHex("0001010000010000000000000200010008200000");
+        const efx::image::Image img = efx::image::decode(bytes.data(), bytes.size());
+        check(!img.ok, "TGA mit 0-Bit-Farbtabelle: Fehler statt Absturz");
+    }
+    // TGA Typ 2/10 (Farbe) mit 8 Bit je Pixel: las 2 Byte hinter dem Puffer.
+    {
+        const auto raw = fromHex("0000020000000000000000000400010008200a141e28");
+        check(!efx::image::decode(raw.data(), raw.size()).ok,
+              "TGA Typ 2 mit 8 Bit: abgelehnt statt hinter den Puffer zu lesen");
+        const auto rle = fromHex("00000a000000000000000000040001000820834d");
+        check(!efx::image::decode(rle.data(), rle.size()).ok,
+              "TGA Typ 10 mit 8 Bit: abgelehnt statt hinter den Puffer zu lesen");
+    }
+    // 82 Byte JPEG, das 16384x16384 mit vier Farbanteilen verspricht: belegte
+    // 2 GB, und bad_alloc im Arbeitsfaden beendete das Programm.
+    {
+        const auto bytes = fromHex(
+            "ffd8ffc00014084000400004014400024400034400044400ffc400260001000000000000000000000000"
+            "00000000100100000000000000000000000000000000ffda000e040100020003000400003f00ffd9");
+        const auto start = std::chrono::steady_clock::now();
+        const efx::image::Image img = efx::image::decode(bytes.data(), bytes.size());
+        const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+        check(!img.ok, "JPEG 16384x16384 aus 82 Byte: abgelehnt (zu gross)");
+        check(seconds < 1.0, "JPEG-Bombe: sofort abgelehnt, ohne erst Speicher zu belegen");
+    }
+    // Ein TGA-Kopf, der 8192x8192 verspricht, aber keine Daten hat: belegte
+    // erst 256 MB und scheiterte dann.
+    {
+        const auto bytes = fromHex("000002000000000000000000002000202020");
+        const efx::image::Image img = efx::image::decode(bytes.data(), bytes.size());
+        check(!img.ok && img.rgba.capacity() == 0, "TGA-Kopf ohne Daten: abgelehnt, ohne 256 MB zu belegen");
+    }
+    // Eine Aufgabe, die eine Ausnahme wirft, darf das Programm nicht beenden.
+    {
+        efx::jobs::Pool pool(2);
+        std::atomic<int> after{0};
+        pool.post([] { throw std::bad_alloc(); });
+        pool.post([&after] { ++after; });
+        pool.waitIdle();
+        check(after == 1, "Ausnahme in einer Aufgabe: der Verteiler laeuft weiter");
+    }
+    // Zip-Eintraege mit "\" (manche alten Packer): im Bestand gelistet, aber
+    // beim Lesen nicht gefunden.
+    {
+        const std::filesystem::path dir = std::filesystem::temp_directory_path() / "efxed_audit_zip";
+        std::filesystem::create_directories(dir);
+        const auto zip = storedZip({{"gfx\\bsx\\aaa.tga", "TGA-Inhalt"}, {"gfx/ok/bbb.tga", "ok"}});
+        const std::filesystem::path pk3 = dir / "zz_bs.pk3";
+        std::ofstream(pk3, std::ios::binary).write(reinterpret_cast<const char*>(zip.data()),
+                                                   static_cast<std::streamsize>(zip.size()));
+        std::string error;
+        const auto data = efx::assets::readFromZip(pk3.string(), "gfx/bsx/aaa.tga", &error);
+        check(std::string(data.begin(), data.end()) == "TGA-Inhalt",
+              "Zip-Eintrag mit Rueckstrichen wird beim Lesen gefunden");
+        const auto ok = efx::assets::readFromZip(pk3.string(), "gfx/ok/bbb.tga", &error);
+        check(std::string(ok.begin(), ok.end()) == "ok", "gewoehnlicher Eintrag weiter gefunden");
+        std::error_code ec;
+        std::filesystem::remove_all(dir, ec);
+    }
+}
+
+// Fehlersuche vom 03.10.2026: Pfade mit Umlauten. Das Programm fuehrt Pfade
+// als UTF-8 (Dateidialog, Einstellungen, Kommandozeile); Windows las sie aber
+// als ANSI-Codepage. Ein Spielordner unter C:\Users\Jörg\ war damit nicht
+// lesbar, und die Windows-7-Fassung stuerzte schon beim Start ab.
+std::filesystem::path fromUtf8Literal(const std::string& utf8) {
+    return std::filesystem::path(std::u8string(utf8.begin(), utf8.end()));
+}
+
+void testAuditUtf8Paths() {
+    std::cout << "== Fehlersuche: Pfade mit Umlauten ==\n";
+    namespace fsys = std::filesystem;
+    const std::string tempUtf8 = [] {
+        const auto u = fsys::temp_directory_path().u8string();
+        return std::string(u.begin(), u.end());
+    }();
+    const std::string baseUtf8 = tempUtf8 + "/efxed_audit_J\xC3\xB6rg_base";
+    std::error_code ec;
+    fsys::remove_all(fromUtf8Literal(baseUtf8), ec);
+    fsys::create_directories(fromUtf8Literal(baseUtf8), ec);
+    {
+        const auto zip = storedZip({{"effects/umlaut/x.efx", "Particle\n{\n\tlife\t100\n}\n"}});
+        std::ofstream out(fromUtf8Literal(baseUtf8 + "/assets0.pk3"), std::ios::binary);
+        out.write(reinterpret_cast<const char*>(zip.data()), static_cast<std::streamsize>(zip.size()));
+    }
+
+    const auto state = efx::gamepath::inspect(baseUtf8);
+    check(state.status != efx::gamepath::Status::Missing && state.pk3Count == 1,
+          "Spielpfad mit Umlaut: gefunden, mit seiner .pk3");
+    std::string error;
+    check(!efx::assets::readZipDirectory(baseUtf8 + "/assets0.pk3", &error).empty(),
+          "pk3 in einem Ordner mit Umlaut laesst sich lesen");
+    const efx::assets::Index index = efx::assets::scanAll({baseUtf8});
+    const bool listed = std::find(index.effects.begin(), index.effects.end(), "umlaut/x") != index.effects.end();
+    check(listed, "Bestand aus einem Ordner mit Umlaut");
+    check(!index.archives.empty() &&
+              !efx::assets::readFromZip(index.archives.front(), "effects/umlaut/x.efx", &error).empty(),
+          "Effekt aus der pk3 im Umlaut-Ordner laesst sich holen (Pfad aus dem Bestand)");
+
+    // Einstellungsordner unter einem APPDATA mit Umlaut.
+#ifdef _WIN32
+    {
+        const std::string appdataUtf8 = tempUtf8 + "/efxed_audit_J\xC3\xB6rg_appdata";
+        fsys::create_directories(fromUtf8Literal(appdataUtf8), ec);
+        const wchar_t* oldAppdata = _wgetenv(L"APPDATA");
+        const std::wstring saved = oldAppdata ? oldAppdata : L"";
+        _wputenv_s(L"APPDATA", fromUtf8Literal(appdataUtf8).wstring().c_str());
+        efx::paths::setOverrideDirForTesting("");
+        std::string dir;
+        bool threw = false;
+        try {
+            dir = efx::paths::configDir();
+        } catch (...) {
+            threw = true;
+        }
+        check(!threw, "APPDATA mit Umlaut: kein Absturz beim Ermitteln des Einstellungsordners");
+        check(!threw && fsys::is_directory(fromUtf8Literal(dir), ec) &&
+                  dir.find("J\xC3\xB6rg") != std::string::npos,
+              "Einstellungsordner kommt als UTF-8 zurueck und existiert");
+        _wputenv_s(L"APPDATA", saved.c_str());
+        fsys::remove_all(fromUtf8Literal(appdataUtf8), ec);
+    }
+#endif
+    fsys::remove_all(fromUtf8Literal(baseUtf8), ec);
+}
+
+// Fehlersuche vom 03.10.2026: das Protokoll wird aus mehreren Faeden
+// beschrieben (Update-Pruefung beim Start, Arbeitsfaeden), waehrend das
+// Protokollfenster jedes Bild liest. Ohne Sperre: Heap-Beschaedigung.
+void testAuditDiagThreads() {
+    std::cout << "== Fehlersuche: Protokoll aus mehreren Faeden ==\n";
+    efx::diag::resetForTesting();
+    std::atomic<bool> stop{false};
+    const auto writer = [&stop](int id) {
+        for (int i = 0; i < 20000 && !stop; ++i) {
+            efx::diag::info("Faden " + std::to_string(id) + " Zeile " + std::to_string(i));
+        }
+    };
+    std::thread a(writer, 1);
+    std::thread b(writer, 2);
+    size_t seen = 0;
+    for (int i = 0; i < 2000; ++i) {
+        for (const auto& line : efx::diag::lines()) seen += line.size() > 0 ? 1 : 0;
+    }
+    a.join();
+    b.join();
+    check(efx::diag::lines().size() >= 40000, "alle Zeilen beider Faeden angekommen, kein Absturz");
+    (void)seen;
+    efx::diag::resetForTesting();
+}
+
+// Fehlersuche vom 03.10.2026, Bereich Vorschau-Simulation: Haenger und
+// Speicherexplosionen aus Werten, die in echten Dateien stehen koennen.
+double secondsSince(std::chrono::steady_clock::time_point start) {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+}
+
+void testAuditSimulation() {
+    std::cout << "== Fehlersuche: Vorschau-Simulation ==\n";
+    using efx::Effect;
+    using efx::Primitive;
+    using efx::PrimitiveType;
+    using efx::Range;
+
+    // 1. Ein Effekt, der sich selbst ausloest: FxRunner mit 64 x playfx self.
+    //    Die Tiefe war begrenzt, die Breite nicht: 64^4 = 16 Mio. Starts.
+    {
+        Effect self;
+        Primitive runner;
+        runner.type = PrimitiveType::FxRunner;
+        runner.count = Range::single(64.0f);
+        runner.life = Range::single(100.0f);
+        runner.playFx.push_back("selbst");
+        self.primitives.push_back(runner);
+        Primitive spark;
+        spark.type = PrimitiveType::Particle;
+        spark.life = Range::single(500.0f);
+        spark.shaders.push_back("gfx/x");
+        self.primitives.push_back(spark);
+        const efx::particles::EffectLoader loader = [&self](const std::string&) -> const Effect* {
+            return &self;
+        };
+        efx::particles::System system;
+        const auto start = std::chrono::steady_clock::now();
+        system.play(self, 1, {}, {}, loader);
+        const double took = secondsSince(start);
+        std::printf("  playfx self x64: %.2f s, %zu Teilchen\n", took, system.live().size());
+        check(took < 2.0, "Effekt, der sich selbst ausloest: kein Haenger");
+        check(system.live().size() <= 300000, "... und keine Speicherexplosion");
+    }
+
+    // 2. Bahn mit Physik und riesiger Lebensdauer: t += 8 ms kommt ab 2^27 ms
+    //    nicht mehr voran (float) — Endlosschleife.
+    {
+        std::atomic<bool> done{false};
+        std::thread worker([&done] {
+            efx::sim::buildPath({0, 0, 0}, {0, 0, 100}, {0, 0, 0}, -400.0f, 1.4e8f,
+                                efx::sim::roomPlanes(100.0f, 140.0f, -20.0f, 60.0f), 0.5f, false);
+            done = true;
+        });
+        const auto start = std::chrono::steady_clock::now();
+        while (!done && secondsSince(start) < 5.0) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        check(done.load(), "Bahn mit life 1.4e8 und Physik: endet (vorher Endlosschleife)");
+        if (done) {
+            worker.join();
+        } else {
+            worker.detach();  // laeuft ewig; der Testlauf geht trotzdem weiter
+        }
+    }
+
+    // 3. Vorlauf (repeatDelay 125) mit 24 Segmenten zu je 5000: 3,2 Mio.
+    //    Teilchen, 1,5 GB.
+    {
+        Effect big;
+        big.repeatDelay = 125;
+        big.repeatDelaySet = true;
+        for (int i = 0; i < 24; ++i) {
+            Primitive p;
+            p.type = PrimitiveType::Particle;
+            p.count = Range::single(5000.0f);
+            p.life = Range::single(2000.0f);
+            p.shaders.push_back("gfx/x");
+            big.primitives.push_back(p);
+        }
+        efx::particles::System system;
+        const auto start = std::chrono::steady_clock::now();
+        system.play(big, 1, {}, {}, {}, {}, /*buildUpRepeats=*/true);
+        const double took = secondsSince(start);
+        std::printf("  Vorlauf 24 x 5000: %.2f s, %zu Teilchen\n", took, system.live().size());
+        check(system.live().size() <= 300000, "Vorlauf mit vielen Segmenten: Gesamtzahl begrenzt");
+    }
+
+    // 4. Ein Emitter, der sich nie bewegt: die Aussendesuche lief bei jedem
+    //    Bild von vorn — quadratisch in der Lebensdauer.
+    {
+        Effect child;
+        Primitive c;
+        c.type = PrimitiveType::Particle;
+        c.life = Range::single(100.0f);
+        c.shaders.push_back("gfx/x");
+        child.primitives.push_back(c);
+        Effect still;
+        Primitive e;
+        e.type = PrimitiveType::Emitter;
+        e.life = Range::single(300000.0f);
+        e.emitFx.push_back("kind");
+        still.primitives.push_back(e);
+        const efx::particles::EffectLoader loader = [&child](const std::string&) -> const Effect* {
+            return &child;
+        };
+        efx::particles::System system;
+        const auto start = std::chrono::steady_clock::now();
+        system.play(still, 1, {}, {}, loader);
+        const double took = secondsSince(start);
+        std::printf("  ruhender Emitter, life 300 s: %.2f s\n", took);
+        check(took < 1.0, "Emitter ohne Bewegung mit langer Lebensdauer: kein Haenger");
+    }
+
+    // 6. count 3000000000: die Umwandlung in int vor der Grenze ergab 0.
+    {
+        Effect many;
+        Primitive p;
+        p.type = PrimitiveType::Particle;
+        p.count = Range::single(3000000000.0f);
+        p.life = Range::single(100.0f);
+        many.primitives.push_back(p);
+        efx::sim::Random random(1);
+        const auto spawns = efx::sim::schedule(many, random);
+        check(spawns.size() == 4096, "count 3e9: auf 4096 begrenzt, nicht 0");
+    }
+
+    // 7. Riesige Lebensdauer mit Vorlauf: ceil(life/delay) als int lief ueber,
+    //    es gab gar keine Teilchen.
+    {
+        Effect longLife;
+        longLife.repeatDelay = 300;
+        longLife.repeatDelaySet = true;
+        Primitive p;
+        p.type = PrimitiveType::Particle;
+        p.life = Range::single(1e12f);
+        p.shaders.push_back("gfx/x");
+        longLife.primitives.push_back(p);
+        efx::particles::System system;
+        system.play(longLife, 1, {}, {}, {}, {}, /*buildUpRepeats=*/true);
+        check(!system.live().empty(), "life 1e12 mit Vorlauf: es gibt Teilchen");
+    }
+
+    // 8. NaN als Zeitfaktor (timeScale=nan in den Einstellungen) machte die
+    //    Uhr dauerhaft NaN.
+    {
+        efx::timeline::Clock clock;
+        clock.setSpeed(std::numeric_limits<float>::quiet_NaN());
+        clock.setFrameRate(std::numeric_limits<float>::quiet_NaN());
+        check(std::isfinite(clock.speed()) && std::isfinite(clock.frameRate()),
+              "NaN als Zeitfaktor/Bildrate wird abgewiesen");
+        const efx::layout::Settings s = efx::layout::Settings::fromIni("timeScale=nan\n");
+        check(std::isfinite(s.timeScale), "timeScale=nan in den Einstellungen: endlicher Wert");
+    }
+}
+
+// Der Verteiler: parallelFor wartete auf Helfer, die hinter fremder Arbeit
+// (Texturen laden) in der Schlange standen — der Hauptfaden stand still.
+void testAuditParallelFor() {
+    std::cout << "== Fehlersuche: parallelFor wartet nicht auf fremde Arbeit ==\n";
+    efx::jobs::Pool pool(2);
+    for (int i = 0; i < 4; ++i) {
+        pool.post([] { std::this_thread::sleep_for(std::chrono::milliseconds(300)); });
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const auto start = std::chrono::steady_clock::now();
+    std::atomic<int> chunks{0};
+    pool.parallelFor(8, 1, [&chunks](size_t begin, size_t end) { chunks += static_cast<int>(end - begin); });
+    const double took = secondsSince(start);
+    std::printf("  parallelFor neben 4 x 300 ms fremder Arbeit: %.0f ms\n", took * 1000.0);
+    check(chunks == 8, "alle Teile erledigt");
+    check(took < 0.15, "parallelFor kehrt zurueck, sobald SEINE Arbeit fertig ist");
+    pool.waitIdle();
 }
 
 void testUpdate() {
@@ -13905,6 +14413,13 @@ int main(int argc, char** argv) {
     testDiagnosticSegment();
     testGamePathFromFile();
     testUpdate();
+    testAuditParser();
+    testAuditDeepNesting();
+    testAuditBinary();
+    testAuditUtf8Paths();
+    testAuditDiagThreads();
+    testAuditParallelFor();
+    testAuditSimulation();
     testFlags();
     testTolerance();
     testKnownRavenBugs();

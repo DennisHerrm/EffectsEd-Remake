@@ -28,9 +28,8 @@ using i18n::tr;
 namespace {
 constexpr const char kEfxFilter[] = "Effect files (*.efx)\0*.efx\0All files\0*.*\0";
 
-// Die Engine nimmt hoechstens so viele Segmente je Effekt
-// (FX_MAX_EFFECT_COMPONENTS in FxScheduler.h).
-constexpr size_t kMaxSegments = 24;
+// kMaxSegments steht in app.h (App::kMaxSegments): auch das Einfuegen
+// ueber/unter braucht die Grenze.
 }  // namespace
 
 std::string App::displayName(int index) const {
@@ -90,7 +89,7 @@ void App::cmdOpen() {
 }
 
 bool App::cmdSave() {
-    if (doc().filePath.empty()) return cmdSaveAs();
+    if (doc().filePath.empty() || doc().unreadableOriginal) return cmdSaveAs();
     return saveFile(doc().filePath);
 }
 

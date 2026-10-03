@@ -5,6 +5,8 @@
 // uebergangen. Genauso hier — sonst wuerde der Editor Dateien ablehnen, die im
 // Spiel laufen.
 #include <cctype>
+#include <charconv>
+#include <limits>
 #include <cstdlib>
 #include <sstream>
 
@@ -24,11 +26,42 @@ bool iequals(std::string_view a, std::string_view b) {
 }
 
 // Zerlegt "1 0.5  -3" in Zahlen. Gibt zurueck, wie viele gelesen wurden.
+//
+// Mit from_chars statt istream: das Ergebnis haengt sonst an der
+// C-Laufzeit. Die MSVC-Fassung las "0x10" als 16, die MinGW-Fassung als 0;
+// "1e-50" und "1e39" verwarf MSVC ganz, der Wert blieb ungesetzt. Jetzt lesen
+// beide gleich und wie das Spiel (sscanf "%f" seiner Zeit): keine Hexzahlen,
+// zu Kleines ist 0, zu Grosses der groesste float.
 size_t scanFloats(std::string_view text, float* out, size_t maxCount) {
-    std::string buffer(text);
-    std::istringstream stream(buffer);
     size_t count = 0;
-    while (count < maxCount && (stream >> out[count])) ++count;
+    size_t at = 0;
+    while (count < maxCount) {
+        while (at < text.size() && std::isspace(static_cast<unsigned char>(text[at]))) ++at;
+        if (at >= text.size()) break;
+        size_t start = at;
+        const bool negative = text[start] == '-';
+        if (text[start] == '+') ++start;  // from_chars kennt kein "+"
+        const char* first = text.data() + start;
+        const char* last = text.data() + text.size();
+        double value = 0.0;
+        const auto [ptr, ec] = std::from_chars(first, last, value, std::chars_format::general);
+        if (ptr == first) break;  // keine Zahl: hier hoert das Lesen auf, wie bisher
+        if (ec == std::errc::result_out_of_range) {
+            // Ausserhalb von double: am Vorzeichen des Exponenten erkennen,
+            // ob zu klein (-> 0) oder zu gross.
+            const std::string_view token(first, static_cast<size_t>(ptr - first));
+            const size_t e = token.find_first_of("eE");
+            const bool tiny = e != std::string_view::npos && e + 1 < token.size() && token[e + 1] == '-';
+            value = tiny ? 0.0 : (negative ? -1.0 : 1.0) * std::numeric_limits<double>::max();
+        }
+        const double limit = std::numeric_limits<float>::max();
+        if (value > limit) value = limit;
+        if (value < -limit) value = -limit;
+        out[count++] = static_cast<float>(value);
+        at = static_cast<size_t>(ptr - text.data());
+        // Wie bisher (istream): "100abc" ist 100, danach ist Schluss.
+        if (at < text.size() && !std::isspace(static_cast<unsigned char>(text[at]))) break;
+    }
     return count;
 }
 
@@ -201,10 +234,11 @@ public:
     // --- Flags -----------------------------------------------------------
 
     uint32_t readFlags(const gp2::Property& prop, const std::vector<FlagName>& table,
-                       const char* what) {
+                       const char* what, std::vector<std::string>* keep = nullptr) {
         std::vector<std::string> words;
         scanWords(prop.values.empty() ? std::string_view{} : std::string_view(prop.values.front()),
                   words);
+        if (keep) keep->insert(keep->end(), words.begin(), words.end());
         uint32_t bits = 0;
         // ParseFlags und ParseSpawnFlags (FxTemplate.cpp, SP und MP) lesen
         // hoechstens sieben Woerter — ein sscanf mit sieben Plaetzen. Ein
@@ -306,10 +340,10 @@ public:
             } else if (iequals(key, "rotationDelta")) {
                 readRange(prop, prim.rotationDelta);
             } else if (iequals(key, "flags") || iequals(key, "flag")) {
-                prim.flags |= readFlags(prop, flagNames(), "Flag");
+                prim.flags |= readFlags(prop, flagNames(), "Flag", &prim.flagWords);
                 prim.flagsSingular = iequals(key, "flag");
             } else if (iequals(key, "spawnFlags") || iequals(key, "spawnFlag")) {
-                prim.spawnFlags |= readFlags(prop, spawnFlagNames(), "spawnFlag");
+                prim.spawnFlags |= readFlags(prop, spawnFlagNames(), "spawnFlag", &prim.spawnFlagWords);
                 prim.spawnFlagsSingular = iequals(key, "spawnFlag");
             } else if (iequals(key, "shaders") || iequals(key, "shader")) {
                 readList(prop, prim.shaders);

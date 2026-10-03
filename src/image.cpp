@@ -12,14 +12,14 @@ namespace {
 // ist entweder kaputt oder boesartig.
 constexpr int kMaxDimension = 16384;
 
-bool tooBig(int width, int height) {
+}  // namespace
+
+bool implausibleSize(int width, int height) {
     if (width <= 0 || height <= 0) return true;
     if (width > kMaxDimension || height > kMaxDimension) return true;
     // 4 Byte je Bildpunkt, mit Reserve gegen Ueberlauf gerechnet.
     return static_cast<int64_t>(width) * height > 64ll * 1024 * 1024;
 }
-
-}  // namespace
 
 Format sniff(const unsigned char* data, size_t size) {
     if (!data || size < 4) return Format::Unknown;
@@ -64,6 +64,9 @@ Image decodeTga(const unsigned char* data, size_t size) {
     Image out;
     auto fail = [&](const char* why) {
         out.error = why;
+        // Ein gescheitertes Bild behaelt keinen halben Puffer (bis 256 MB).
+        out.rgba = {};
+        out.ok = false;
         return out;
     };
     if (!data || size < 18) return fail("too small for a TGA header");
@@ -79,7 +82,7 @@ Image decodeTga(const unsigned char* data, size_t size) {
     const unsigned depth = data[16];
     const unsigned descriptor = data[17];
 
-    if (tooBig(width, height)) return fail("implausible image size");
+    if (implausibleSize(width, height)) return fail("implausible image size");
 
     const bool rleCompressed = imageType == 9 || imageType == 10 || imageType == 11;
     const bool paletted = imageType == 1 || imageType == 9;
@@ -91,6 +94,12 @@ Image decodeTga(const unsigned char* data, size_t size) {
     }
     if (depth != 8 && depth != 15 && depth != 16 && depth != 24 && depth != 32) {
         return fail("unsupported TGA bit depth");
+    }
+    // 8 Bit gibt es nur als Index (Farbtabelle) oder Grau. Ein Farbbild mit
+    // 8 Bit las vorher je Bildpunkt drei Byte aus einem Byte grossen Platz —
+    // also hinter das Ende der Daten.
+    if (depth == 8 && !paletted && !greyscale) {
+        return fail("unsupported TGA bit depth for a colour image");
     }
 
     size_t offset = 18 + idLength;
@@ -107,9 +116,26 @@ Image decodeTga(const unsigned char* data, size_t size) {
     } else if (paletted) {
         return fail("paletted image without a colour map");
     }
+    // Eine Farbtabelle aus 0-Bit-Eintraegen (oder ganz ohne Eintraege) ist
+    // keine: vorher las das palette[0] eines leeren Puffers — Absturz.
+    if (paletted && (colourMapDepth == 0 || palette.empty())) {
+        return fail("empty or zero-width colour map");
+    }
 
     const unsigned bytesPerPixel = (depth + 7) / 8;
     const size_t pixelCount = static_cast<size_t>(width) * height;
+    // Erst pruefen, ob die Datei ueberhaupt so viele Bildpunkte enthalten
+    // KANN, dann Speicher holen. Ein 18-Byte-Kopf mit 8192x8192 belegte
+    // vorher 256 MB, bevor er an fehlenden Daten scheiterte.
+    const size_t available = size - offset;
+    if (!rleCompressed && pixelCount * bytesPerPixel > available) {
+        return fail("truncated pixel data");
+    }
+    // RLE: jedes Paket hat hoechstens 128 Bildpunkte und mindestens ein
+    // Kopfbyte plus einen Bildpunkt.
+    if (rleCompressed && (pixelCount + 127) / 128 * (1 + bytesPerPixel) > available) {
+        return fail("truncated RLE data");
+    }
     out.rgba.assign(pixelCount * 4, 0);
 
     // Ein Bildpunkt in RGBA umsetzen. Targa legt Farben als BGR ab — das ist
