@@ -947,6 +947,7 @@ void App::drawViewport(render::Renderer* renderer, float width, float height) {
                              (innerW / innerH)) *
             180.0f / 3.14159265f;
         const auto buildStart = std::chrono::steady_clock::now();
+        doc().particles.setLegacyDrawOrder(settings_.legacyDrawOrder);
         list = doc().particles.build(elapsed, billboardRight, billboardUp,
                                      particleShaderLookup(), &eye);
         lastBuildMs_ = std::chrono::duration<float, std::milli>(

@@ -325,6 +325,34 @@ Axis axisFor(int orientation) {
     }
 }
 
+void System::rankShaders(const Effect& effect, const EffectLoader& loader) {
+    // Die Reihenfolge, in der die Engine die Shader beim Lesen des Effekts
+    // registriert: Segment fuer Segment, die Shaderliste von oben nach unten,
+    // und ein Kindeffekt (impactfx, deathfx, emitfx, playfx) dort, wo sein
+    // Segment ihn nennt — CPrimitiveTemplate::ParseImpactFxStrings und
+    // Verwandte rufen RegisterEffect sofort, und das liest den Kindeffekt
+    // samt seinen Shadern. Unter gleicher Sortierstufe zeichnet der
+    // Renderer nach dieser Reihenfolge (SortNewShader, sortedIndex), nicht
+    // danach, wer zuerst im Bild steht.
+    shaderRank_.clear();
+    std::set<const Effect*> visited;
+    std::function<void(const Effect&)> walk = [&](const Effect& e) {
+        if (!visited.insert(&e).second) return;
+        for (const Primitive& p : e.primitives) {
+            for (const std::string& name : p.shaders) {
+                shaderRank_.emplace(name, static_cast<int>(shaderRank_.size()));
+            }
+            if (!loader) continue;
+            for (const auto* list : {&p.impactFx, &p.deathFx, &p.emitFx, &p.playFx}) {
+                for (const std::string& child : *list) {
+                    if (const Effect* loaded = loader(child)) walk(*loaded);
+                }
+            }
+        }
+    };
+    walk(effect);
+}
+
 void System::play(const Effect& effect, unsigned seed,
                   const std::vector<bool>& enabledMask, const Axis& axis,
                   EffectLoader loader, const std::vector<sim::Plane>& planes,
@@ -350,6 +378,7 @@ void System::play(const Effect& effect, unsigned seed,
     loader_ = loader;
     models_ = std::move(models);
     axis_ = axis;
+    rankShaders(effect, loader);
     sim::Random random(seed);
     const PlayContext context{&loader, &planes, axis, &models_};
     playInto(effect, random, enabledMask, context, 0, 0.0f, origin);
@@ -2626,10 +2655,34 @@ DrawList System::build(float nowMs, const camera::Vec3& right,
     // (R_SortDrawSurfs, RB_StageIteratorGeneric). Vorher: alphabetisch nach
     // Shadername — ein Rauch, dessen Name hinter dem eines additiven Glimmens
     // sortierte, deckte es zu.
+    //
+    // "Wer zuerst da war" heisst: wer zuerst REGISTRIERT wurde (shaderRank_),
+    // nicht wer zuerst im Bild steht — sonst rutschte ein Segment mit delay
+    // ueber ein spaeteres. Shader, die nicht im Effekt stehen (Modelle,
+    // Ersatzbilder), kommen dahinter, in der Reihenfolge ihres Auftretens.
+    //
+    // Mit legacyDrawOrder_ wie das alte EffectsEd: dort gilt die Regel
+    // "GL_ONE GL_ONE needs to come a bit later" (SS_BLEND1, eine Ergaenzung
+    // von Raven gegenueber Quake 3) nicht. Alles Gemischte steht auf einer
+    // Stufe, also zeichnet das spaetere Segment oben — gemessen am Original
+    // mit einem Splitter und einem Leuchten in beiden Reihenfolgen
+    // (Rueckmeldung 07.10.2026, fighter_explosion2.efx).
+    const bool legacy = legacyDrawOrder_;
+    const auto level = [legacy](const DrawGroup& g) {
+        if (legacy && g.sort == static_cast<float>(shader::kSortBlend1)) {
+            return static_cast<float>(shader::kSortBlend0);
+        }
+        return g.sort;
+    };
+    const auto rank = [this](const DrawGroup& g) {
+        const auto found = shaderRank_.find(g.shader);
+        return found != shaderRank_.end() ? found->second
+                                          : static_cast<int>(shaderRank_.size()) + g.firstSeen;
+    };
     std::stable_sort(out.groups.begin(), out.groups.end(),
-                     [](const DrawGroup& a, const DrawGroup& b) {
-                         if (a.sort != b.sort) return a.sort < b.sort;
-                         if (a.firstSeen != b.firstSeen) return a.firstSeen < b.firstSeen;
+                     [&](const DrawGroup& a, const DrawGroup& b) {
+                         if (level(a) != level(b)) return level(a) < level(b);
+                         if (rank(a) != rank(b)) return rank(a) < rank(b);
                          return a.stage < b.stage;
                      });
     return out;

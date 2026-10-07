@@ -624,6 +624,12 @@ void App::renderBrowserTiles(render::Renderer* renderer, float dpiScale) {
         ups[i] = camera::Vec3{views[i][1], views[i][5], views[i][9]};
     }
 
+    // Die Zeichenreihenfolge hier setzen, auf dem Hauptfaden: die Aufgaben
+    // unten lesen nur.
+    for (const size_t i : due) {
+        browserSlots_[i].entry->system.setLegacyDrawOrder(settings_.legacyDrawOrder);
+    }
+
     // Koernung 1: eine Kachel je Aufgabe. Der Aufbau einer Kachel mit ein
     // paar hundert Teilchen ist teuer genug, dass sich das Verteilen lohnt —
     // bei groesserer Koernung bliebe auf einem 32-Kern-Rechner die Haelfte

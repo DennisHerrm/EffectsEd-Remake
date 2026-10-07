@@ -89,6 +89,10 @@ struct Settings {
     // der Schalter zeichnet den Raum ALS Drahtgitter statt als Flaechen, auf
     // allen sechs Seiten, 20 Einheiten je Feld. Darum aus, wie im Original.
     bool drawGrid = false;
+    // Zeichenreihenfolge wie das alte EffectsEd (spaeteres Segment oben) statt
+    // wie das Spiel (GL_ONE GL_ONE immer zuletzt, SS_BLEND1). Voreinstellung
+    // an — Wunsch des Anwenders, 07.10.2026: es soll aussehen wie im alten.
+    bool legacyDrawOrder = true;
     bool drawWindVector = false;
     bool playSounds = true;
     bool showStatusBar = true;

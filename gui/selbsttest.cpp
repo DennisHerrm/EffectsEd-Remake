@@ -636,6 +636,7 @@ public:
     static bool punktMitte;
     static std::chrono::steady_clock::time_point klangStart;
     static float klangZeit;
+    static int klangModus;
     static float stilVorher[3];
     static std::string themaVorher;
     // Liest die Farbe des Bildpunkts in der oberen linken Ecke der Ansicht
@@ -974,6 +975,7 @@ public:
             {Str::ViewWindVector, &layout::Settings::drawWindVector},
             {Str::ViewDrawRoom, &layout::Settings::drawRoom},
             {Str::ViewDrawGrid, &layout::Settings::drawGrid},
+            {Str::ViewLegacyDrawOrder, &layout::Settings::legacyDrawOrder},
         };
         for (const auto& u : liste) {
             auto vorher = std::make_shared<bool>(false);
@@ -2207,6 +2209,12 @@ public:
             app->rescanAssets();
             app->settings_.playSounds = true;
             app->pressStop();
+            // Einmal abspielen, nichts nachlegen. Sonst erbt der Test aus
+            // frueheren Teilen "Repeat until stopped" mit kurzer Rate, und
+            // jede neue Generation spielt — zu Recht — ihren Klang erneut.
+            klangModus = static_cast<int>(app->playback_.mode);
+            app->playback_.mode = playback::RepeatMode::Once;
+            doc().clock.setEndMode(timeline::EndMode::Stop);
             Primitive& p = *gewaehlt();
             p.life = Range::single(5000.0f);
             p.sounds = {"sound/stille.wav"};
@@ -2215,6 +2223,14 @@ public:
             app->pressPlay();
         }));
         s.push_back(warteBis("der Klang laeuft", [] { return app->soundsStarted_ > 0; }, 120));
+        s.push_back(tu("Wiedergabezustand protokollieren", [] {
+            diag::info("Wiedergabe: Modus " + std::to_string(static_cast<int>(app->playback_.mode)) +
+                       ", jedes Bild " + std::to_string(app->playback_.respawnEveryFrame) +
+                       ", Ort animiert " + std::to_string(app->playback_.animateSpawnLocation) +
+                       ", Ende " + std::to_string(static_cast<int>(doc().clock.endMode())) +
+                       ", Dauer " + std::to_string(doc().particles.durationMs()) +
+                       ", Nachlegen " + std::to_string(app->scheduleActive_));
+        }));
         for (int k = 0; k < 10; ++k) {
             // Wie ein Regler, der gezogen wird (app_properties.cpp: changed).
             s.push_back(tu("Feld aendern " + std::to_string(k + 1), [] {
@@ -2245,6 +2261,8 @@ public:
         }));
         s.push_back(tu("stopp, Ton aus, Spielordner zurueck", [] {
             app->pressStop();
+            app->playback_.mode = static_cast<playback::RepeatMode>(klangModus);
+            doc().clock.setEndMode(app->playbackEndMode());
             app->settings_.playSounds = false;
             app->settings_.gamePath.clear();
             app->rescanAssets();
@@ -3546,6 +3564,20 @@ public:
         s.push_back({"Effekte einplanen", [](int) {
                          std::vector<std::string> liste = app->assets_.effects;
                          std::sort(liste.begin(), liste.end());
+                         // Nur Effekte, deren Name diesen Text enthaelt (zum
+                         // Nachstellen einer Rueckmeldung).
+                         if (const char* f = std::getenv("EFXED_EFFEKTFILTER"); f && f[0]) {
+                             liste.erase(std::remove_if(liste.begin(), liste.end(),
+                                                        [f](const std::string& n) {
+                                                            return n.find(f) == std::string::npos;
+                                                        }),
+                                         liste.end());
+                         }
+                         // Gitter statt Waende, wie im Menue "Draw Wireframe".
+                         if (const char* g = std::getenv("EFXED_GITTER"); g && g[0] == '1') {
+                             app->settings_.drawGrid = true;
+                             app->geometryDirty_ = true;
+                         }
                          int grenze = static_cast<int>(liste.size());
                          if (const char* n = std::getenv("EFXED_EFFEKTE"); n && std::atoi(n) > 0) {
                              grenze = std::min(grenze, std::atoi(n));
@@ -3921,6 +3953,7 @@ int Selbsttest::punktVorschau[3] = {-1, -1, -1};
 bool Selbsttest::punktMitte = false;
 std::chrono::steady_clock::time_point Selbsttest::klangStart;
 float Selbsttest::klangZeit = 0.0f;
+int Selbsttest::klangModus = 0;
 float Selbsttest::stilVorher[3] = {};
 std::string Selbsttest::themaVorher;
 std::string Selbsttest::bericht;

@@ -135,6 +135,7 @@ const Entry kTable[] = {
     {"Playback Toolbar", "Wiedergabeleiste", "播放工具栏", "再生ツールバー"},  // ViewPlaybackToolbar
     {"World Toolbar", "Weltleiste", "世界工具栏", "ワールドツールバー"},  // ViewWorldToolbar
     {"Draw Grid", "Gitter anzeigen", "显示网格", "グリッドを表示"},  // ViewDrawGrid
+    {"Draw Order like old EffectsEd", "Zeichenreihenfolge wie altes EffectsEd", "按旧版 EffectsEd 的绘制顺序", "旧 EffectsEd の描画順"},  // ViewLegacyDrawOrder
     {"Draw world orientation axes", "Weltachsen anzeigen", "显示世界坐标轴", "ワールド座標軸を表示"},  // ToolDrawAxes
     {"Draw the walls of the testing room", "Wände des Testraums anzeigen", "显示测试房间的墙壁", "テストルームの壁を表示"},  // ToolDrawRoom
     {"Draw outline of testing room", "Umriss des Testraums anzeigen", "显示测试房间的轮廓", "テストルームの輪郭を表示"},  // ToolDrawGrid
@@ -557,6 +558,7 @@ const Entry kTable[] = {
     {"Draw global wind vector", "Globalen Windvektor zeichnen", "绘制全局风向量", "全体の風ベクトルを表示"},  // HintWind
     {"Draw the walls of the testing room", "Wände des Testraums zeichnen", "绘制测试房间的墙壁", "テストルームの壁を表示"},  // HintDrawRoom
     {"Draw outline of testing room", "Umriss des Testraums zeichnen", "绘制测试房间轮廓", "テストルームの輪郭を表示"},  // HintDrawGrid
+    {"On: later segments draw on top, like the old EffectsEd. Off: like the game (additive GL_ONE GL_ONE always last)", "An: spätere Segmente liegen oben, wie im alten EffectsEd. Aus: wie im Spiel (additives GL_ONE GL_ONE immer zuletzt)", "开：后面的片段绘制在上层，与旧版 EffectsEd 相同。关：与游戏相同（加法混合 GL_ONE GL_ONE 总是最后绘制）", "オン：後のセグメントが上に描かれます（旧 EffectsEd と同じ）。オフ：ゲームと同じ（加算 GL_ONE GL_ONE は常に最後）"},  // HintLegacyDrawOrder
     {"Used for when you've moved/zoomed your object offscreen and can't find it.", "Wenn der Effekt aus dem Bild gedreht oder gezoomt ist und nicht mehr zu finden ist.", "当物体被移出或缩放到屏幕外找不到时使用。", "オブジェクトが画面外に出て見つからないときに使います。"},  // HintResetView
     {"Takes a screenshot and saves it to a file", "Bildschirmfoto der Ansicht in eine Datei", "截图并保存到文件", "スクリーンショットをファイルに保存"},  // HintScreenshot
     {"Takes a screenshot and sends it to the clipboard", "Bildschirmfoto der Ansicht in die Zwischenablage", "截图并复制到剪贴板", "スクリーンショットをクリップボードへ"},  // HintScreenshotClip

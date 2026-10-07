@@ -537,6 +537,10 @@ public:
                    const ShaderLookup& shaders = {},
                    const View* view = nullptr) const;
 
+    // Zeichenreihenfolge wie das alte EffectsEd statt wie das Spiel.
+    void setLegacyDrawOrder(bool legacy) { legacyDrawOrder_ = legacy; }
+    bool legacyDrawOrder() const { return legacyDrawOrder_; }
+
     // Wie lange läuft der Effekt insgesamt? Für die Wiederholung.
     float durationMs() const { return durationMs_; }
 
@@ -555,6 +559,11 @@ public:
 
 private:
     std::vector<Live> live_;
+    bool legacyDrawOrder_ = false;
+    // In welcher Reihenfolge die Engine die Shader registriert haette (beim
+    // Lesen des Effekts: Segment fuer Segment, Kindeffekte an ihrer Stelle).
+    // Gleiche Sortierstufe zeichnet sie in DIESER Reihenfolge (sortedIndex).
+    std::map<std::string, int> shaderRank_;
     // Die Flaechen aus play(), fuer Decals: CG_ImpactMark projiziert den
     // Abdruck auf die Flaeche, die hoechstens 20 Einheiten hinter ihm liegt.
     std::vector<sim::Plane> planes_;
@@ -589,6 +598,8 @@ private:
     void playInto(const Effect& effect, sim::Random& random,
                   const std::vector<bool>& enabledMask, const PlayContext& context,
                   int depth, float atMs, const camera::Vec3& atPosition);
+    // Fuellt shaderRank_ (siehe dort).
+    void rankShaders(const Effect& effect, const EffectLoader& loader);
     float durationMs_ = 0.0f;
     bool playing_ = false;
 };
