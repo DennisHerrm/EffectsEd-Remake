@@ -204,6 +204,8 @@ void App::drawMenuBar() {
         hint(Str::HintDrawRoom);
         ImGui::MenuItem(tr(Str::ViewDrawGrid), nullptr, &settings_.drawGrid);
         hint(Str::HintDrawGrid);
+        ImGui::MenuItem(tr(Str::ViewLegacyDrawOrder), nullptr, &settings_.legacyDrawOrder);
+        hint(Str::HintLegacyDrawOrder);
         if (ImGui::BeginMenu(tr(Str::ViewRoomStyle))) {
             const Str labels[] = {Str::RoomEnclosed, Str::RoomOpenSky, Str::RoomNone};
             for (int i = 0; i < 3; ++i) {

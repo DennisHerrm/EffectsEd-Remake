@@ -87,6 +87,7 @@ std::string Settings::toIni() const {
     out << "drawAxes=" << (drawAxes ? 1 : 0) << "\n";
     out << "drawRoom=" << (drawRoom ? 1 : 0) << "\n";
     out << "drawGrid=" << (drawGrid ? 1 : 0) << "\n";
+    out << "legacyDrawOrder=" << (legacyDrawOrder ? 1 : 0) << "\n";
     out << "drawWindVector=" << (drawWindVector ? 1 : 0) << "\n";
     out << "playSounds=" << (playSounds ? 1 : 0) << "\n";
     out << "worldScale=" << worldScale << "\n";
@@ -177,6 +178,7 @@ Settings Settings::fromIni(const std::string& text) {
         else if (key == "drawAxes") s.drawAxes = toBool();
         else if (key == "drawRoom") s.drawRoom = toBool();
         else if (key == "drawGrid") s.drawGrid = toBool();
+        else if (key == "legacyDrawOrder") s.legacyDrawOrder = toBool();
         // Alter Name derselben Sache — Einstellungsdateien von frueher
         // sollen weiter gelten.
         else if (key == "drawWireframe") s.drawGrid = toBool();

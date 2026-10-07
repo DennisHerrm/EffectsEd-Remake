@@ -139,6 +139,7 @@ das Original nur für Aufbau und Bedienung.
 | Raumlicht hellte den ganzen Raum auf (`1 − d/r` über den vollen Radius) | efxed falsch | behoben: `ProjectDlightTexture` nachgebaut (Hauptachse, `dUse`, Ebenenabstand, Profil von `gfx/2d/dlight.tga`, Fläche × (1 + Licht)); nachgeprüft: der Raum wird nicht mehr weiß |
 | Achsen 1 px, blass, hinter dem Effekt | efxed anders | behoben: 3 px, obenauf, wie `glLineWidth(3)` im Original |
 | Emitter mit Modell (md3) zeichnen nichts | efxed falsch | behoben: md3-Lader, Lage, Taumeln, Größe und Licht wie `CEmitter` |
+| Splitter hinter dem Feuerball heller als im Original (fighter_explosion2, Rückmeldung 07.10.2026) | Original weicht vom Spiel ab | Das Spiel zeichnet `GL_ONE GL_ONE` immer zuletzt (`SS_BLEND1`, tr_shader.cpp FinishShader), das Original nicht: gemessen mit zwei Testdateien liegt dort das spätere Segment oben. Schalter **View → Draw Order like old EffectsEd**, Voreinstellung wie das Original (Wunsch des Anwenders); aus = wie das Spiel. Gleiche Stufe ordnet in beiden Fällen nach Registrierung (Segment, Shaderliste, Kindeffekte), nicht nach „zuerst im Bild“ |
 | ScreenFlash bei ~150 ms fast weiß | efxed richtig | das Original lädt `$whiteimage` nicht und zeigt ein undurchsichtiges Rechteck |
 | Bildfolgen (`oneshotanimmap`) bleiben auf dem letzten Bild | efxed richtig | das Original spielt weiter |
 | Zylinder- und Abdruckgröße | efxed richtig | das Original zeichnet etwa 0,6× zu klein |

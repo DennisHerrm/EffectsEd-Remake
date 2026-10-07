@@ -1798,6 +1798,14 @@ void testLayout() {
     check(back.window.width == 1600 && back.window.maximized,
           "Fensterlage gespeichert");
     check(back.worldScale == 32.0f && !back.drawGrid, "Schalter gespeichert");
+    check(efx::layout::Settings{}.legacyDrawOrder,
+          "Zeichenreihenfolge: Voreinstellung wie das alte EffectsEd");
+    {
+        efx::layout::Settings off;
+        off.legacyDrawOrder = false;
+        check(!efx::layout::Settings::fromIni(off.toIni()).legacyDrawOrder,
+              "Zeichenreihenfolge wie im Spiel wird gespeichert");
+    }
     // Die Stelle der Windfahne wird gemerkt — sonst muesste man sie nach
     // jedem Start neu hinschieben.
     {
@@ -13802,6 +13810,53 @@ struct ShaderBook {
     }
 };
 
+// Rueckmeldung (07.10.2026, fighter_explosion2.efx): die Splitter sahen heller
+// aus als im alten EffectsEd. Das Spiel zeichnet GL_ONE GL_ONE spaeter
+// (SS_BLEND1, tr_shader.cpp FinishShader: "GL_ONE GL_ONE needs to come a bit
+// later"), das additive Leuchten liegt also immer ueber den Splittern. Das
+// alte EffectsEd kennt diese Regel nicht (gemessen mit zwei Testdateien: das
+// spaetere Segment liegt oben) — wie das urspruengliche Quake 3, das fuer alles
+// Gemischte nur SS_BLEND0 hat und nach der Registrierung ordnet.
+void testLegacyDrawOrder() {
+    using efx::particles::System;
+    std::cout << "== Rueckmeldung: Zeichenreihenfolge wie das alte EffectsEd ==\n";
+    const ShaderBook book(
+        "gfx/chunk\n{\n\t{\n\t\tmap gfx/chunk\n\t\tblendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA\n"
+        "\t\trgbGen vertex\n\t}\n}\n"
+        "gfx/glow\n{\n\t{\n\t\tmap gfx/glow\n\t\tblendFunc GL_ONE GL_ONE\n\t}\n}\n");
+    const auto segment = [](const char* name, const char* shader, const char* extra) {
+        return std::string("Particle\n{\n\tname ") + name + "\n\tflags useAlpha\n\tlife 5000\n" + extra +
+               "\tsize\n\t{\n\t\tstart 10\n\t}\n\tshaders\n\t[\n\t\t" + shader + "\n\t]\n}\n";
+    };
+    const std::string chunk = segment("Splitter", "gfx/chunk", "");
+    const std::string glow = segment("Leuchten", "gfx/glow", "");
+    const auto order = [&](const std::string& text, bool legacy, float atMs) {
+        System system;
+        system.setLegacyDrawOrder(legacy);
+        system.play(effectFrom(text));
+        std::string names;
+        for (const auto& g : system.build(atMs, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, book.lookup()).groups) {
+            names += (names.empty() ? "" : ",") + g.shader;
+        }
+        return names;
+    };
+    check(order(chunk + glow, false, 100.0f) == "gfx/chunk,gfx/glow", "Spiel: Leuchten nach dem Splitter");
+    check(order(glow + chunk, false, 100.0f) == "gfx/chunk,gfx/glow",
+          "Spiel: auch wenn das Leuchten das erste Segment ist (SS_BLEND1)");
+    check(order(chunk + glow, true, 100.0f) == "gfx/chunk,gfx/glow",
+          "alter Editor: Splitter zuerst -> Leuchten liegt oben (gemessen)");
+    check(order(glow + chunk, true, 100.0f) == "gfx/glow,gfx/chunk",
+          "alter Editor: Leuchten zuerst -> Splitter liegt oben (gemessen)");
+    // Registrierungsreihenfolge, nicht "wer zuerst im Bild ist": erscheint das
+    // erste Segment spaeter (delay), bleibt es trotzdem unten.
+    const std::string lateGlow = segment("Leuchten", "gfx/glow", "\tdelay 300\n");
+    const std::string lateChunk = segment("Splitter", "gfx/chunk", "\tdelay 300\n");
+    check(order(lateGlow + chunk, true, 400.0f) == "gfx/glow,gfx/chunk",
+          "alter Editor: spaeter erscheinendes erstes Segment bleibt unten");
+    check(order(lateChunk + glow, true, 400.0f) == "gfx/chunk,gfx/glow",
+          "alter Editor: dasselbe andersherum");
+}
+
 const efx::particles::DrawGroup* groupOf(const efx::particles::DrawList& list,
                                          const std::string& shader, int stage = 0) {
     for (const auto& g : list.groups) {
@@ -14954,6 +15009,7 @@ int main(int argc, char** argv) {
     testReplayDoesNotAccumulate();
     testUndefinedShaderBlend();
     testWorldScaleSwitch();
+    testLegacyDrawOrder();
     testCameraShake();
     testParallelForStress();
     testIndexOverflow();
