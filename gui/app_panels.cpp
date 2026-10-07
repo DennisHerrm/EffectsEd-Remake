@@ -1150,7 +1150,7 @@ void App::drawSegmentList(float width, float height) {
             ImGui::TextUnformatted(typeName(p.type));
 
             ImGui::TableSetColumnIndex(2);
-            ImGui::Text("%d", i + 1);
+            ImGui::Text("%d", segmentNumber(i));
 
             ImGui::TableSetColumnIndex(3);
             // Wie im Original: "%4.2f", bei einer Spanne "min - max".

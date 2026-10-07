@@ -685,6 +685,8 @@ private:
     void sortSegments(int column, bool ascending);
     // Anzeigename eines Segments: sein Name, sonst "Unnamed <Typ> <n>".
     std::string displayName(int index) const;
+    // Die Nummer, die Liste und Name zeigen.
+    int segmentNumber(int index) const;
     // Umbenennen in der Segmentliste (Doppelklick, F2, Kontextmenue).
     void startRename(int index);
     int renamingSegment_ = -1;

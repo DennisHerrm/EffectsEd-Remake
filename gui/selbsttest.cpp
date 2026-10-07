@@ -751,6 +751,9 @@ public:
     // Ein Segment ueber Effects > New Segment anlegen.
     static void neuesSegment(std::vector<Schritt>& s, PrimitiveType typ) {
         menue(s, Str::MenuEffects, Str::EffectsNewSegment);
+        // Erst warten, bis der Dialog da ist: unter Last kam er einmal ein
+        // Bild zu spaet, und der Klick ging ins Leere (MSVC/gl3, 07.10.2026).
+        s.push_back(warteBis("Neues-Segment-Dialog offen", [] { return dialogOffen("###newsegment"); }, 30));
         s.push_back(klick(typeName(typ), "###newsegment"));
         s.push_back(klick(tr(Str::MsgOk), "###newsegment"));
         s.push_back(warte(2));
@@ -2028,6 +2031,19 @@ public:
         s.push_back(klick(tr(Str::MsgOk), "###notice"));
         s.push_back(warte(2));
         s.push_back(pruefSchritt("und schliesst mit OK", [] { return !dialogOffen("###notice"); }));
+
+        // 23. Rueckmeldung (fighter_explosion2.efx neben dem Original): das
+        //     Original zaehlt Segmente ab 0 — Spalte "Segment" 0..11,
+        //     "Unnamed Emitter 7" —, efxed zaehlte ab 1.
+        frischesDokument(s);
+        neuesSegment(s, PrimitiveType::Particle);
+        neuesSegment(s, PrimitiveType::Emitter);
+        s.push_back(pruefSchritt("Segmente zaehlen ab 0 wie im Original (Spalte und Name)", [] {
+            diag::info("Segment-Spalte: " + std::to_string(app->segmentNumber(0)) + ", " +
+                       std::to_string(app->segmentNumber(1)) + "; Name: " + app->displayName(1));
+            return app->segmentNumber(0) == 0 && app->segmentNumber(1) == 1 &&
+                   app->displayName(1) == "Unnamed Emitter 1";
+        }));
 
         // 13. Letzte Dateien mit Umlaut im Pfad waren ausgegraut (MSVC) und
         //     liessen sich nicht oeffnen.

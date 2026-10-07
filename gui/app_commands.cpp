@@ -37,7 +37,14 @@ std::string App::displayName(int index) const {
     const Primitive& p = doc().effect.primitives[static_cast<size_t>(index)];
     if (!p.name.empty()) return p.name;
     return std::string(tr(Str::ListUnnamedPrefix)) + " " + typeName(p.type) + " " +
-           std::to_string(index + 1);
+           std::to_string(segmentNumber(index));
+}
+
+int App::segmentNumber(int index) const {
+    // Ab 0, wie das Original (Spalte "Segment" 0..11, "Unnamed Emitter 7"
+    // fuer das achte Segment). Vorher ab 1 — wer beide nebeneinander hatte,
+    // fand jedes Segment um eins verschoben (Rueckmeldung 07.10.2026).
+    return index;
 }
 
 bool App::hasSelection() const {
