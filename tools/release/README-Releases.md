@@ -11,6 +11,9 @@ die Engine (OpenJK als Vorlage).
    das neueste `EffectsEd-Remake-revNN.zip` herunterladen.
    Für **Windows 7 SP1 / 8.1** stattdessen `EffectsEd-Remake-win7-revNN.zip`.
 2. Entpacken und `EffectsEd-Remake/efxed.exe` starten (64 Bit).
+   Ohne Auspacken geht es auch: `EffectsEd-Remake-revNN.exe` (Windows 10/11)
+   bzw. `EffectsEd-Remake-win7-revNN.exe` (Windows 7 SP1 / 8.1) liegen
+   ab rev80 einzeln im Release — herunterladen und starten.
 3. Unter **Edit → Set Game Path…** den `base`-Ordner des Spiels eintragen
    (z. B. `…/Jedi Academy/GameData/base`). Für Mods wie Movie Duels den
    Mod-Ordner vorn und `base` als weiteren Ordner. Wer eine `.efx` direkt aus

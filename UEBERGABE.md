@@ -108,7 +108,10 @@ lief über Hilfsskripte außerhalb des Projekts; die Ergebnisse stehen in
      `output/EffectsEd-Remake-win7-revNN.zip`
      (NICHT Compress-Archive: PowerShell 5.1 schreibt Rückstriche ins zip)
   5. `gh release create v1.18.0-revNN output/EffectsEd-Remake-revNN.zip -R DennisHerrm/EffectsEd-Remake-Releases --title "EffectsEd-Remake 1.18.0-revNN" --notes-file notizen.md`,
-     danach `gh release upload … output/EffectsEd-Remake-win7-revNN.zip`.
+     danach `gh release upload … output/EffectsEd-Remake-win7-revNN.zip
+     output/EffectsEd-Remake-revNN.exe output/EffectsEd-Remake-win7-revNN.exe`
+     — die beiden exe auch einzeln, auf Wunsch des Anwenders. Der Updater
+     nimmt nur `.zip`, die exe stören ihn nicht (Test in `testUpdate`).
      Der Name `…-win7-revNN` ist Absicht: GitHub listet nach Namen, und
      rev78 nimmt das erste .zip — das normale muss vorn stehen.
   6. Den Quelltextstand markieren — der Commit, aus dem gebaut wurde:

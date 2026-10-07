@@ -3,10 +3,13 @@
 
     output/EffectsEd-Remake-revNN.zip        build/Release/efxed.exe (MSVC, Windows 10/11)
     output/EffectsEd-Remake-win7-revNN.zip   build-mingw/efxed.exe   (MinGW, ab Windows 7)
+    output/EffectsEd-Remake-revNN.exe        dieselben exe einzeln — der Anwender
+    output/EffectsEd-Remake-win7-revNN.exe   will sie auch ohne Auspacken laden
 
-Inhalt jeweils: EffectsEd-Remake/efxed.exe und EffectsEd-Remake/LIESMICH.txt
+Inhalt der zip jeweils: EffectsEd-Remake/efxed.exe und EffectsEd-Remake/LIESMICH.txt
 (aus tools/release/). Die Revision kommt aus include/efx/version.h. Fehlt der
-MinGW-Bau, entsteht nur das erste Paket.
+MinGW-Bau, entsteht nur das erste Paket. Die exe stoeren den Updater nicht:
+er nimmt nur .zip (src/update.cpp zipAsset, ebenso rev78).
 
 Warum ein eigenes Skript und nicht Compress-Archive: Windows PowerShell 5.1
 schreibt Rueckstriche in die Eintragsnamen ("EffectsEd-Remake\\efxed.exe").
@@ -26,6 +29,7 @@ Ablauf eines Releases (siehe UEBERGABE.md, "Releases"):
         -R DennisHerrm/EffectsEd-Remake-Releases --title "EffectsEd-Remake <Fassung>-rev<NN>" \\
         --notes-file <Notizen>.md
     gh release upload v<Fassung>-rev<NN> output/EffectsEd-Remake-win7-rev<NN>.zip \\
+        output/EffectsEd-Remake-rev<NN>.exe output/EffectsEd-Remake-win7-rev<NN>.exe \\
         -R DennisHerrm/EffectsEd-Remake-Releases
     git tag -a v<Fassung>-rev<NN> -m "..." && git push origin v<Fassung>-rev<NN>
     (und in die Notizen: Quelltext dieser Fassung -> .../EffectsEd-Remake/tree/v<Fassung>-rev<NN>)
@@ -76,13 +80,13 @@ def main() -> int:
         return 1
     if not package(exe, out_dir / f"EffectsEd-Remake-rev{revision}.zip", readme, full):
         return 1
-    shutil.copy2(exe, out_dir / "efxed.exe")
+    shutil.copy2(exe, out_dir / f"EffectsEd-Remake-rev{revision}.exe")
 
     win7 = ROOT / "build-mingw" / "efxed.exe"
     if win7.exists():
         if not package(win7, out_dir / f"EffectsEd-Remake-win7-rev{revision}.zip", readme, full):
             return 1
-        shutil.copy2(win7, out_dir / "efxed-win7.exe")
+        shutil.copy2(win7, out_dir / f"EffectsEd-Remake-win7-rev{revision}.exe")
     else:
         print("build-mingw/efxed.exe fehlt - kein Windows-7-Paket")
     print(f"Tag v{full}")

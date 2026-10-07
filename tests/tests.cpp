@@ -1210,6 +1210,25 @@ void testOriginalWriter() {
 // im Original wie hier —, aber die Beschreibung versprach "verlustfrei", und
 // niemand erfuhr davon. 69 von 380 mitgelieferten Dateien haben welche.
 // Jetzt sagt es der Leser, mit der Zeile des ersten.
+// Rueckmeldung eines Anwenders (07.10.2026, fighter_explosion2.efx neben dem
+// Original): das Original zaehlt Segmente ab 0 — Spalte "Segment", "Unnamed
+// Emitter 7" —, efxed ab 1. Die Meldungen der Pruefung muessen dieselbe
+// Nummer nennen wie die Liste, sonst sucht man das falsche Segment.
+void testOriginalSegmentNumbers() {
+    using namespace efx;
+    std::cout << "== Abgleich Original: Segmente zaehlen ab 0 ==\n";
+    Effect e;
+    Primitive p = freshPrimitive(PrimitiveType::Particle);
+    p.name = std::string(40, 'x');   // zu lang: die Pruefung meldet es
+    e.primitives.push_back(p);
+    bool nullte = false, erste = false;
+    for (const auto& d : validate(e)) {
+        if (d.message.find("Particle #0") != std::string::npos) nullte = true;
+        if (d.message.find("Particle #1") != std::string::npos) erste = true;
+    }
+    check(nullte && !erste, "das erste Segment heisst in den Meldungen #0, wie in der Liste des Originals");
+}
+
 void testOriginalComments() {
     using namespace efx;
     std::cout << "== Abgleich Original: Kommentare werden gemeldet ==\n";
@@ -1425,6 +1444,22 @@ void testUpdate() {
               "Windows-10-Fassung nimmt das Paket ohne -win7");
         check(old != nullptr && old->name == "EffectsEd-Remake-rev79-win7.zip",
               "Windows-7-Fassung nimmt das -win7-Paket");
+        // Seit rev80 haengen auch die nackten exe am Release (Wunsch des
+        // Anwenders, 07.10.2026). GitHub listet sie VOR den zip ("e" < "z"):
+        // der Updater darf sie nicht nehmen.
+        Release withExe;
+        check(parseRelease(R"({"tag_name": "rev80", "assets": [
+            {"name": "EffectsEd-Remake-rev80.exe", "browser_download_url": "https://x/w10.exe"},
+            {"name": "EffectsEd-Remake-rev80.zip", "browser_download_url": "https://x/w10.zip"},
+            {"name": "EffectsEd-Remake-win7-rev80.exe", "browser_download_url": "https://x/w7.exe"},
+            {"name": "EffectsEd-Remake-win7-rev80.zip", "browser_download_url": "https://x/w7.zip"}]})",
+                           withExe),
+              "Release mit zip und exe gelesen");
+        const Asset* zip10 = zipAsset(withExe);
+        const Asset* zip7 = zipAsset(withExe, true);
+        check(zip10 && zip10->name == "EffectsEd-Remake-rev80.zip" && zip7 &&
+                  zip7->name == "EffectsEd-Remake-win7-rev80.zip",
+              "die mitgelieferten exe stoeren den Updater nicht (er nimmt nur .zip)");
         // Die Namensregel der Pakete: GitHub sortiert nach Namen, und rev78
         // nimmt das erste .zip. Das normale Paket muss also vorn stehen.
         const std::string w10 = "EffectsEd-Remake-rev100.zip";
@@ -14852,6 +14887,7 @@ int main(int argc, char** argv) {
     testOpenJkSimulation();
     testOpenJkShaderOrder();
     testOriginalWriter();
+    testOriginalSegmentNumbers();
     testOriginalComments();
     testOriginalCurveFlags();
     testOpenJkTgaFormats();

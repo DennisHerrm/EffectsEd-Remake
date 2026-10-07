@@ -100,8 +100,10 @@ std::vector<Diagnostic> validate(const Effect& effect, Dialect target) {
     for (size_t i = 0; i < effect.primitives.size(); ++i) {
         const Primitive& p = effect.primitives[i];
         const SegmentTag tag(out, i);
+        // "#0" fuer das erste Segment: dieselbe Nummer wie in der Liste und
+        // im Original (Rueckmeldung 07.10.2026).
         const std::string where =
-            std::string(typeName(p.type)) + " #" + std::to_string(i + 1) +
+            std::string(typeName(p.type)) + " #" + std::to_string(i) +
             (p.name.empty() ? std::string{} : " (\"" + p.name + "\")");
 
         // FX_MAX_PRIM_NAME ist 32 einschliesslich Nullbyte.
@@ -469,7 +471,7 @@ std::vector<Diagnostic> validateShaderNames(
         const Primitive& p = effect.primitives[i];
         const SegmentTag tag(out, i);
         const std::string where =
-            std::string(typeName(p.type)) + " #" + std::to_string(i + 1) +
+            std::string(typeName(p.type)) + " #" + std::to_string(i) +
             (p.name.empty() ? std::string{} : " (\"" + p.name + "\")");
 
         for (const auto& name : p.shaders) {
@@ -490,7 +492,7 @@ std::vector<Diagnostic> validateAgainstShaders(const Effect& effect,
         const Primitive& p = effect.primitives[i];
         const SegmentTag tag(out, i);
         const std::string where =
-            std::string(typeName(p.type)) + " #" + std::to_string(i + 1) +
+            std::string(typeName(p.type)) + " #" + std::to_string(i) +
             (p.name.empty() ? std::string{} : " (\"" + p.name + "\")");
 
         for (const auto& name : p.shaders) {
