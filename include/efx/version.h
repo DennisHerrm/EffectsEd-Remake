@@ -34,7 +34,7 @@ inline constexpr const char* kVersion = "1.18.0";
 //
 // tools/bump_revision.py erhoeht sie; von Hand anzufassen ist sie nicht
 // gedacht.
-inline constexpr int kRevision = 79;
+inline constexpr int kRevision = 80;
 
 // "1.0.8-rev42" — fuer Dateinamen, Protokoll und Dialoge.
 inline std::string versionWithRevision() {
