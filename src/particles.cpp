@@ -2337,6 +2337,10 @@ DrawList System::build(float nowMs, const camera::Vec3& right,
                 // Ein Licht zeichnet NICHTS. CLight::Draw ist ein einziger
                 // Aufruf: AddLightToScene( mOrigin1, mRefEnt.radius, r, g, b ).
                 // Es erhellt die Umgebung — die Liste geht an den Raum.
+                //
+                // RE_AddLightToScene steigt bei intensity <= 0 aus (rd-vanilla
+                // und rd-rend2): ein Licht der Groesse 0 gibt es im Spiel nicht.
+                if (!(size > 0.0f)) break;
                 DynamicLight light;
                 light.origin = position;
                 light.radius = size;

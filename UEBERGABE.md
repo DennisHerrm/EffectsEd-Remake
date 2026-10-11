@@ -100,7 +100,10 @@ lief über Hilfsskripte außerhalb des Projekts; die Ergebnisse stehen in
   2. bauen, `efxtests`, Selbsttest `alles` unter d3d11 und gl3
   3. Windows-7-Fassung: MinGW-w64 (WinLibs, **MSVCRT**-Variante, nicht UCRT)
      in einen KURZEN Pfad legen — unter einem langen Pfad findet GCC seine
-     eigenen Köpfe nicht (260-Zeichen-Grenze, `bits/os_defines.h`). Dann
+     eigenen Köpfe nicht (260-Zeichen-Grenze, `bits/os_defines.h`). **Nicht
+     nach `%TEMP%`:** Windows räumt dort auf, und die ausgepackten Dateien
+     tragen die alten Zeitstempel des Archivs — zweimal waren GCC-Köpfe bzw.
+     CMake-Module verschwunden. Liegt jetzt unter `C:\Users\<name>\efxmgw`. Dann
      `cmake -S . -B build-mingw -G Ninja -DCMAKE_BUILD_TYPE=Release` mit den
      Schaltern aus `build_mingw.bat`, `cmake --build build-mingw`,
      `python tools/check_win7_exe.py build-mingw/efxed.exe`.

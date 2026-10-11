@@ -3614,10 +3614,56 @@ public:
             app->showEditor();
         }));
         s.push_back(warte(3));
-        for (float ms : {20.0f, 150.0f, 600.0f, 1500.0f}) {
-            s.push_back(tu("Zeit " + std::to_string(static_cast<int>(ms)), [ms] {
+        // Zum Nachstellen von Spielsituationen (Vergleich zweier Fassungen):
+        //   EFXED_ZEITEN=100,300,...   andere Zeitpunkte
+        //   EFXED_JEDES_BILD=1         in jedem Bild neu starten (wie
+        //                              cg_players.cpp die Machtblitze)
+        //   EFXED_SEED=n               anderer Zufall
+        //   EFXED_AUSRICHTUNG=0|1|2    nach oben / seitlich / nach unten
+        std::vector<float> zeiten = {20.0f, 150.0f, 600.0f, 1500.0f};
+        if (const char* z = std::getenv("EFXED_ZEITEN"); z && z[0]) {
+            zeiten.clear();
+            std::stringstream liste(z);
+            std::string teil;
+            while (std::getline(liste, teil, ',')) {
+                if (!teil.empty()) zeiten.push_back(std::stof(teil));
+            }
+        }
+        //   EFXED_SEEDS=1,2,3          mehrere Zufallslaeufe in einem Lauf
+        //                              (Fotos heissen dann ..._s<seed>_<ms>)
+        std::vector<unsigned> seeds = {0u};
+        if (const char* sl = std::getenv("EFXED_SEEDS"); sl && sl[0]) {
+            seeds.clear();
+            std::stringstream liste(sl);
+            std::string teil;
+            while (std::getline(liste, teil, ',')) {
+                if (!teil.empty()) seeds.push_back(static_cast<unsigned>(std::stoul(teil)));
+            }
+        }
+        for (unsigned seed : seeds)
+        for (float ms : zeiten) {
+            const std::string fotoName = "e_" + datei + (seed ? "_s" + std::to_string(seed) : std::string()) +
+                                         "_" + std::to_string(static_cast<int>(ms));
+            s.push_back(tu("Zeit " + std::to_string(static_cast<int>(ms)), [ms, seed] {
                 app->pressStop();
+                if (seed) app->fixedSeed_ = seed;
+                if (const char* j = std::getenv("EFXED_JEDES_BILD"); j && j[0] == '1') {
+                    app->playback_.respawnEveryFrame = true;
+                    app->doc().clock.setEndMode(timeline::EndMode::Repeat);
+                }
+                if (const char* sd = std::getenv("EFXED_SEED"); sd && sd[0]) {
+                    app->fixedSeed_ = static_cast<unsigned>(std::stoul(sd));
+                }
+                if (const char* a = std::getenv("EFXED_AUSRICHTUNG"); a && a[0]) {
+                    app->settings_.orientation = std::atoi(a);
+                }
                 app->startPlayback();
+                // Mit Nachlegen: die Generationen bis zu diesem Zeitpunkt
+                // muessen wirklich angelegt werden, Bild fuer Bild — solange
+                // die Uhr laeuft, sonst legt advanceSpawnSchedule nichts nach.
+                if (app->scheduleActive_) {
+                    for (float t = 0.0f; t < ms; t += 1000.0f / 60.0f) app->advanceSpawnSchedule(t);
+                }
                 app->doc().clock.stop();
                 app->doc().clock.scrubTo(ms);
                 // Vergleichbar machen: Kamera zurueck, Wackeln aus (laeuft
@@ -3631,7 +3677,7 @@ public:
                 return app->texturesInFlight_.empty() && app->readyTextures_.empty();
             }, 600));
             s.push_back(warte(2));
-            s.push_back(foto("e_" + datei + "_" + std::to_string(static_cast<int>(ms))));
+            s.push_back(foto(fotoName));
             s.push_back(tu("messen", [name, ms] {
                 char z[512];
                 std::snprintf(z, sizeof(z), "%s\t%.0f\t%d\t%d\t%.2f\t%.2f\t%.2f\t%d\n", name.c_str(),

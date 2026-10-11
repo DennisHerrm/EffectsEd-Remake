@@ -13817,6 +13817,23 @@ struct ShaderBook {
 // alte EffectsEd kennt diese Regel nicht (gemessen mit zwei Testdateien: das
 // spaetere Segment liegt oben) — wie das urspruengliche Quake 3, das fuer alles
 // Gemischte nur SS_BLEND0 hat und nach der Registrierung ordnet.
+// Movie-Duels-Machtblitze (11.10.2026): RE_AddLightToScene steigt bei
+// intensity <= 0 sofort aus (rd-vanilla und rd-rend2 tr_scene.cpp) — ein
+// Light-Segment mit Groesse 0 erzeugt im Spiel KEIN Licht. efxed gab es
+// trotzdem an den Raum weiter und zaehlte es mit.
+void testZeroRadiusLight() {
+    using efx::particles::System;
+    std::cout << "== Abgleich OpenJK: Licht mit Radius 0 ==\n";
+    const auto lichter = [](const char* groesse) {
+        System system;
+        system.play(effectFrom(std::string("Light\n{\n\tlife 100\n\tsize\n\t{\n\t\tstart ") + groesse +
+                               "\n\t}\n}\n"));
+        return system.build(50.0f, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}).lights.size();
+    };
+    check(lichter("5") == 1, "Licht mit Radius 5: ein dynamisches Licht");
+    check(lichter("0") == 0, "Licht mit Radius 0: keines (RE_AddLightToScene: intensity <= 0)");
+}
+
 void testLegacyDrawOrder() {
     using efx::particles::System;
     std::cout << "== Rueckmeldung: Zeichenreihenfolge wie das alte EffectsEd ==\n";
@@ -15009,6 +15026,7 @@ int main(int argc, char** argv) {
     testReplayDoesNotAccumulate();
     testUndefinedShaderBlend();
     testWorldScaleSwitch();
+    testZeroRadiusLight();
     testLegacyDrawOrder();
     testCameraShake();
     testParallelForStress();
