@@ -65,6 +65,7 @@ add_library(efxcore STATIC
     src/tiles.cpp
     src/sound.cpp
     src/update.cpp
+    src/changelog.cpp
     src/particles.cpp
     src/md3.cpp
     src/inflate.cpp

@@ -96,7 +96,11 @@ lief über Hilfsskripte außerhalb des Projekts; die Ergebnisse stehen in
 - **Was er nie anfasst:** Pfade mit `..`, absolute Pfade, Dateien `efxed_*`
   (Einstellungen, Schalter für tragbar) und `*.log`. Nur HTTPS.
 - **Ein Release machen:**
-  1. `python tools/bump_revision.py` (zieht `gui/efxed.rc` mit)
+  1. `python tools/bump_revision.py` (zieht `gui/efxed.rc` mit) und oben in
+     `src/changelog.cpp` einen Eintrag für die neue Revision anlegen — in
+     allen vier Sprachen, je gleich viele Stichpunkte. Ohne ihn fällt
+     `testChangelog` durch. Das Programm zeigt die Liste unter
+     Hilfe → Änderungen und nach einem Update einmal von selbst.
   2. bauen, `efxtests`, Selbsttest `alles` unter d3d11 und gl3
   3. Windows-7-Fassung: MinGW-w64 (WinLibs, **MSVCRT**-Variante, nicht UCRT)
      in einen KURZEN Pfad legen — unter einem langen Pfad findet GCC seine

@@ -112,6 +112,10 @@ struct Settings {
     // fragen (gui/update_win32.cpp). Gefragt wird nur; geladen und
     // installiert wird erst auf Knopfdruck.
     bool checkUpdates = true;
+    // Bis zu welcher Revision die Aenderungsliste schon gezeigt wurde. Ist die
+    // laufende Fassung neuer, oeffnet sie sich einmal von selbst
+    // (changelog::showAfterStart). Fassungen vor rev81 schrieben das nicht: 0.
+    int lastChangelogRevision = 0;
 
     // 0 ohne Textur, 1 Ziegel, 2 Erde, 3 Putz.
     //

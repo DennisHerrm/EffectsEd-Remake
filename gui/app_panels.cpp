@@ -345,6 +345,8 @@ void App::drawMenuBar() {
         if (ImGui::MenuItem(tr(Str::HelpCheckUpdates))) updater::check(false);
         ImGui::MenuItem(tr(Str::HelpUpdateOnStart), nullptr, &settings_.checkUpdates);
         ImGui::Separator();
+        if (ImGui::MenuItem(tr(Str::HelpChangelog))) showChangelog_ = true;
+        hint(Str::HintChangelog);
         if (ImGui::MenuItem(tr(Str::HelpAbout))) showAboutDialog_ = true;
         hint(Str::HintAbout);
         ImGui::EndMenu();

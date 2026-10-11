@@ -60,6 +60,10 @@ const Entry kTable[] = {
     {"Help", "Hilfe", "帮助", "ヘルプ"},  // MenuHelp
     {"User Guide", "Anleitung", "用户指南", "ユーザーガイド"},  // HelpManual
     {"About", "Über", "关于", "バージョン情報"},  // HelpAbout
+    {"Changelog...", "Änderungen...", "更新日志...", "更新履歴..."},  // HelpChangelog
+    {"Changelog", "Änderungen", "更新日志", "更新履歴"},  // DialogChangelog
+    {"this version", "diese Fassung", "当前版本", "このバージョン"},  // ChangelogThisVersion
+    {"What is new in each version", "Was in jeder Fassung neu ist", "每个版本的新内容", "各バージョンの新機能"},  // HintChangelog
     {"World Scale", "Weltmaßstab", "世界比例", "ワールドスケール"},  // ToolWorldScale
     {"Time Scale", "Zeitmaßstab", "时间比例", "タイムスケール"},  // ToolTimeScale
     {"Repeat Rate", "Wiederholrate", "循环间隔", "繰り返し間隔"},  // ToolRepeatRate

@@ -62,6 +62,10 @@ S = [
  ("MenuHelp","Help","Hilfe","帮助","ヘルプ"),
  ("HelpManual","User Guide","Anleitung","用户指南","ユーザーガイド"),
  ("HelpAbout","About","Über","关于","バージョン情報"),
+ ("HelpChangelog","Changelog...","Änderungen...","更新日志...","更新履歴..."),
+ ("DialogChangelog","Changelog","Änderungen","更新日志","更新履歴"),
+ ("ChangelogThisVersion","this version","diese Fassung","当前版本","このバージョン"),
+ ("HintChangelog","What is new in each version","Was in jeder Fassung neu ist","每个版本的新内容","各バージョンの新機能"),
 
  # --- Werkzeugleiste ---
  ("ToolWorldScale","World Scale","Weltmaßstab","世界比例","ワールドスケール"),

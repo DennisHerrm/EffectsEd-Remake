@@ -34,6 +34,8 @@ Beides ist hier behoben.
 - Texturen (TGA, JPEG, PNG) und Klänge (WAV, MP3)
 - Zeitleiste zum Spulen und Einzelbild
 - vier Sprachen, sechs Themen, Direct3D 11 und OpenGL 3.3
+- automatische Updates und eine Änderungsliste (Hilfe → Änderungen) in allen
+  vier Sprachen, die sich nach einem Update einmal von selbst öffnet
 
 ## Bauen
 

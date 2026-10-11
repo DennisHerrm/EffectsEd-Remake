@@ -323,6 +323,7 @@ void buildFonts(float dpiScale, bool fullCjk) {
             0x2010, 0x2027,   // Binde-, Halbgeviert-, Geviertstrich,
                               // Anfuehrungszeichen, Auslassungspunkte
             0x20AC, 0x20AC,   // Eurozeichen
+            0x2190, 0x2193,   // Pfeile (Aenderungsliste: "Hilfe → Aenderungen")
             0,
         };
         if (!addFontIfPresent(io, "C:\\Windows\\Fonts\\segoeui.ttf", size,

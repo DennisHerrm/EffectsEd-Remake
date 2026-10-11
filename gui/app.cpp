@@ -292,12 +292,14 @@ void App::startup() {
     bool ok = false;
     const std::string path = paths::settingsPath();
     const std::string text = readWholeFile(path, ok);
-    if (ok && !text.empty()) {
+    const bool settingsExisted = ok && !text.empty();
+    if (settingsExisted) {
         settings_ = layout::Settings::fromIni(text);
         diag::info("from " + path);
     } else {
         diag::info("no existing file, using defaults");
     }
+    noteChangelogOnStart(settingsExisted);
 
     // Mit welcher Ansicht wird geoeffnet — Editor oder Bibliothek.
     //

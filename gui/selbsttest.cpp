@@ -54,6 +54,8 @@
 #include "efx/theme.h"
 #include "imgui.h"
 #include "imgui_internal.h"
+#include "efx/version.h"
+#include "efx/changelog.h"
 #include "testmarke.h"
 #include "update.h"
 #include "theme_imgui.h"
@@ -1563,6 +1565,78 @@ public:
     //
     // Jede Pruefung hier schlug VOR der Behebung fehl; sie bleiben, damit die
     // Fehler nicht wiederkommen.
+    // Ein normales (nicht modales) Fenster, das in diesem Bild gezeichnet wurde.
+    static bool fensterOffen(const std::string& kennung) {
+        ImGuiContext& g = *GImGui;
+        for (ImGuiWindow* w : g.Windows) {
+            if (w && (w->Active || w->WasActive) && !w->Hidden &&
+                std::string(w->Name).find(kennung) != std::string::npos) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // --- Aenderungsliste ---------------------------------------------------
+    //
+    // Hilfe -> Aenderungen oeffnet ein Fenster; in jeder der vier Sprachen
+    // steht es mit uebersetztem Titel da (ueber das echte Sprachmenue, damit
+    // auch die Schrift neu gebaut wird). Nach einem Update oeffnet es sich
+    // einmal von selbst, danach nicht mehr.
+    static std::vector<Schritt> teilChangelog() {
+        std::vector<Schritt> s;
+        s.push_back(teil("changelog"));
+        s.push_back(pruefSchritt("beim Start (frische Einstellungen) nicht von selbst offen",
+                                 [] { return !app->showChangelog_ && !fensterOffen("###changelog"); }));
+        menue(s, Str::MenuHelp, Str::HelpChangelog);
+        s.push_back(warteBis("Aenderungsliste offen", [] { return fensterOffen("###changelog"); }, 30));
+        for (const auto& l : i18n::languages()) {
+            const std::string name = l.nativeName;
+            const std::string code = l.code;
+            const i18n::Language sprache = l.language;
+            s.push_back(klickTr(Str::MenuView, "##main"));
+            s.push_back(klickTr(Str::ViewLanguage, "##Menu"));
+            s.push_back(klick(name, "##Menu"));
+            s.push_back(menuesZu());
+            s.push_back(warte(4));
+            s.push_back(pruefSchritt("Aenderungsliste auf " + code + ": offen, in dieser Sprache", [sprache] {
+                const auto erwartet = changelog::points(changelog::entries().front(), sprache);
+                diag::info("Aenderungsliste: " + app->changelogDrawnFirst_);
+                return i18n::currentLanguage() == sprache && fensterOffen("###changelog") &&
+                       app->changelogDrawnLanguage_ == sprache && !erwartet.empty() &&
+                       app->changelogDrawnFirst_ == erwartet.front();
+            }));
+            s.push_back(fensterFoto("changelog_" + code));
+        }
+        s.push_back(tu("zurueck auf Englisch", [] {
+            i18n::setLanguage(i18n::Language::English);
+            app->settings_.languageCode = "en";
+        }));
+        s.push_back(tu("schliessen", [] { app->showChangelog_ = false; }));
+        s.push_back(warte(3));
+        s.push_back(pruefSchritt("geschlossen", [] { return !fensterOffen("###changelog"); }));
+
+        // Nach einem Update (Einstellungen von rev80): einmal von selbst.
+        s.push_back(tu("Start nach Update von rev" + std::to_string(kRevision - 1) + " nachstellen", [] {
+            app->settings_.lastChangelogRevision = kRevision - 1;
+            app->noteChangelogOnStart(true);
+        }));
+        s.push_back(warte(3));
+        s.push_back(pruefSchritt("nach einem Update oeffnet sich die Aenderungsliste von selbst", [] {
+            return app->showChangelog_ && fensterOffen("###changelog") &&
+                   app->settings_.lastChangelogRevision == kRevision;
+        }));
+        s.push_back(tu("schliessen und erneut starten", [] {
+            app->showChangelog_ = false;
+            app->noteChangelogOnStart(true);
+        }));
+        s.push_back(warte(3));
+        s.push_back(pruefSchritt("beim naechsten Start nicht noch einmal", [] {
+            return !app->showChangelog_ && !fensterOffen("###changelog");
+        }));
+        return s;
+    }
+
     static std::vector<Schritt> teilFehlersuche() {
         std::vector<Schritt> s;
         s.push_back(teil("fehlersuche"));
@@ -3952,6 +4026,7 @@ public:
             {"archiv", &teilArchiv},
             {"update", &teilUpdate},
             {"fehlersuche", &teilFehlersuche},
+            {"changelog", &teilChangelog},
             {"felder", &teilFelder},
         };
         // Nicht in "alles": dauert mit allen Effekten mehrere Minuten.

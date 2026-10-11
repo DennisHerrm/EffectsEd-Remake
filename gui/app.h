@@ -810,6 +810,17 @@ private:
     float wallColour_[3] = {0.4f, 0.7f, 0.42f};
     float backgroundColour_[3] = {0.08f, 0.08f, 0.09f};
     bool showAboutDialog_ = false;
+    // Die Aenderungsliste (Hilfe -> Aenderungen). Ein normales Fenster, kein
+    // Dialog: man soll daneben weiterarbeiten koennen.
+    bool showChangelog_ = false;
+    void drawChangelogWindow();
+    // Was zuletzt gezeichnet wurde (fuer den Selbsttest): Sprache und erster
+    // Stichpunkt.
+    i18n::Language changelogDrawnLanguage_ = i18n::Language::English;
+    std::string changelogDrawnFirst_;
+    // Beim Start: nach einem Update die Liste einmal von selbst zeigen und
+    // die laufende Revision als gezeigt merken.
+    void noteChangelogOnStart(bool settingsExisted);
     bool showLogWindow_ = false;
 
     // Zustand der Wiedergabe. Die eigentliche Vorschau kommt spaeter; die

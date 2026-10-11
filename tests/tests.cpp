@@ -12,6 +12,7 @@
 #include <iostream>
 #include <sstream>
 
+#include "efx/changelog.h"
 #include "efx/io.h"
 #include "efx/shader.h"
 #include "efx/theme.h"
@@ -13821,6 +13822,57 @@ struct ShaderBook {
 // intensity <= 0 sofort aus (rd-vanilla und rd-rend2 tr_scene.cpp) — ein
 // Light-Segment mit Groesse 0 erzeugt im Spiel KEIN Licht. efxed gab es
 // trotzdem an den Raum weiter und zaehlte es mit.
+// Die Aenderungsliste (Hilfe -> Aenderungen): in allen vier Sprachen, je
+// Fassung gleich viele Stichpunkte, die neueste Fassung zuerst — und sie MUSS
+// die laufende sein. Ein Release ohne Eintrag faellt hier durch.
+void testChangelog() {
+    using namespace efx;
+    using i18n::Language;
+    std::cout << "== Aenderungsliste ==\n";
+    const auto& alle = changelog::entries();
+    check(!alle.empty() && alle.front().revision == kRevision,
+          "der neueste Eintrag ist die laufende Fassung (rev" + std::to_string(kRevision) + ")");
+    bool absteigend = true, datum = true, vorhanden = true, gleichviele = true, uebersetzt = true;
+    const Language sprachen[] = {Language::English, Language::German, Language::ChineseSimplified,
+                                 Language::Japanese};
+    for (size_t i = 0; i < alle.size(); ++i) {
+        const auto& e = alle[i];
+        if (i > 0 && e.revision >= alle[i - 1].revision) absteigend = false;
+        const std::string d = e.date;
+        if (d.size() != 10 || d[4] != '-' || d[7] != '-') datum = false;
+        const auto englisch = changelog::points(e, Language::English);
+        for (Language l : sprachen) {
+            const auto p = changelog::points(e, l);
+            if (std::string(e.text[static_cast<int>(l)]).empty() || p.empty()) vorhanden = false;
+            if (p.size() != englisch.size()) gleichviele = false;
+            if (l != Language::English && !p.empty() && !englisch.empty() && p[0] == englisch[0]) {
+                uebersetzt = false;
+            }
+            for (const auto& punkt : p) {
+                if (punkt.find('\r') != std::string::npos) vorhanden = false;
+            }
+        }
+    }
+    check(absteigend, "die neueste Fassung zuerst, keine doppelt");
+    check(datum, "jedes Datum als JJJJ-MM-TT");
+    check(vorhanden, "jede Fassung in allen vier Sprachen");
+    check(gleichviele, "je Fassung in jeder Sprache gleich viele Stichpunkte");
+    check(uebersetzt, "die Sprachen sind wirklich uebersetzt, nicht Englisch kopiert");
+
+    // Einmal von selbst nach einem Update — nicht bei einer Neuinstallation,
+    // nicht ein zweites Mal.
+    check(!changelog::showAfterStart(false, 0, 81), "Neuinstallation: nicht von selbst");
+    check(changelog::showAfterStart(true, 0, 81), "Update von einer Fassung ohne Merker: einmal zeigen");
+    check(changelog::showAfterStart(true, 80, 81), "Update von rev80: einmal zeigen");
+    check(!changelog::showAfterStart(true, 81, 81), "schon gezeigt: nicht noch einmal");
+    {
+        efx::layout::Settings s;
+        s.lastChangelogRevision = 81;
+        check(efx::layout::Settings::fromIni(s.toIni()).lastChangelogRevision == 81,
+              "der Merker wird gespeichert");
+    }
+}
+
 void testZeroRadiusLight() {
     using efx::particles::System;
     std::cout << "== Abgleich OpenJK: Licht mit Radius 0 ==\n";
@@ -15026,6 +15078,7 @@ int main(int argc, char** argv) {
     testReplayDoesNotAccumulate();
     testUndefinedShaderBlend();
     testWorldScaleSwitch();
+    testChangelog();
     testZeroRadiusLight();
     testLegacyDrawOrder();
     testCameraShake();

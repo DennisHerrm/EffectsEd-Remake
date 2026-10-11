@@ -141,7 +141,10 @@ def check_core():
     # Vorher fiel das nicht auf, weil die zweite Regel (Zeichenketten, die wie
     # ein Satz aussehen) noch nicht existierte. Seit die Pruefliste
     # uebersetzte Saetze enthaelt, meldete sie 15 davon.
-    GENERATED = {"i18n.cpp"}
+    #
+    # changelog.cpp ebenso: die Aenderungsliste steht dort schon in allen
+    # vier Sprachen, und testChangelog prueft, dass keine fehlt.
+    GENERATED = {"i18n.cpp", "changelog.cpp"}
     for path in sorted((ROOT / "src").glob("*.cpp")):
         if path.name in GENERATED:
             continue

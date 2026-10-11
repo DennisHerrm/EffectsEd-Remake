@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cctype>
 
+#include "efx/changelog.h"
 #include "efx/help.h"
 #include "app_shared.h"
 
@@ -970,6 +971,51 @@ void App::drawDriverInfoDialog() {
     ImGui::EndPopup();
 }
 
+void App::noteChangelogOnStart(bool settingsExisted) {
+    if (changelog::showAfterStart(settingsExisted, settings_.lastChangelogRevision, kRevision)) {
+        showChangelog_ = true;
+        diag::info("changelog: updated from rev" + std::to_string(settings_.lastChangelogRevision) +
+                   ", showing what is new");
+    }
+    settings_.lastChangelogRevision = kRevision;
+}
+
+void App::drawChangelogWindow() {
+    // Was in jeder Fassung neu ist — in der eingestellten Sprache. Wechselt
+    // man die Sprache bei offenem Fenster, wechselt der Text mit.
+    if (!showChangelog_) return;
+    const float em = ImGui::GetFontSize();
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_FirstUseEver,
+                            ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(em * 40.0f, em * 28.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(em * 20.0f, em * 10.0f), ImVec2(FLT_MAX, FLT_MAX));
+    if (ImGui::Begin((std::string(tr(Str::DialogChangelog)) + "###changelog").c_str(), &showChangelog_)) {
+        const i18n::Language language = i18n::currentLanguage();
+        const auto& alle = changelog::entries();
+        changelogDrawnLanguage_ = language;
+        changelogDrawnFirst_.clear();
+        for (size_t i = 0; i < alle.size(); ++i) {
+            const auto& e = alle[i];
+            std::string kopf = "rev" + std::to_string(e.revision) + "   " + e.date;
+            if (e.revision == kRevision) kopf += "   (" + std::string(tr(Str::ChangelogThisVersion)) + ")";
+            kopf += "###rev" + std::to_string(e.revision);
+            // Die laufende Fassung aufgeklappt, die aelteren zu.
+            ImGui::SetNextItemOpen(i == 0, ImGuiCond_Appearing);
+            if (ImGui::CollapsingHeader(kopf.c_str())) {
+                ImGui::PushTextWrapPos(0.0f);
+                for (const std::string& punkt : changelog::points(e, language)) {
+                    if (changelogDrawnFirst_.empty()) changelogDrawnFirst_ = punkt;
+                    ImGui::Bullet();
+                    ImGui::TextUnformatted(punkt.c_str());
+                }
+                ImGui::PopTextWrapPos();
+                ImGui::Spacing();
+            }
+        }
+    }
+    ImGui::End();
+}
+
 void App::drawDialogs() {
     // "Jetzt neu starten" im Update-Fenster: erst regulaer beenden (mit der
     // Frage nach ungespeicherten Aenderungen), dann startet main die neue .exe.
@@ -982,6 +1028,7 @@ void App::drawDialogs() {
     drawNoticeDialog();
 
     drawDriverInfoDialog();
+    drawChangelogWindow();
     drawSunDialog();
     drawWindDialog();
     drawPickerDialog();
