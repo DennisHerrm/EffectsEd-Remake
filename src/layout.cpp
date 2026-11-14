@@ -114,7 +114,8 @@ std::string Settings::toIni() const {
     out << "openLibraryOnStart=" << (openLibraryOnStart ? 1 : 0) << "\n";
     out << "segmentRowHeight=" << segmentRowHeight << "\n";
     out << "preRoll=" << (preRoll ? 1 : 0) << "\n";
-    out << "gridOnWalls=" << (gridOnWalls ? 1 : 0) << "\n";
+    out << "gridOverRoom=" << (gridOverRoom ? 1 : 0) << "\n";
+    out << "invertMouseY=" << (invertMouseY ? 1 : 0) << "\n";
     out << "roomTexture=" << roomTexture << "\n";
     out << "effectTextured=" << (effectTextured ? 1 : 0) << "\n";
     out << "effectWireframe=" << (effectWireframe ? 1 : 0) << "\n";
@@ -209,7 +210,9 @@ Settings Settings::fromIni(const std::string& text) {
         else if (key == "openLibraryOnStart") s.openLibraryOnStart = toBool();
         else if (key == "segmentRowHeight") s.segmentRowHeight = toFloat();
         else if (key == "preRoll") s.preRoll = toBool();
-        else if (key == "gridOnWalls") s.gridOnWalls = toBool();
+        // "gridOnWalls" (alt) hatte keine Wirkung und wird nicht uebernommen.
+        else if (key == "gridOverRoom") s.gridOverRoom = toBool();
+        else if (key == "invertMouseY") s.invertMouseY = toBool();
         else if (key == "roomTexture") s.roomTexture = toInt();
         else if (key == "effectRenderMode") {
             // Alte Einstellungsdateien: eine Art aus dreien.

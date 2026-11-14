@@ -336,6 +336,7 @@ public:
         context_->PSSetShader(pixelShader_.Get(), nullptr, 0);
         resetPerViewState();
         setBlend(Blend::Opaque);
+        offset_ = DepthOffset::None;
         setCulling(Cull::None);
         setFill(Fill::Solid);
     }
@@ -356,6 +357,7 @@ public:
         context_->PSSetShader(pixelShader_.Get(), nullptr, 0);
         resetPerViewState();
         setBlend(Blend::Opaque);
+        offset_ = DepthOffset::None;
         setCulling(Cull::None);
         setFill(Fill::Solid);
     }
@@ -513,6 +515,11 @@ public:
     void setDepthTest(bool enabled) override {
         depthTest_ = enabled;
         applyDepthState();
+    }
+
+    void setDepthOffset(DepthOffset mode) override {
+        offset_ = mode;
+        applyRasterState();
     }
 
     void setBlendFactors(BlendFactor src, BlendFactor dst) override {
@@ -985,17 +992,29 @@ private:
         rd.FrontCounterClockwise = TRUE;
         rd.DepthClipEnable = TRUE;
 
-        // Vier Zustaende: gefuellt und Drahtgitter, jeweils mit und ohne
-        // Aussortierung. Sie vorab anzulegen ist billiger, als sie beim
-        // Zeichnen zu erzeugen — ein Rasterzustand je Bild waere eine der
-        // Stellen, an denen unerklaerliche Ruckler herkommen.
-        for (int wire = 0; wire < 2; ++wire) {
-            rd.FillMode = wire ? D3D11_FILL_WIREFRAME : D3D11_FILL_SOLID;
-            for (int cull = 0; cull < 2; ++cull) {
-                rd.CullMode = cull ? D3D11_CULL_BACK : D3D11_CULL_NONE;
-                if (FAILED(device_->CreateRasterizerState(
-                        &rd, &rasterStates_[wire * 2 + cull]))) {
-                    return false;
+        // Zwoelf Zustaende: gefuellt und Drahtgitter, jeweils mit und ohne
+        // Aussortierung, jeweils ohne, mit und mit umgekehrtem Tiefenversatz.
+        // Sie vorab anzulegen ist billiger, als sie beim Zeichnen zu erzeugen
+        // — ein Rasterzustand je Bild waere eine der Stellen, an denen
+        // unerklaerliche Ruckler herkommen.
+        //
+        // Der Versatz wie glPolygonOffset(-1, -2) der Engine: bei einem
+        // UNORM-Tiefenpuffer ist DepthBias in kleinsten Schritten (1/2^24)
+        // gezaehlt, SlopeScaledDepthBias mit der Neigung der Flaeche — genau
+        // die beiden Teile von glPolygonOffset(factor, units).
+        for (int offset = 0; offset < 3; ++offset) {
+            const float sign = offset == 1 ? 1.0f : -1.0f;
+            rd.DepthBias = offset == 0 ? 0 : static_cast<INT>(-2.0f * sign);
+            rd.SlopeScaledDepthBias = offset == 0 ? 0.0f : -1.0f * sign;
+            rd.DepthBiasClamp = 0.0f;
+            for (int wire = 0; wire < 2; ++wire) {
+                rd.FillMode = wire ? D3D11_FILL_WIREFRAME : D3D11_FILL_SOLID;
+                for (int cull = 0; cull < 2; ++cull) {
+                    rd.CullMode = cull ? D3D11_CULL_BACK : D3D11_CULL_NONE;
+                    if (FAILED(device_->CreateRasterizerState(
+                            &rd, &rasterStates_[offset * 4 + wire * 2 + cull]))) {
+                        return false;
+                    }
                 }
             }
         }
@@ -1128,12 +1147,13 @@ private:
     static_assert(sizeof(PixelConstants) % 16 == 0, "cbuffer muss ein Vielfaches von 16 Byte sein");
     PixelConstants pixelConstants_;
     ComPtr<ID3D11Buffer> pixelConstantBuffer_;
-    ComPtr<ID3D11RasterizerState> rasterStates_[4];
+    ComPtr<ID3D11RasterizerState> rasterStates_[12];
     Cull cull_ = Cull::None;
     Fill fill_ = Fill::Solid;
+    DepthOffset offset_ = DepthOffset::None;
 
     void applyRasterState() {
-        const int index = (fill_ == Fill::Wireframe ? 2 : 0) +
+        const int index = static_cast<int>(offset_) * 4 + (fill_ == Fill::Wireframe ? 2 : 0) +
                           (cull_ == Cull::BackFaces ? 1 : 0);
         if (rasterStates_[index]) context_->RSSetState(rasterStates_[index].Get());
     }

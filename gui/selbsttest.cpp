@@ -1259,6 +1259,142 @@ public:
     }
 
     // --- Spinner: Pfeile neben jedem Zahlenfeld wie im Original -----------
+    // Zahlen Ziffer fuer Ziffer tippen, so wie ein Mensch tippt.
+    //
+    // Anwendervideo 14.11.2026: CameraShake, Life 100 .. 500, im Max-Feld
+    // "800" getippt — nach der "8" stand Min auf 8 und blieb dort. Der Teil
+    // "felder" hatte das nie gesehen: `tippe` gibt den ganzen Text in EINEM
+    // Bild ein, und ein Zwischenstand wie "8" kam nie vor.
+    static void tippeZiffern(std::vector<Schritt>& s, const std::string& text) {
+        for (char c : text) s.push_back(tippe(std::string(1, c)));
+    }
+    // Ein Doppelklick auf ein Feld, das eben schon doppelt angeklickt wurde.
+    // Ohne Pause zaehlt ImGui die Klicks weiter (Dreifach-, Vierfachklick:
+    // MouseClickedCount 3, 4), und DragFloat wechselt nur bei genau 2 in die
+    // Texteingabe. Ein Mensch ist nie so schnell; der Test schon.
+    static void doppelklickNochmal(std::vector<Schritt>& s, const std::string& marke) {
+        auto ab = std::make_shared<double>(0.0);
+        s.push_back({"Pause fuer den naechsten Doppelklick", [ab](int b) {
+                         if (b == 0) *ab = ImGui::GetTime();
+                         return ImGui::GetTime() - *ab > ImGui::GetIO().MouseDoubleClickTime * 2.0;
+                     }});
+        s.push_back(klickMarke(marke, 0, true));
+    }
+    static std::vector<Schritt> teilTippen() {
+        std::vector<Schritt> s;
+        s.push_back(teil("tippen"));
+        frischesDokument(s);
+        neuesSegment(s, PrimitiveType::CameraShake);
+        s.push_back(klick(tr(Str::TabGeneration), "properties"));
+        const auto life = [](float a, float b) {
+            return [a, b] {
+                gewaehlt()->life = Range::span(a, b);
+                app->recordChange("test");
+            };
+        };
+        const auto lifeIst = [](float a, float b) {
+            return [a, b] { return gewaehlt()->life.min == a && gewaehlt()->life.max == b; };
+        };
+        s.push_back(tu("Life 100 .. 500", life(100.0f, 500.0f)));
+        s.push_back(warte(2));
+        s.push_back(klickMarke("life/max", 0, true));
+        s.push_back(taste(ImGuiKey_A, true));
+        s.push_back(tippe("8"));
+        s.push_back(pruefSchritt("Max: nach der ersten Ziffer \"8\" bleibt Min 100 (und nichts gilt vor Enter)",
+                                 lifeIst(100.0f, 500.0f)));
+        tippeZiffern(s, "00");
+        s.push_back(taste(ImGuiKey_Enter));
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("Max 800 getippt: Life 100 .. 800, Min unberuehrt", lifeIst(100.0f, 800.0f)));
+        s.push_back(taste(ImGuiKey_Z, true));
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("Strg+Z nimmt die ganze Eingabe in einem Schritt zurueck",
+                                 lifeIst(100.0f, 500.0f)));
+
+        // Min tippen, waehrend Max kleiner ist als die Zwischenstaende nicht.
+        doppelklickNochmal(s, "life/min");
+        s.push_back(taste(ImGuiKey_A, true));
+        tippeZiffern(s, "250");
+        s.push_back(pruefSchritt("Min wird getippt: vor Enter unveraendert", lifeIst(100.0f, 500.0f)));
+        s.push_back(taste(ImGuiKey_Enter));
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("Min 250 getippt: Life 250 .. 500", lifeIst(250.0f, 500.0f)));
+
+        // Wirklich kleiner als Min: dann zieht Max Min mit — aber erst am Ende.
+        doppelklickNochmal(s, "life/max");
+        s.push_back(taste(ImGuiKey_A, true));
+        tippeZiffern(s, "50");
+        s.push_back(taste(ImGuiKey_Enter));
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("Max 50 < Min 250: Min folgt auf 50 (Min <= Max bleibt)", lifeIst(50.0f, 50.0f)));
+
+        // Escape verwirft.
+        s.push_back(tu("Life 100 .. 500", life(100.0f, 500.0f)));
+        s.push_back(warte(2));
+        doppelklickNochmal(s, "life/max");
+        s.push_back(taste(ImGuiKey_A, true));
+        tippeZiffern(s, "9");
+        s.push_back(taste(ImGuiKey_Escape));
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("Escape verwirft das Getippte", lifeIst(100.0f, 500.0f)));
+
+        // Klick in ein Feld WEITER OBEN beendet die Eingabe: das andere Feld
+        // wird in diesem Bild vor dem Life-Feld aktiv (anderer Weg im Code).
+        doppelklickNochmal(s, "life/max");
+        s.push_back(taste(ImGuiKey_A, true));
+        tippeZiffern(s, "700");
+        s.push_back(klickMarke("delay/min"));
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("Klick auf ein Feld weiter oben uebernimmt den Wert: Life 100 .. 700",
+                                 lifeIst(100.0f, 700.0f)));
+        s.push_back(pruefSchritt("... und Delay bleibt, wie es war", [] {
+            return !gewaehlt()->delay.set || gewaehlt()->delay.min == 0.0f;
+        }));
+
+        // Getipptes landet nie im naechsten Segment: tippen, dann ein anderes
+        // Segment waehlen.
+        neuesSegment(s, PrimitiveType::CameraShake);
+        s.push_back(klick(tr(Str::TabGeneration), "properties"));
+        s.push_back(tu("zweites Segment: Life 100 .. 500", life(100.0f, 500.0f)));
+        s.push_back(warte(2));
+        doppelklickNochmal(s, "life/max");
+        s.push_back(taste(ImGuiKey_A, true));
+        tippeZiffern(s, "321");
+        s.push_back(tu("erstes Segment waehlen (wie ein Klick in der Liste)", [] {
+            doc().selectedPrimitive = 0;
+        }));
+        s.push_back(warte(3));
+        s.push_back(pruefSchritt("erstes Segment bekam den Wert des zweiten nicht",
+                                 [] { return doc().effect.primitives[0].life.max == 700.0f; }));
+        s.push_back(taste(ImGuiKey_Enter));
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("... auch nicht mit Enter danach; das zweite bleibt bei 500", [] {
+            return doc().effect.primitives[0].life.max == 700.0f &&
+                   doc().effect.primitives[1].life.max == 500.0f;
+        }));
+
+        // Die Wiederholrate der Werkzeugleiste: "0.05" Ziffer fuer Ziffer.
+        // Vorher stand nach der "0" fuer einen Augenblick repeatDelay 1 ms.
+        auto kleinste = std::make_shared<int>(1 << 30);
+        const auto merkeKleinste = [kleinste] {
+            if (doc().effect.repeatDelaySet) *kleinste = std::min(*kleinste, doc().effect.repeatDelay);
+        };
+        s.push_back(klickAuf("Doppelklick Wiederholrate", [] { return finde("##repeatRate", "##main"); }, 0,
+                             true));
+        s.push_back(taste(ImGuiKey_A, true));
+        for (char c : std::string("0.05")) {
+            s.push_back(tippe(std::string(1, c)));
+            s.push_back(tu("repeatDelay merken", merkeKleinste));
+        }
+        s.push_back(taste(ImGuiKey_Enter));
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("Wiederholrate 0.05 getippt: repeatDelay 50", [] {
+            return doc().effect.repeatDelaySet && doc().effect.repeatDelay == 50;
+        }));
+        s.push_back(pruefSchritt("... und waehrend des Tippens nie 1 ms", [kleinste] { return *kleinste >= 50; }));
+        return s;
+    }
+
     static std::vector<Schritt> teilSpinner() {
         std::vector<Schritt> s;
         s.push_back(teil("spinner"));
@@ -2830,6 +2966,43 @@ public:
         s.push_back(pruefSchritt("Links ziehen dreht die Kamera", [=] {
             return app->camera_.viewMatrix() != *vorher;
         }));
+        // Senkrecht ziehen: wie das alte EffectsEd (glRotatef(rotX, 1,0,0),
+        // rotX += Mausweg y * 0.5) senkt Maus nach vorn das Auge, der Blick
+        // geht hinauf. "Y-Achse umkehren" dreht das um.
+        auto hoehe = std::make_shared<float>(0.0f);
+        const auto senkrecht = [=](const std::string& was, float dy) -> Schritt {
+            return {was, [=](int b) {
+                        ImGuiIO& io = ImGui::GetIO();
+                        const Element* e = findeMarke("ansicht");
+                        if (!e) {
+                            meldeFehler("Ansicht nicht gefunden");
+                            return true;
+                        }
+                        const ImVec2 m = e->rect.GetCenter();
+                        if (b == 0) {
+                            *hoehe = app->camera_.position().z - app->camera_.target().z;
+                            setzeMaus(m);
+                        }
+                        if (b == 1) io.AddMouseButtonEvent(0, true);
+                        if (b >= 2 && b <= 7) setzeMaus(ImVec2(m.x, m.y + dy * float(b - 1) / 6.0f));
+                        if (b == 8) io.AddMouseButtonEvent(0, false);
+                        return b >= 10;
+                    }};
+        };
+        s.push_back(tu("Ansicht zuruecksetzen", [] { app->camera_.reset(app->settings_.worldScale); }));
+        s.push_back(senkrecht("Maus nach vorn ziehen (nach oben)", -30.0f));
+        s.push_back(pruefSchritt("Maus nach vorn: Auge sinkt, Blick geht hinauf (wie das Original)", [=] {
+            return app->camera_.position().z - app->camera_.target().z < *hoehe - 1.0f;
+        }));
+        s.push_back(tu("Y-Achse umkehren an", [] { app->settings_.invertMouseY = true; }));
+        s.push_back(senkrecht("Maus nach vorn ziehen (umgekehrt)", -30.0f));
+        s.push_back(pruefSchritt("Y-Achse umgekehrt: Maus nach vorn hebt das Auge", [=] {
+            return app->camera_.position().z - app->camera_.target().z > *hoehe + 1.0f;
+        }));
+        s.push_back(tu("Y-Achse umkehren aus, Ansicht zuruecksetzen", [] {
+            app->settings_.invertMouseY = false;
+            app->camera_.reset(app->settings_.worldScale);
+        }));
         s.push_back(tu("Abstand merken", [=] { *abstand = app->camera_.distance(); }));
         s.push_back({"Rechts ziehen in der Ansicht", [=](int b) {
                          ImGuiIO& io = ImGui::GetIO();
@@ -3648,8 +3821,13 @@ public:
                                          liste.end());
                          }
                          // Gitter statt Waende, wie im Menue "Draw Wireframe".
+                         // 2: Gitter ueber dem texturierten Raum ("Grid over
+                         // the textured room").
                          if (const char* g = std::getenv("EFXED_GITTER"); g && g[0] == '1') {
                              app->settings_.drawGrid = true;
+                             app->geometryDirty_ = true;
+                         } else if (g && g[0] == '2') {
+                             app->settings_.gridOverRoom = true;
                              app->geometryDirty_ = true;
                          }
                          int grenze = static_cast<int>(liste.size());
@@ -4023,6 +4201,7 @@ public:
             {"werkzeug", &teilWerkzeug},
             {"nachlegen", &teilNachlegen},
             {"spinner", &teilSpinner},
+            {"tippen", &teilTippen},
             {"archiv", &teilArchiv},
             {"update", &teilUpdate},
             {"fehlersuche", &teilFehlersuche},

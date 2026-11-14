@@ -101,6 +101,18 @@ enum class Fill {
     Wireframe,
 };
 
+// Tiefenversatz gefuellter Flaechen (glPolygonOffset / DepthBias).
+//
+// TowardViewer ist `polygonOffset` aus dem Shader, mit den Werten der Engine
+// (r_offsetFactor -1, r_offsetUnits -2): Abdruecke liegen genau in der Wand-
+// oder Bodenebene und gewinnen damit den Tiefenvergleich. AwayFromViewer
+// schiebt den Raum ebenso weit zurueck, wenn das Gitter auf ihm liegt.
+enum class DepthOffset {
+    None,
+    TowardViewer,
+    AwayFromViewer,
+};
+
 // Muss Wert fuer Wert zu efx::shader::BlendMode passen: die Oberflaeche setzt
 // eine Art direkt in die andere um. Der static_assert unter dieser
 // Aufzaehlung haelt beide zusammen — weichen sie ab, mischt die Vorschau
@@ -259,6 +271,9 @@ public:
     // Tiefentest an oder aus. Der Ersatzshader der Engine fuer ein Bild ohne
     // Shaderblock zeichnet ohne (GLS_DEPTHTEST_DISABLE).
     virtual void setDepthTest(bool enabled) = 0;
+    // Tiefenversatz fuer die folgenden Zeichenaufrufe (siehe DepthOffset).
+    // beginViewport setzt ihn auf None zurueck.
+    virtual void setDepthOffset(DepthOffset mode) = 0;
     // alphaFunc der Shaderstufe: 0 keiner, 1 GT0, 2 LT128, 3 GE128, 4 GE192 —
     // wie in GL_State: Bildpunkte, die den Test nicht bestehen, werden
     // verworfen.

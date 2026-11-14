@@ -272,7 +272,9 @@ void App::handleViewportInput(float width, float height) {
         } else if (ImGui::IsKeyDown(ImGuiKey_Z)) {
             camera_.roll(drag.x);
         } else {
-            camera_.orbit(drag.x, drag.y);
+            // "Y-Achse umkehren" gilt nur fuers Drehen, wie die gleichnamige
+            // Einstellung in Spielen — Verschieben und Heranfahren bleiben.
+            camera_.orbit(drag.x, settings_.invertMouseY ? -drag.y : drag.y);
         }
     }
     if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
@@ -713,6 +715,15 @@ int App::drawParticleGroups(render::Renderer* renderer, const particles::DrawLis
             renderer->setDepthWrite(group.depthWrite && !group.depthHack);
             renderer->setAlphaTest(group.alphaTest);
         }
+        // `polygonOffset` im Shader (Abdruecke, gfx/damage/burnmark*): die
+        // Engine zieht solche Flaechen in der Tiefe zum Auge hin
+        // (RB_BeginSurface/GL_State: qglPolygonOffset(r_offsetFactor -1,
+        // r_offsetUnits -2)). Ohne das liegt ein Decal genau in der
+        // Bodenebene, und Boden und Abdruck stritten um jeden Bildpunkt — die
+        // Streifen im Video eines Anwenders (14.11.2026), in Direct3D wie in
+        // OpenGL.
+        renderer->setDepthOffset(group.polygonOffset ? render::DepthOffset::TowardViewer
+                                                     : render::DepthOffset::None);
         renderer->setCulling(group.cullBackFaces ? render::Cull::BackFaces : render::Cull::None);
 
         // Ohne Textur und Farbe im Ueberzeichnungsmodus. Die umgefaerbte
@@ -734,6 +745,7 @@ int App::drawParticleGroups(render::Renderer* renderer, const particles::DrawLis
     renderer->setDepthTest(true);
     renderer->setDepthWrite(false);
     renderer->setAlphaTest(0);
+    renderer->setDepthOffset(render::DepthOffset::None);
     renderer->setFill(render::Fill::Solid);
     return calls;
 }
@@ -968,8 +980,12 @@ void App::drawViewport(render::Renderer* renderer, float width, float height) {
         lastScheduled_ = 0;
         lastMarks_ = 0;
     }
-    // Mit Gitter zeichnet das Original den Raum nur als Drahtgitter.
-    if (!overdraw && !roomMesh_.vertices.empty() && !settings_.drawGrid) {
+    // Mit Gitter zeichnet das Original den Raum nur als Drahtgitter. Mit
+    // "Grid over the textured room" bleibt er stehen, und das Gitter liegt
+    // darueber.
+    const bool gridOverRoom = settings_.gridOverRoom && !roomMesh_.vertices.empty();
+    const bool drawGridLines = settings_.drawGrid || gridOverRoom;
+    if (!overdraw && !roomMesh_.vertices.empty() && (!settings_.drawGrid || gridOverRoom)) {
         renderer->setBlend(render::Blend::Opaque);
 
         // Der Raum schreibt Tiefe — er verdeckt, was hinter Boden, Decke und
@@ -1015,14 +1031,20 @@ void App::drawViewport(render::Renderer* renderer, float width, float height) {
             lights.push_back(l);
         }
         renderer->setLights(lights.data(), static_cast<int>(lights.size()));
+        // Liegt das Gitter darueber, rueckt der Raum in der Tiefe ein wenig
+        // nach hinten. Die Linien schweben nur 0.05 Einheiten ueber den
+        // Flaechen; weit weg reicht die Tiefengenauigkeit dafuer nicht, und
+        // die Linien zerfielen in Striche.
+        if (gridOverRoom) renderer->setDepthOffset(render::DepthOffset::AwayFromViewer);
         renderer->drawTriangles(
             reinterpret_cast<const render::Vertex*>(roomMesh_.vertices.data()),
             static_cast<int>(roomMesh_.vertices.size()), roomMesh_.indices.data(),
             static_cast<int>(roomMesh_.indices.size()), wallTexture_);
+        renderer->setDepthOffset(render::DepthOffset::None);
         renderer->setLights(nullptr, 0);
     }
 
-    if (!overdraw && settings_.drawGrid && !gridLines_.vertices.empty()) {
+    if (!overdraw && drawGridLines && !gridLines_.vertices.empty()) {
         // Linien haben keine Rueckseite.
         renderer->setCulling(render::Cull::None);
         renderer->setFill(render::Fill::Solid);

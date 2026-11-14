@@ -1802,8 +1802,10 @@ int alphaTestOf(const std::string& func) {
 }
 
 // Mischung, Tiefe und Alphatest einer Gruppe aus ihrer Shaderstufe.
-void configureStageGroup(DrawGroup& group, const shader::Stage& stage, float sort, bool clamp) {
+void configureStageGroup(DrawGroup& group, const shader::Stage& stage, float sort, bool clamp,
+                         bool polygonOffset) {
     group.clamp = clamp;
+    group.polygonOffset = polygonOffset;
     group.blended = shader::stageBlends(stage);
     group.src = group.blended ? stage.srcBlend : shader::BlendFactor::One;
     group.dst = group.blended ? stage.dstBlend : shader::BlendFactor::Zero;
@@ -2467,7 +2469,7 @@ DrawList System::build(float nowMs, const camera::Vec3& right,
                 if (image.empty()) continue;
                 DrawGroup& group = groups.get(item.shader, static_cast<int>(s),
                                               std::string(assets::kImagePrefix) + image, hacked);
-                configureStageGroup(group, stage, sort, clamp);
+                configureStageGroup(group, stage, sort, clamp, def.polygonOffset);
                 appendStage(group, raw, &stage, &stage.texMods, rawColour, shaderSeconds);
             }
             continue;
@@ -2596,7 +2598,7 @@ DrawList System::build(float nowMs, const camera::Vec3& right,
                     if (image.empty()) continue;
                     DrawGroup& group = groups.get(name, static_cast<int>(s),
                                                   std::string(assets::kImagePrefix) + image);
-                    configureStageGroup(group, stage, sort, clamp);
+                    configureStageGroup(group, stage, sort, clamp, def.polygonOffset);
                     group.cullBackFaces = cullBackFaces;
 
                     // ComputeColors mit der Entity-Farbe der Emitter: null —

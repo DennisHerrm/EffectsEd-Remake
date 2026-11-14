@@ -8,6 +8,29 @@ namespace {
 // Reihenfolge (testChangelog zaehlt nach). Menuenamen so, wie sie in der
 // jeweiligen Sprache im Programm stehen.
 const std::vector<Entry> kEntries = {
+    {82, "2026-11-14",
+     {
+         // English
+         "Typed numbers now apply when you leave the field (Enter, Tab or a click elsewhere); Escape discards them. Typing 800 into a Max field no longer drags Min down to 8, and typing a repeat rate no longer spawns an effect every millisecond in between.\n"
+         "Moving the mouse forward now tilts the view up, like the old EffectsEd. New: View \xE2\x86\x92 Invert Y-Axis (Mouse Look) for the other way round.\n"
+         "Decals no longer flicker against the floor and walls: polygonOffset from the shader is applied like in the game (Direct3D 11 and OpenGL).\n"
+         "\"Grid on walls and ceiling too\" did nothing. It is now Edit \xE2\x86\x92 Grid over the textured room: grid lines on top of the textured floor, walls and ceiling.",
+         // Deutsch
+         "Getippte Zahlen gelten jetzt beim Verlassen des Felds (Enter, Tab oder Klick daneben); Escape verwirft sie. 800 im Max-Feld zieht Min nicht mehr auf 8 herunter, und beim Tippen der Wiederholrate entsteht zwischendurch kein Effekt im Millisekundentakt.\n"
+         "Maus nach vorn hebt jetzt den Blick, wie im alten EffectsEd. Neu: Ansicht \xE2\x86\x92 Y-Achse umkehren (Maus) f\xC3\xBCr die andere Richtung.\n"
+         "Decals flackern nicht mehr gegen Boden und W\xC3\xA4nde: polygonOffset aus dem Shader wirkt wie im Spiel (Direct3D 11 und OpenGL).\n"
+         "\xE2\x80\x9EGitter auch auf W\xC3\xA4nden und Decke\xE2\x80\x9C tat nichts. Jetzt Bearbeiten \xE2\x86\x92 Gitter \xC3\xBC" "ber dem texturierten Raum: Gitterlinien \xC3\xBC" "ber dem texturierten Boden, den W\xC3\xA4nden und der Decke.",
+         // 中文
+         "输入的数字现在在离开字段时生效（Enter、Tab 或点击别处）；按 Escape 放弃输入。在 Max 字段中输入 800 不再把 Min 拉低到 8，输入重复间隔时也不再在中途每毫秒生成一次特效。\n"
+         "向前移动鼠标现在会抬高视角，与旧版 EffectsEd 相同。新增：视图 \xE2\x86\x92 反转 Y 轴（鼠标视角），可切换为相反方向。\n"
+         "贴花不再与地面和墙面闪烁：与游戏中一样应用着色器中的 polygonOffset（Direct3D 11 和 OpenGL）。\n"
+         "“墙壁和天花板上也显示网格”此前没有任何作用。现在为 编辑 \xE2\x86\x92 在带纹理的房间上叠加网格：网格线显示在带纹理的地面、墙壁和天花板上。",
+         // 日本語
+         "入力した数値はフィールドを離れたとき（Enter、Tab、別の場所のクリック）に適用されるようになりました。Escape で取り消せます。Max に 800 と入力しても Min が 8 に下がらず、繰り返し間隔の入力途中にエフェクトが 1 ミリ秒ごとに出ることもなくなりました。\n"
+         "マウスを前に動かすと視点が上を向くようになりました（旧 EffectsEd と同じ）。新機能：表示 \xE2\x86\x92 Y 軸を反転（マウス視点）で逆方向にできます。\n"
+         "デカールが床や壁とちらつかなくなりました：ゲームと同様にシェーダーの polygonOffset を適用します（Direct3D 11 と OpenGL）。\n"
+         "「壁と天井にもグリッド」は何もしていませんでした。現在は 編集 \xE2\x86\x92 テクスチャ付きの部屋にグリッドを重ねる：テクスチャ付きの床・壁・天井の上にグリッド線を表示します。",
+     }},
     {81, "2026-10-11",
      {
          // English

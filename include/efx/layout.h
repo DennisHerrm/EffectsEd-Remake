@@ -161,12 +161,22 @@ struct Settings {
     // der Messung am Original und ist entfallen.
     bool preRoll = false;
 
-    // Gitter auch auf Wänden und Decke, nicht nur auf dem Boden.
+    // Das Gitter ueber dem texturierten Raum (Boden, Waende, Decke), statt
+    // dass der Raum wie bei "Draw Grid" nur als Drahtgitter erscheint.
     //
     // Der Boden allein sagt wenig über die Höhe eines Effekts: eine Flamme,
     // die bis zur Decke reicht, sieht aus wie eine halb so hohe, solange
     // nichts danebensteht, woran man messen kann.
-    bool gridOnWalls = false;
+    //
+    // Hiess frueher "gridOnWalls" ("Grid on walls and ceiling too") und war
+    // nirgends angeschlossen: das Gitter liegt bei geschlossenem Raum ohnehin
+    // auf allen Flaechen (wie im Original). Ein Anwender erwartete genau das
+    // hier: Gitterlinien auf der Raumtextur (14.11.2026).
+    bool gridOverRoom = false;
+    // Maus nach vorn = Blick nach oben, wie im alten EffectsEd (glRotatef mit
+    // Winkel += Mausweg y * 0.5, Disassembly 14.11.2026). Wer es andersherum
+    // gewohnt ist, schaltet es hier um (Ansicht > Y-Achse umkehren).
+    bool invertMouseY = false;
     // Wie der Effekt gezeichnet wird. Im Original drei Schalter: Textured
     // und Wireframe unabhaengig (beide an = Drahtgitter ueber den Flaechen),
     // Overdraw sperrt beide. Vorher eine Auswahl aus dreien — beides

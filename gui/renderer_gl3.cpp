@@ -309,6 +309,7 @@ public:
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LEQUAL);
         setCulling(Cull::None);
+        setDepthOffset(DepthOffset::None);
 
         gl::UseProgram(program_);
         gl::BindVertexArray(vao_);
@@ -331,6 +332,7 @@ public:
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LEQUAL);
         setCulling(Cull::None);
+        setDepthOffset(DepthOffset::None);
 
         gl::UseProgram(program_);
         gl::BindVertexArray(vao_);
@@ -420,6 +422,21 @@ public:
         else glDisable(GL_DEPTH_TEST);
     }
 
+    void setDepthOffset(DepthOffset mode) override {
+        // OpenGL 1.1, also ohne Nachladen. LINE mit, damit das Drahtgitter
+        // der Effekte dasselbe zeigt wie unter Direct3D, wo der Versatz Teil
+        // des Rasterzustands ist und fuer jede Fuellart gilt.
+        if (mode == DepthOffset::None) {
+            glDisable(GL_POLYGON_OFFSET_FILL);
+            glDisable(GL_POLYGON_OFFSET_LINE);
+            return;
+        }
+        const float sign = mode == DepthOffset::TowardViewer ? 1.0f : -1.0f;
+        glEnable(GL_POLYGON_OFFSET_FILL);
+        glEnable(GL_POLYGON_OFFSET_LINE);
+        glPolygonOffset(-1.0f * sign, -2.0f * sign);
+    }
+
     void setAlphaTest(int mode) override { gl::Uniform1i(alphaTestLocation_, mode); }
 
     void setLights(const Light* lights, int count) override {
@@ -498,6 +515,7 @@ public:
         // Fuellart zuruecksetzen, sonst zeichnet ImGui seine Flaechen als
         // Drahtgitter — der Zustand gehoert dem Kontext, nicht uns.
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        setDepthOffset(DepthOffset::None);
         // ImGui zeichnet mit Alpha.
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         gl::BindVertexArray(0);

@@ -229,6 +229,10 @@ struct DrawGroup {
     // denselben Shader teilen koennen.
     bool depthHack = false;
 
+    // `polygonOffset` des Shaders: in der Tiefe zum Auge hin gezogen, damit
+    // ein Abdruck in der Wandebene den Vergleich gewinnt (render::DepthOffset).
+    bool polygonOffset = false;
+
     // Rueckseiten ausblenden. Nur Modellflaechen: die Engine blendet nach
     // `cull` des Shaders aus (Voreinstellung front = Rueckseiten weg). Die
     // Dreiecke sind dafuer so ausgerichtet, dass die Vorderseite gegen den

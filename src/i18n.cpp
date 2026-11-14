@@ -348,7 +348,10 @@ const Entry kTable[] = {
     {"Top view (looking down)", "Ansicht von oben (Blick nach unten)", "顶视图（向下看）", "上面図（見下ろし）"},  // ViewTop
     {"Bottom view (looking up)", "Ansicht von unten (Blick nach oben)", "底视图（向上看）", "下面図（見上げ）"},  // ViewBottom
     {"Reset the view", "Ansicht zurücksetzen", "重置视图", "視点をリセット"},  // ViewReset
-    {"Grid on walls and ceiling too", "Gitter auch auf Wänden und Decke", "墙壁和天花板上也显示网格", "壁と天井にもグリッド"},  // SettingsGridWalls
+    {"Grid over the textured room", "Gitter über dem texturierten Raum", "在带纹理的房间上叠加网格", "テクスチャ付きの部屋にグリッドを重ねる"},  // SettingsGridWalls
+    {"Draws the grid on top of the textured floor, walls and ceiling, so you can measure heights against the room. \"Draw Grid\" alone shows only the outline, like the old EffectsEd.", "Zeichnet das Gitter über den texturierten Boden, die Wände und die Decke, damit man Höhen am Raum abmessen kann. \"Gitter anzeigen\" allein zeigt nur den Umriss, wie das alte EffectsEd.", "在带纹理的地面、墙壁和天花板上绘制网格，便于对照房间测量高度。单独使用“显示网格”时只显示轮廓，与旧版 EffectsEd 相同。", "テクスチャ付きの床・壁・天井の上にグリッドを描き、部屋を基準に高さを測れるようにします。「グリッドを表示」だけでは旧 EffectsEd と同じく輪郭のみを表示します。"},  // HintGridWalls
+    {"Invert Y-Axis (Mouse Look)", "Y-Achse umkehren (Maus)", "反转 Y 轴（鼠标视角）", "Y 軸を反転（マウス視点）"},  // ViewInvertY
+    {"Off: mouse forward tilts the view up, like the old EffectsEd. On: mouse forward tilts the view down.", "Aus: Maus nach vorn hebt den Blick, wie im alten EffectsEd. An: Maus nach vorn senkt den Blick.", "关闭：鼠标向前移动时视角抬高，与旧版 EffectsEd 相同。开启：鼠标向前移动时视角降低。", "オフ：マウスを前に動かすと視点が上を向きます（旧 EffectsEd と同じ）。オン：マウスを前に動かすと視点が下を向きます。"},  // HintInvertY
     {"substitute", "Ersatz", "替代", "代替"},  // ShaderFallback
     {"image found, but no shader block — blending is guessed (alpha). A fire needs additive; a .shader file may be missing from the game path.", "Bild gefunden, aber kein Shaderblock — die Mischung wird geraten (alphagemischt). Ein Feuer braucht additiv; vermutlich fehlt eine .shader-Datei im Spielpfad.", "找到图像，但没有着色器块 — 混合方式为猜测（透明）。火焰需要叠加；游戏路径中可能缺少 .shader 文件。", "画像はあるがシェーダーブロックがない — 合成は推測（アルファ）。炎には加算が必要で、.shader ファイルが不足している可能性があります。"},  // ShaderNoBlock
     {"additive", "additiv", "叠加", "加算"},  // BlendAdditive

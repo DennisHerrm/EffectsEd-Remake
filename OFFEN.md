@@ -1,14 +1,15 @@
 # Was noch offen ist
 
 Stand: 3. Oktober 2026, nach der Fehlersuche (zwei Runden) und dem Abgleich
-mit OpenJK und dem Original.
+mit OpenJK und dem Original. Nachtrag 14. November 2026 (Rückmeldungen eines
+Anwenders, unten "Nachtrag 14.11.2026").
 
 Geprüft wird mit diesen Läufen, alle grün:
 
 | Lauf | Ergebnis |
 |---|---|
-| `efxtests.exe` (Kern), MSVC und MinGW | je 4592 Prüfungen, 0 Fehler |
-| Selbsttest `EFXED_SELBSTTEST=alles`, MSVC und MinGW, je Direct3D 11 und `gl3` | 4 × 840 OK, 0 FEHLER |
+| `efxtests.exe` (Kern), MSVC und MinGW | je 4619 Prüfungen, 0 Fehler (14.11.2026) |
+| Selbsttest `EFXED_SELBSTTEST=alles`, MSVC und MinGW, je Direct3D 11 und `gl3` | 4 × 866 OK, 0 FEHLER (rev82, 14.11.2026) |
 | Darstellungslauf `EFXED_SELBSTTEST=darstellung` | 376 Effekte aus Movie Duels, je 4 Zeitpunkte, kein Absturz; gegen rev79 1460 von 1504 Bildern gleich, die 44 anderen erklärt (Kollision mit min/max, Abpraller, ruhende Tails, `nomipmaps`) |
 | Rundreise über 1249 .efx (lesen, schreiben, lesen, schreiben; exakt und `--raven`) | 0 Abweichungen; 1 Datei ist kaputt (MD, fehlende `}`) |
 | `tools/lint_*.py` (12 Prüfer) | alle 0 |
@@ -90,7 +91,7 @@ folgt oder bewusst zurückgestellt ist:
 - **Mehrstufige Shader** werden je Stufe für alle Teilchen gezeichnet, die
   Engine wechselt je Teilchen. Sichtbar nur bei sich überlappenden Teilchen
   mit mehreren Stufen.
-- Nicht nachgebaut: `picmip`, die Tiefenverschiebung von `polygonOffset`,
+- Nicht nachgebaut: `picmip`,
   `tcGen environment`, `lightingSpecular`; Feinheiten des Shaderlesers, die in
   keiner Datei der Spiele vorkommen.
 - **Nur Multiplayer:** bounce schaltet Physik ein, Vorgabe-bounce 0.1,
@@ -119,3 +120,47 @@ Läuft ein Effekt, weht die Windfahne oder ist die Bibliothek offen, wird
 weiter jedes Bild gezeichnet. Große Explosionen (≈600 Teilchen bildschirmfüllend)
 kosten auf dieser Grafik ≈20 ms je Bild — das ist Füllrate, nicht Rechenzeit
 (Aufbau < 1 ms, Zeichenaufrufe < 0,2 ms).
+
+## Nachtrag 14.11.2026: Rückmeldungen eines Anwenders (zwei Videos)
+
+Behoben, je mit Test (Gegenprobe: ohne den Fix rot):
+
+- **Getippte Zahlen** galten bei jeder Ziffer. In "Life" (100 .. 500) im
+  Max-Feld 800 getippt: nach der "8" zog "Min <= Max" Min auf 8, und dort
+  blieb es. Ebenso stellte die "0" von "0.05" in der Wiederholrate kurz 1 ms
+  ein. Jetzt gilt ein getippter Wert beim Verlassen des Felds (Enter, Tab,
+  Klick daneben), Escape verwirft — wie das Original mit Enter/Apply.
+  `shared::commitTyped` (gui/app_shared.h), Selbsttest-Teil `tippen` tippt
+  Ziffer für Ziffer (der Teil `felder` gab ganze Texte in einem Bild ein und
+  sah den Zwischenstand nie).
+- **Maus nach vorn** senkte den Blick; im Original hebt sie ihn
+  (Disassembly: `glRotatef(rotX, 1,0,0)`, `rotX += Mausweg y * 0.5`). Die
+  alte Testerwartung war erdacht, nicht gemessen. Neu: Ansicht > "Invert
+  Y-Axis (Mouse Look)" für alle, die es andersherum wollen.
+- **"Grid on walls and ceiling too"** war nirgends angeschlossen. Jetzt
+  "Grid over the textured room": das Gitter liegt über Boden, Wänden und
+  Decke, der Raum bleibt texturiert (der Raum rückt dafür in der Tiefe ein
+  wenig zurück). "Draw Grid" allein bleibt wie im Original der Umriss.
+- **Decals flackerten** gegen den Boden (Streifen, in Direct3D und OpenGL):
+  `polygonOffset` des Shaders wird jetzt umgesetzt (`render::DepthOffset`,
+  Werte der Engine: Faktor -1, Einheiten -2).
+
+Gefunden, nicht geändert:
+
+- **Z + Ziehen** im Original dreht die Szene um die Welt-X-Achse
+  (`glRotatef(rotZ, 1,0,0)` als letzte Drehung, `rotZ += Mausweg x * 0.5`),
+  efxed rollt um die Blickachse (0.3 Grad je Bildpunkt). Anders als das
+  Original, aber niemand hat es bemängelt.
+- **MinGW-Bau aus "C:\jka_animations\Tools C++\..."**: windres zerlegt die
+  Include-Pfade am Leerzeichen ("Tools C++"), `efxed.rc` baut nicht. Alle
+  C++-Dateien übersetzen ohne Warnung. Abhilfe (so für rev82 gebaut):
+  `subst W: "<Projektordner>"`, dann `cmake -S W:/ -B W:/build-mingw ...`
+  und `cmake --build W:/build-mingw`; danach `subst W: /d`. Siehe
+  UEBERGABE.md, Release-Schritt 3.
+- `App::editRange`, `editVec3Range`, `editChannel` (gui/app_widgets.cpp)
+  werden nirgends mehr aufgerufen.
+- DragFloat3-Felder (Wind-Richtung, eigener Ursprung) übernehmen weiter jede
+  Ziffer; ohne Kopplung und ohne Folgen außer einem kurzen Zwischenwert.
+- Der Selbsttest-Teil `update` ersetzt die laufende exe durch eine Attrappe
+  (`efxed.exe` = "NEUE EXE (Attrappe)", die echte als `efxed.exe.alt`).
+  `alles` deshalb aus einer Kopie starten, nicht aus build\Release.

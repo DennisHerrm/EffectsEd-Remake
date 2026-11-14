@@ -111,6 +111,14 @@ lief über Hilfsskripte außerhalb des Projekts; die Ergebnisse stehen in
      `cmake -S . -B build-mingw -G Ninja -DCMAKE_BUILD_TYPE=Release` mit den
      Schaltern aus `build_mingw.bat`, `cmake --build build-mingw`,
      `python tools/check_win7_exe.py build-mingw/efxed.exe`.
+     **Seit dem Umzug nach `C:\jka_animations\Tools C++\...`** steht ein
+     Leerzeichen im Pfad, und windres (efxed.rc) scheitert daran. Deshalb über
+     ein Hilfslaufwerk bauen: `subst W: "<Projektordner>"`, dann
+     `cmake -S W:/ -B W:/build-mingw -G Ninja ...` (Schalter wie oben, ImGui
+     mit `-DFETCHCONTENT_SOURCE_DIR_IMGUI=W:/<Ordner>/_deps/imgui-src`, kein
+     Netz noetig) und `cmake --build W:/build-mingw`; am Ende `subst W: /d`.
+     Den Selbsttest `alles` immer aus einer KOPIE der exe starten: der Teil
+     `update` ersetzt die laufende exe durch eine Attrappe.
   4. `python tools/make_release.py` → `output/EffectsEd-Remake-revNN.zip` und
      `output/EffectsEd-Remake-win7-revNN.zip`
      (NICHT Compress-Archive: PowerShell 5.1 schreibt Rückstriche ins zip)

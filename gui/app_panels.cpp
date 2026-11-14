@@ -120,17 +120,12 @@ void App::drawMenuBar() {
         ImGui::MenuItem(tr(Str::SettingsOpenLibrary), nullptr,
                         &settings_.openLibraryOnStart);
 
-        // Gitter auch auf Waenden und Decke.
-        //
-        // Beim Umschalten muss der Raum neu gebaut werden — das Gitter ist
-        // ein Netz, kein Schalter im Zeichenpfad.
-        if (ImGui::MenuItem(tr(Str::SettingsGridWalls), nullptr,
-                            &settings_.gridOnWalls)) {
-            // Neuaufbau anstossen. Der Raum wird gebaut, wenn sich der
-            // Masstab geaendert hat — diesen Merker zuruecksetzen ist der
-            // vorhandene Weg dorthin, ohne einen zweiten einzufuehren.
-            geometryDirty_ = true;
-        }
+        // Das Gitter ueber dem texturierten Raum (drawViewport). Hiess
+        // "Grid on walls and ceiling too" und schaltete nichts: die
+        // Einstellung wurde gespeichert, aber nirgends gelesen — das Gitter
+        // liegt bei geschlossenem Raum ohnehin auf allen Flaechen.
+        ImGui::MenuItem(tr(Str::SettingsGridWalls), nullptr, &settings_.gridOverRoom);
+        hint(Str::HintGridWalls);
 
         // Wie ein Effekt mit `repeatDelay` wiederholt wird.
         //
@@ -258,6 +253,8 @@ void App::drawMenuBar() {
             camera_.reset(settings_.worldScale);
         }
         hint(Str::HintResetView);
+        ImGui::MenuItem(tr(Str::ViewInvertY), nullptr, &settings_.invertMouseY);
+        hint(Str::HintInvertY);
         if (ImGui::MenuItem(tr(Str::ViewScreenshot), "Shift+C")) {
             pendingScreenshot_ = 1;
         }

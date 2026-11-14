@@ -2786,12 +2786,12 @@ void testCamera() {
     // Nicken darf nicht ueber den Pol laufen: dort ist die Aufwaertsrichtung
     // unbestimmt und das Bild kippt schlagartig.
     cam.reset(16.0f);
-    for (int i = 0; i < 200; ++i) cam.orbit(0.0f, -50.0f);
+    for (int i = 0; i < 200; ++i) cam.orbit(0.0f, 50.0f);
     Matrix view = cam.viewMatrix();
     bool finite = true;
     for (float value : view) if (!std::isfinite(value)) finite = false;
     check(finite, "Blick genau von oben liefert brauchbare Zahlen");
-    for (int i = 0; i < 400; ++i) cam.orbit(0.0f, 50.0f);
+    for (int i = 0; i < 400; ++i) cam.orbit(0.0f, -50.0f);
     view = cam.viewMatrix();
     for (float value : view) if (!std::isfinite(value)) finite = false;
     check(finite, "und von unten auch");
@@ -3029,7 +3029,7 @@ void testPicking() {
     orbit.reset(16.0f);
     // Etwas schraeg von oben, damit es kein Sonderfall ist (die Grundstellung
     // blickt seit dem Abgleich mit dem Original waagerecht).
-    orbit.orbit(40.0f, -40.0f);
+    orbit.orbit(40.0f, 40.0f);
     const Matrix view = orbit.viewMatrix();
     const Matrix projection = orbit.projectionMatrix(16.0f / 9.0f, false);
 
@@ -11272,10 +11272,18 @@ void testCameraViews() {
         up.lookFrom(efx::camera::Orbit::View::Front);
         const float heightBefore = up.position().z;
         up.orbit(0.0f, 20.0f);           // nach unten ziehen
-        // `pitch` steigt (0 -> 8), forward zeigt nach oben, das Auge steht
-        // also TIEFER und blickt hinauf. Genau wie im alten Editor.
-        check(up.position().z < heightBefore - 0.01f,
-              "nach unten ziehen senkt das Auge, hebt also den Blick");
+        // Wie im alten Editor (Disassembly 14.11.2026: glRotatef(rotX, 1,0,0)
+        // mit rotX += Mausweg y * 0.5): nach unten ziehen kippt die
+        // Bodennormale zum Auge, das Auge steht HOEHER und blickt hinab.
+        // Maus nach vorn hebt also den Blick. Hier stand bis rev81 die
+        // umgekehrte Erwartung — nachgedacht statt nachgesehen.
+        check(up.position().z > heightBefore + 0.01f,
+              "nach unten ziehen hebt das Auge, senkt also den Blick (wie das Original)");
+        efx::camera::Orbit forward;
+        forward.lookFrom(efx::camera::Orbit::View::Front);
+        forward.orbit(0.0f, -20.0f);     // Maus nach vorn
+        check(forward.position().z < heightBefore - 0.01f,
+              "Maus nach vorn senkt das Auge, der Blick geht hinauf");
         std::printf("  ziehen nach rechts: Auge x %.1f -> %.1f\n", before.x,
                     after.x);
     }
@@ -14386,6 +14394,65 @@ void testRenderDecal() {
     floating.play(high, 1u, {}, {}, {}, efx::sim::roomPlanes(500.0f, 500.0f, 500.0f));
     check(floating.build(100.0f, {1, 0, 0}, {0, 1, 0}).drawn == 0,
           "ohne Flaeche in 20 Einheiten kein Abdruck (CM_MarkFragments)");
+
+    // polygonOffset (Anwendervideo 14.11.2026: Streifen im Brandfleck von
+    // hugeexplosion1, sobald man die Ansicht bewegt). Der Abdruck liegt exakt
+    // in der Bodenebene; im Spiel zieht ihn polygonOffset des Shaders
+    // (gfx/damage/burnmark1, marks.shader) in der Tiefe zum Auge hin. Die
+    // Zeichengruppe muss das weitergeben, sonst kann der Renderer es nicht.
+    {
+        const ShaderBook marks(R"(gfx/damage/burnmark1
+{
+    polygonOffset
+    {
+        clampmap gfx/damage/burnmark1
+        blendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
+        rgbGen vertex
+        alphaGen vertex
+    }
+}
+gfx/plain
+{
+    {
+        map gfx/plain
+        blendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
+    }
+}
+)");
+        const auto scorch = effectFrom(R"(Decal
+{
+    size
+    {
+        start 50
+    }
+    shaders
+    [
+        gfx/damage/burnmark1
+    ]
+}
+Decal
+{
+    size
+    {
+        start 50
+    }
+    shaders
+    [
+        gfx/plain
+    ]
+}
+)");
+        System marked;
+        marked.play(scorch, 1u, {}, {}, {}, efx::sim::roomPlanes(500.0f, 500.0f, 500.0f));
+        const auto list = marked.build(100.0f, {1, 0, 0}, {0, 1, 0}, marks.lookup());
+        int withOffset = 0, without = 0;
+        for (const auto& g : list.groups) {
+            if (g.shader == "gfx/damage/burnmark1") withOffset += g.polygonOffset ? 1 : -100;
+            if (g.shader == "gfx/plain") without += g.polygonOffset ? -100 : 1;
+        }
+        check(withOffset == 1, "Decal mit polygonOffset im Shader: die Gruppe zieht zum Auge hin");
+        check(without == 1, "ohne polygonOffset im Shader: kein Versatz (wie die Engine)");
+    }
 }
 
 // --- 12. ScreenFlash ----------------------------------------------------------------

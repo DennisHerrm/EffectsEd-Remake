@@ -728,7 +728,11 @@ void App::drawProperties(float width, float height) {
     ImGui::BeginChild("tabbody", ImVec2(0, 0), ImGuiChildFlags_None,
                       ImGuiWindowFlags_HorizontalScrollbar);
     beginPage();
-    drawTab(propertyTab_, p);
+    {
+        // Getippte Werte gehoeren diesem Segment (siehe shared::commitTyped).
+        const shared::TypedOwnerScope owner(&p);
+        drawTab(propertyTab_, p);
+    }
     ImGui::EndChild();
     ImGui::PopStyleVar(3);
 
@@ -781,7 +785,7 @@ void App::drawTab(fields::Tab tab, Primitive& p) {
                 labelCell(tr(Str::FieldCullDistance));
                 ImGui::SetCursorScreenPos(ImVec2(minX(), ImGui::GetCursorScreenPos().y));
                 ImGui::SetNextItemWidth(g_page.field - spinnerWidth());
-                if (ImGui::DragInt("##cull", &p.cullRange, 10.0f, 0, 1000000)) {
+                if (shared::dragIntTyped("##cull", &p.cullRange, 10.0f, 0, 1000000)) {
                     p.cullRangeSet = true;
                     changed = true;
                 }

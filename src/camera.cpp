@@ -156,9 +156,23 @@ void Orbit::orbit(float dx, float dy) {
     // man die Szene nach rechts, muss die Kamera also nach LINKS wandern —
     // und um den Blick zu heben, muss sie SINKEN.
     yaw_ -= dx * 0.5f;  // 0.5 Grad je Bildpunkt wie im Original (gemessen)
+    // Senkrecht: nach UNTEN ziehen hebt die Kamera (sie blickt von oben auf
+    // den Boden), nach OBEN — Maus nach vorn — senkt sie, der Blick geht
+    // hinauf. So macht es das Original (Disassembly 14.11.2026, Mauscode
+    // @0x403736 und Blickaufbau @0x40b7b1):
+    //
+    //     rotX += (y - refY) * 0.5;        // 0x4a44ec
+    //     glTranslatef(tx, ty, tz);  glRotatef(rotX, 1, 0, 0);
+    //     glRotatef(rotY, 0, 1, 0);  glRotatef(-90, 1, 0, 0);
+    //
+    // Ein positives rotX kippt die Bodennormale zum Auge hin — man sieht die
+    // Oberseite des Bodens. Hier stand vorher `pitch_ - dy`: genau verkehrt
+    // herum, "mouse forward looks down in yours" (Anwender, 14.11.2026). Wer
+    // es so gewohnt ist: Ansicht > Y-Achse umkehren (App::handleViewportInput).
+    //
     // Nicken begrenzen, aber nicht ganz bis zum Pol: genau senkrecht von oben
     // ist die Aufwaertsrichtung unbestimmt und das Bild kippt schlagartig.
-    pitch_ = clampf(pitch_ - dy * 0.5f, -89.0f, 89.0f);
+    pitch_ = clampf(pitch_ + dy * 0.5f, -89.0f, 89.0f);
 
     while (yaw_ >= 360.0f) yaw_ -= 360.0f;
     while (yaw_ < 0.0f) yaw_ += 360.0f;
