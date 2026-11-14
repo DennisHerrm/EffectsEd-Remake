@@ -24,9 +24,11 @@
 #include "efx/layout.h"
 #include "efx/camera.h"
 #include "efx/renderer.h"
+#include <atomic>
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 
 #include "efx/assets.h"
 #include "efx/fields.h"
@@ -41,10 +43,20 @@
 #include "efx/shader.h"
 #include "efx/timeline.h"
 #include "efx/sound.h"
+#include "efx/spritesheet.h"
 #include "efx/theme.h"
 #include "efx/undo.h"
 
 namespace efx::gui {
+
+// Kindeffekte und Modelle der Bibliothekskacheln. Die Arbeitsfaeden bauen die
+// Kacheln zusammen (play + Reichweite) und laden dabei nach; der Hauptfaden
+// fasst den Speicher nur beim Uebernehmen an.
+struct BrowserAssetCache {
+    std::mutex mutex;
+    std::map<std::string, std::unique_ptr<Effect>> effects;
+    std::map<std::string, std::unique_ptr<md3::Model>> models;
+};
 
 
 // Ein geöffneter Effekt mit allem, was zu ihm gehört.
@@ -350,6 +362,12 @@ private:
     void drawWindDialog();
     void drawSunDialog();
     void drawDriverInfoDialog();
+    // Effects > Import Sprite Sheet... (gui/app_sprites.cpp).
+    void drawSpriteSheetDialog();
+    void loadSpriteSheet(const std::string& path);
+    void releaseSpriteTexture();
+    void createSpriteEffect();
+    bool writeSpritePackage(const spritesheet::Package& package);
     void takeScreenshot(render::Renderer* renderer, bool toClipboard);
     // Auswahlfenster fuer Shader, Modelle, Klaenge und Effekte. Ein Fenster
     // fuer alle vier: sie unterscheiden sich nur in der Quelle der Liste.
@@ -461,6 +479,9 @@ private:
         particles::System system;
         timeline::Clock clock;
         bool wrapped = false;
+        // Kindeffekte und Modelle, auf die `system` zeigt — solange die Kachel
+        // lebt, lebt auch der Zwischenspeicher, aus dem sie kommen.
+        std::shared_ptr<struct BrowserAssetCache> cache;
     };
     std::vector<BrowserEntry> browserEntries_;
     char browserFilter_[128] = {};
@@ -509,9 +530,21 @@ private:
         Effect effect;
         int parseMessages = 0;
         bool unreadable = true;
+        // Auf dem Arbeitsfaden fertig zusammengebaut (play + Reichweite).
+        std::unique_ptr<particles::System> system;
+        float reach = 0.0f;
+        float bestTimeMs = 0.0f;
+        std::shared_ptr<BrowserAssetCache> cache;
     };
     std::vector<LoadedEffect> readyEffects_;
     std::set<std::string> effectsInFlight_;
+    // Kindeffekte und Modelle fuer die Kacheln, von den Arbeitsfaeden mit
+    // eigenem Schloss gefuellt. Getrennt von childEffects_/modelCache_ des
+    // Editors: die gehoeren dem Hauptfaden.
+    std::shared_ptr<BrowserAssetCache> browserCache_;
+    // Zaehlt hoch, wenn der Bestand sich aendert: Auftraege einer aelteren
+    // Fassung brechen ab, statt noch eine halbe Sekunde zu rechnen.
+    std::atomic<int> browserJobGeneration_{0};
     void collectLoadedEffects();
     void drawBrowserTile(BrowserEntry& entry, float size);
     // Alle sichtbaren Kacheln in EIN Ansichtsziel zeichnen.
@@ -617,6 +650,25 @@ private:
     bool showWallColourDialog_ = false;
     bool showWindDialog_ = false;
     bool showSunDialog_ = false;
+    bool showSpriteDialog_ = false;
+    // Zustand des Sprite-Sheet-Dialogs. Bleibt zwischen zwei Aufrufen stehen:
+    // wer das zweite Sheet aus derselben Sammlung holt, hat dasselbe Raster.
+    struct SpriteImport {
+        std::string path;
+        image::Image sheet;
+        std::string loadError;
+        bool transparent = false;  // hat das Sheet durchsichtige Stellen?
+        render::TextureId texture = render::kNoTexture;
+        spritesheet::Layout layout;
+        spritesheet::Options options;
+        int output = 0;  // 0 Spielordner, 1 Ordner, 2 .pk3
+        std::string folderPath;
+        std::string pk3Path;
+        char name[64] = "spritesheet";
+        char folder[64] = "custom";
+        float previewStart = 0.0f;
+    };
+    SpriteImport sprite_;
     bool showDriverInfoDialog_ = false;
     std::vector<render::Probe> probes_;
     render::Backend activeBackend_ = render::Backend::Direct3D11;

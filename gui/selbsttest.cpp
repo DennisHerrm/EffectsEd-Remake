@@ -1395,6 +1395,274 @@ public:
         return s;
     }
 
+    // Sprite-Sheet -> Effekt (Effects > Import Sprite Sheet...).
+    //
+    // Nachgestellt wie das Beispiel aus dem Forum (14.11.2026): 5 x 4 Felder
+    // zu 176 px, die letzten drei leer. Erwartet: Raster 5 x 4 erkannt, 17
+    // Bilder, 128er TGA, oneshotanimMap, setShaderTime; pk3 und Ordner;
+    // Rueckfrage vor dem Ueberschreiben; Vorschau findet die Bilder.
+    static std::vector<Schritt> teilSpritesheet() {
+        std::vector<Schritt> s;
+        s.push_back(teil("spritesheet"));
+        frischesDokument(s);
+        const std::string sheetPfad = arbeitsOrdner + "/forum_explosion.tga";
+        const std::string pk3Pfad = arbeitsOrdner + "/zz_forum_explosion.pk3";
+        const std::string ordner = arbeitsOrdner + "/staging";
+        s.push_back(tu("Sheet 5 x 4 zu 176 px anlegen (drei leer)", [=] {
+            const int cols = 5, rows = 4, cell = 176;
+            const int w = cols * cell, h = rows * cell;
+            std::vector<unsigned char> rgba(static_cast<size_t>(w) * h * 4, 0);
+            for (int i = 0; i < cols * rows - 3; ++i) {
+                const int cx = (i % cols) * cell, cy = (i / cols) * cell;
+                const float radius = 20.0f + 3.5f * static_cast<float>(i);
+                for (int y = 0; y < cell; ++y) {
+                    for (int x = 0; x < cell; ++x) {
+                        const float dx = x - cell * 0.5f, dy = y - cell * 0.5f;
+                        const float d = std::sqrt(dx * dx + dy * dy);
+                        if (d > radius) continue;
+                        const size_t o = (static_cast<size_t>(cy + y) * w + cx + x) * 4;
+                        rgba[o + 0] = 255;
+                        rgba[o + 1] = static_cast<unsigned char>(255 - 10 * i);
+                        rgba[o + 2] = 40;
+                        rgba[o + 3] = static_cast<unsigned char>(255.0f * (1.0f - d / radius * 0.5f));
+                    }
+                }
+            }
+            const auto tga = image::encodeTga(rgba.data(), w, h);
+            schreibeDatei(sheetPfad, std::string(tga.begin(), tga.end()));
+            app->sprite_ = App::SpriteImport{};
+        }));
+        menue(s, Str::MenuEffects, Str::EffectsImportSprite);
+        s.push_back(warteBis("Sprite-Dialog offen", [] { return dialogOffen("###spritesheet"); }, 30));
+        s.push_back(dateiAntwort(sheetPfad));
+        s.push_back(klick(tr(Str::SpriteChoose), "###spritesheet"));
+        s.push_back(warte(3));
+        s.push_back(pruefSchritt("Sheet geladen, Raster 5 x 4 erkannt, Name aus dem Dateinamen", [] {
+            const auto& sp = app->sprite_;
+            return sp.sheet.ok && sp.sheet.width == 880 && sp.layout.columns == 5 && sp.layout.rows == 4 &&
+                   std::string(sp.name) == "forum_explosion" && sp.texture != render::kNoTexture;
+        }));
+        s.push_back(fensterFoto("spritesheet_dialog"));
+        // Ausgabe: .pk3
+        s.push_back(dateiAntwort(pk3Pfad));
+        s.push_back(klick(tr(Str::SpriteBrowse), "###spritesheet", 1));
+        s.push_back(warte(2));
+        s.push_back(pruefSchritt("pk3 als Ziel gewaehlt", [=] {
+            return app->sprite_.output == 2 && app->sprite_.pk3Path == pk3Pfad;
+        }));
+        s.push_back(klick(tr(Str::SpriteCreate), "###spritesheet"));
+        s.push_back(warteBis("Effekt erzeugt und geoeffnet", [] {
+            return !doc().effect.primitives.empty() && !dialogOffen("###spritesheet");
+        }, 120));
+        s.push_back(pruefSchritt("pk3: 17 Bilder + Shader + Effekt", [=] {
+            const auto names = assets::readZipDirectory(pk3Pfad);
+            int tga = 0;
+            bool shader = false, efxDatei = false;
+            for (const auto& n : names) {
+                if (n.size() > 4 && n.substr(n.size() - 4) == ".tga") ++tga;
+                if (n == "shaders/custom_forum_explosion.shader") shader = true;
+                if (n == "effects/custom/forum_explosion.efx") efxDatei = true;
+            }
+            return tga == 17 && shader && efxDatei && names.size() == 19;
+        }));
+        s.push_back(pruefSchritt("Effekt: ein Particle, life 850 (17 Bilder bei 20/s), setShaderTime, unser Shader", [] {
+            if (doc().effect.primitives.size() != 1) return false;
+            const auto& p = doc().effect.primitives[0];
+            return p.type == PrimitiveType::Particle && p.life.min == 850.0f &&
+                   (p.flags & kFlagSetShaderTime) != 0 && p.shaders.size() == 1 &&
+                   p.shaders[0] == "gfx/effects/custom/forum_explosion";
+        }));
+        s.push_back(pruefSchritt("der Bestand kennt den Effekt und den Shader aus dem pk3", [] {
+            const auto& a = app->assets_;
+            return std::find(a.effects.begin(), a.effects.end(), "custom/forum_explosion") != a.effects.end() &&
+                   std::find(a.shaders.begin(), a.shaders.end(), "gfx/effects/custom/forum_explosion") !=
+                       a.shaders.end();
+        }));
+        s.push_back(pruefSchritt("die Vorschau laeuft gleich los", [] { return app->playing(); }));
+        s.push_back(warte(40));
+        s.push_back(pruefSchritt("die Vorschau zeichnet, und kein Bild der Folge fehlt", [] {
+            for (const auto& m : app->missingTextures_) {
+                if (m.find("forum_explosion") != std::string::npos) return false;
+            }
+            return app->lastDrawn_ > 0;
+        }));
+        s.push_back(fensterFoto("spritesheet_editor"));
+        // Speichern und wieder oeffnen: bleibt ein gewoehnlicher Effekt.
+        const std::string gespeichert = arbeitsOrdner + "/forum_explosion_saved.efx";
+        s.push_back(dateiAntwort(gespeichert));
+        menue(s, Str::MenuFile, Str::FileSaveAs);
+        auto vorher = std::make_shared<std::string>();
+        s.push_back(tu("Text merken", [=] { *vorher = text(); }));
+        frischesDokument(s);
+        s.push_back(dateiAntwort(gespeichert));
+        menue(s, Str::MenuFile, Str::FileOpen);
+        s.push_back(pruefSchritt("gespeichert und wieder geoeffnet: gleicher Effekt, bearbeitbar",
+                                 [=] { return text() == *vorher && doc().effect.primitives.size() == 1; }));
+
+        // Ausgabe: Ordner, mit Ueberblenden (zwei Stufen, Endbild).
+        menue(s, Str::MenuEffects, Str::EffectsImportSprite);
+        s.push_back(warteBis("Sprite-Dialog wieder offen", [] { return dialogOffen("###spritesheet"); }, 30));
+        s.push_back(pruefSchritt("der Dialog behaelt Sheet und Raster", [] {
+            return app->sprite_.sheet.ok && app->sprite_.layout.columns == 5;
+        }));
+        s.push_back(klick(tr(Str::SpriteCrossfade), "###spritesheet"));
+        s.push_back(dateiAntwort(ordner));
+        s.push_back(klick(tr(Str::SpriteBrowse), "###spritesheet", 0));
+        s.push_back(warte(2));
+        s.push_back(klick(tr(Str::SpriteCreate), "###spritesheet"));
+        s.push_back(warteBis("Effekt aus dem Ordner geoeffnet", [=] {
+            return doc().filePath.find("staging") != std::string::npos;
+        }, 120));
+        s.push_back(pruefSchritt("Ordner: Bilder, Endbild, Shader mit zwei Stufen, Effekt", [=] {
+            const std::string shader = leseDatei(ordner + "/shaders/custom_forum_explosion.shader");
+            const bool ende = std::filesystem::exists(
+                std::filesystem::path(ordner + "/gfx/effects/custom/forum_explosion/forum_explosion_end.tga"));
+            const bool efxDatei = std::filesystem::exists(std::filesystem::path(ordner + "/effects/custom/forum_explosion.efx"));
+            return ende && efxDatei && shader.find("inversesawtooth") != std::string::npos &&
+                   shader.find(" sawtooth 0 1 0") != std::string::npos;
+        }));
+        // Noch einmal in denselben Ordner: erst fragen, dann ersetzen.
+        menue(s, Str::MenuEffects, Str::EffectsImportSprite);
+        s.push_back(warteBis("Sprite-Dialog ein drittes Mal", [] { return dialogOffen("###spritesheet"); }, 30));
+        s.push_back(klick(tr(Str::SpriteCreate), "###spritesheet"));
+        s.push_back(warteBis("Rueckfrage vor dem Ueberschreiben", [] { return dialogOffen("###confirm"); }, 30));
+        s.push_back(pruefSchritt("die Rueckfrage nennt die vorhandenen Dateien", [] {
+            return app->confirmText_.find("forum_explosion") != std::string::npos;
+        }));
+        s.push_back(klick(tr(Str::MsgYes), "###confirm"));
+        s.push_back(warte(5));
+        s.push_back(pruefSchritt("nach Ja geschrieben und geoeffnet", [] {
+            return doc().filePath.find("staging") != std::string::npos && !doc().effect.primitives.empty();
+        }));
+        s.push_back(tu("Sprite-Dialog zuruecksetzen", [] {
+            app->releaseSpriteTexture();
+            app->sprite_ = App::SpriteImport{};
+        }));
+        return s;
+    }
+
+    // Messung der Bibliothek (nicht in "alles"): Spielpfad setzen, Startseite
+    // zeigen, warten bis alle sichtbaren Kacheln stehen, dann gleichmaessig
+    // bis ans Ende rollen und wieder warten. Je Bild: Zeit, Aufbau,
+    // Zeichnen, neu gezeichnete Kacheln, Ladestau. Ergebnis in
+    // bibliothek_zeit.tsv und als Zusammenfassung im Protokoll.
+    struct BibMessung {
+        std::chrono::steady_clock::time_point start, letztes;
+        std::string tsv;
+        int bilder = 0;
+        double summeMs = 0.0, groesstesMs = 0.0;
+        int ueber33 = 0;
+        double bisFertigMs = 0.0;
+    };
+    static ImGuiWindow* bibliotheksRaster() {
+        for (ImGuiWindow* w : GImGui->Windows) {
+            if (w && w->Name && std::strstr(w->Name, "##browserGrid") && w->WasActive) return w;
+        }
+        return nullptr;
+    }
+    static bool bibliothekRuhig() {
+        if (!app->effectsInFlight_.empty() || !app->readyEffects_.empty() || !app->texturesInFlight_.empty()) {
+            return false;
+        }
+        for (const auto& slot : app->browserSlots_) {
+            if (!slot.entry->everDrawn || !slot.entry->loaded) return false;
+        }
+        return !app->browserSlots_.empty();
+    }
+    static void bibZeile(BibMessung& m, const char* phase) {
+        const auto jetzt = std::chrono::steady_clock::now();
+        const double ms = std::chrono::duration<double, std::milli>(jetzt - m.letztes).count();
+        m.letztes = jetzt;
+        ++m.bilder;
+        m.summeMs += ms;
+        m.groesstesMs = std::max(m.groesstesMs, ms);
+        if (ms > 33.3) ++m.ueber33;
+        char zeile[256];
+        ImGuiWindow* raster = bibliotheksRaster();
+        std::snprintf(zeile, sizeof(zeile), "%s\t%d\t%.2f\t%.2f\t%.2f\t%d\t%d\t%d\t%d\t%.0f\n", phase, m.bilder, ms,
+                      app->browserBuildMs_, app->browserDrawMs_, app->browserRedrawn_,
+                      static_cast<int>(app->effectsInFlight_.size() + app->readyEffects_.size()),
+                      static_cast<int>(app->texturesInFlight_.size()), app->browserVisible_,
+                      raster ? static_cast<double>(raster->Scroll.y) : -1.0);
+        m.tsv += zeile;
+    }
+    static std::vector<Schritt> teilBibliothekZeit() {
+        std::vector<Schritt> s;
+        s.push_back(teil("bibliothekzeit"));
+        auto m = std::make_shared<BibMessung>();
+        s.push_back(tu("Spielpfade setzen und Bestand lesen", [] {
+            app->settings_.gamePath = spielpfad();
+            app->settings_.extraGamePaths.clear();
+            if (const char* extra = std::getenv("EFXED_EXTRAPFADE"); extra && extra[0]) {
+                std::string rest = extra;
+                size_t at = 0;
+                while (at <= rest.size()) {
+                    const size_t end = rest.find(';', at);
+                    const std::string one = rest.substr(at, end == std::string::npos ? std::string::npos : end - at);
+                    if (!one.empty()) app->settings_.extraGamePaths.push_back(one);
+                    if (end == std::string::npos) break;
+                    at = end + 1;
+                }
+            }
+            const auto t0 = std::chrono::steady_clock::now();
+            app->rescanAssets();
+            diag::info("Messung: Bestand gelesen in " +
+                       std::to_string(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count()) +
+                       " ms, " + std::to_string(app->assets_.effects.size()) + " Effekte");
+            app->browserTileSize_ = 150.0f;
+        }));
+        s.push_back(tu("Bibliothek zeigen, Uhr an", [m] {
+            app->startTabActive_ = true;
+            app->wantStartTab_ = true;
+            app->refreshBrowser();
+            m->tsv = "phase\tbild\tms\taufbau_ms\tzeichnen_ms\tneu\teffekte_offen\tbilder_offen\tsichtbar\tscroll\n";
+            m->start = m->letztes = std::chrono::steady_clock::now();
+        }));
+        s.push_back({"Messung: erste Seite fuellen", [m](int b) {
+                         bibZeile(*m, "erste_seite");
+                         if (b > 5 && bibliothekRuhig()) {
+                             m->bisFertigMs = std::chrono::duration<double, std::milli>(m->letztes - m->start).count();
+                             return true;
+                         }
+                         return b > 20000;
+                     }});
+        auto erste = std::make_shared<double>(0.0);
+        auto rollStart = std::make_shared<std::chrono::steady_clock::time_point>();
+        s.push_back(tu("erste Seite merken", [m, erste, rollStart] {
+            *erste = m->bisFertigMs;
+            *rollStart = std::chrono::steady_clock::now();
+        }));
+        // 40 px je Bild: bei 60 Bildern je Sekunde ~2400 px/s, zuegiges Rollen.
+        s.push_back({"Messung: bis ans Ende rollen", [m](int b) {
+                         bibZeile(*m, "rollen");
+                         ImGuiWindow* raster = bibliotheksRaster();
+                         if (!raster) return b > 600;
+                         if (raster->Scroll.y >= raster->ScrollMax.y - 0.5f && b > 2) return true;
+                         ImGui::SetScrollY(raster, std::min(raster->ScrollMax.y, raster->Scroll.y + 40.0f));
+                         return b > 100000;
+                     }});
+        auto rollEnde = std::make_shared<std::chrono::steady_clock::time_point>();
+        s.push_back(tu("Rollende merken", [rollEnde] { *rollEnde = std::chrono::steady_clock::now(); }));
+        s.push_back({"Messung: letzte Seite fuellen", [m](int b) {
+                         bibZeile(*m, "letzte_seite");
+                         return (b > 5 && bibliothekRuhig()) || b > 20000;
+                     }});
+        s.push_back(tu("Messung schreiben", [m, erste, rollStart, rollEnde] {
+            const auto ende = std::chrono::steady_clock::now();
+            schreibeDatei(paths::configDir() + "/bibliothek_zeit.tsv", m->tsv);
+            char z[512];
+            std::snprintf(z, sizeof(z),
+                          "Messung Bibliothek: erste Seite fertig nach %.0f ms; Rollen %.0f ms; letzte Seite fertig %.0f ms "
+                          "nach Rollende; %d Bilder, Mittel %.2f ms, groesstes %.1f ms, %d Bilder ueber 33 ms",
+                          *erste, std::chrono::duration<double, std::milli>(*rollEnde - *rollStart).count(),
+                          std::chrono::duration<double, std::milli>(ende - *rollEnde).count(), m->bilder,
+                          m->summeMs / std::max(1, m->bilder), m->groesstesMs, m->ueber33);
+            diag::info(z);
+            meldeOk(z);
+        }));
+        return s;
+    }
+
     static std::vector<Schritt> teilSpinner() {
         std::vector<Schritt> s;
         s.push_back(teil("spinner"));
@@ -4202,6 +4470,7 @@ public:
             {"nachlegen", &teilNachlegen},
             {"spinner", &teilSpinner},
             {"tippen", &teilTippen},
+            {"spritesheet", &teilSpritesheet},
             {"archiv", &teilArchiv},
             {"update", &teilUpdate},
             {"fehlersuche", &teilFehlersuche},
@@ -4211,6 +4480,7 @@ public:
         // Nicht in "alles": dauert mit allen Effekten mehrere Minuten.
         const Teil extra[] = {
             {"darstellung", &teilDarstellung},
+            {"bibliothekzeit", &teilBibliothekZeit},
             {"updatenetz", &teilUpdateNetz},
         };
         std::vector<Schritt> s;

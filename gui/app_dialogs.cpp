@@ -1030,6 +1030,7 @@ void App::drawDialogs() {
     drawDriverInfoDialog();
     drawChangelogWindow();
     drawSunDialog();
+    drawSpriteSheetDialog();
     drawWindDialog();
     drawPickerDialog();
     drawGamePathDialog();

@@ -350,6 +350,62 @@ const Entry kTable[] = {
     {"Reset the view", "Ansicht zurücksetzen", "重置视图", "視点をリセット"},  // ViewReset
     {"Grid over the textured room", "Gitter über dem texturierten Raum", "在带纹理的房间上叠加网格", "テクスチャ付きの部屋にグリッドを重ねる"},  // SettingsGridWalls
     {"Draws the grid on top of the textured floor, walls and ceiling, so you can measure heights against the room. \"Draw Grid\" alone shows only the outline, like the old EffectsEd.", "Zeichnet das Gitter über den texturierten Boden, die Wände und die Decke, damit man Höhen am Raum abmessen kann. \"Gitter anzeigen\" allein zeigt nur den Umriss, wie das alte EffectsEd.", "在带纹理的地面、墙壁和天花板上绘制网格，便于对照房间测量高度。单独使用“显示网格”时只显示轮廓，与旧版 EffectsEd 相同。", "テクスチャ付きの床・壁・天井の上にグリッドを描き、部屋を基準に高さを測れるようにします。「グリッドを表示」だけでは旧 EffectsEd と同じく輪郭のみを表示します。"},  // HintGridWalls
+    {"Import Sprite Sheet...", "Sprite-Sheet importieren...", "导入序列帧图集...", "スプライトシートを読み込む..."},  // EffectsImportSprite
+    {"Turn an animated sprite sheet (frames in a grid) into a new effect with its images and shader", "Ein animiertes Sprite-Sheet (Bilder im Raster) in einen neuen Effekt mit Bildern und Shader umwandeln", "将动画序列帧图集（按网格排列的帧）转换为带图像和着色器的新特效", "アニメーションのスプライトシート（グリッド状のフレーム）を、画像とシェーダー付きの新しいエフェクトに変換します"},  // HintImportSprite
+    {"Import Sprite Sheet", "Sprite-Sheet importieren", "导入序列帧图集", "スプライトシートを読み込む"},  // SpriteTitle
+    {"Choose image...", "Bild wählen...", "选择图像...", "画像を選択..."},  // SpriteChoose
+    {"Choose a PNG, TGA or JPG image with the frames arranged in a grid.", "Ein PNG-, TGA- oder JPG-Bild wählen, in dem die Bilder im Raster liegen.", "请选择帧按网格排列的 PNG、TGA 或 JPG 图像。", "フレームがグリッド状に並んだ PNG、TGA、JPG 画像を選んでください。"},  // SpriteNoImage
+    {"Could not read the image:", "Das Bild ließ sich nicht lesen:", "无法读取图像：", "画像を読み込めませんでした："},  // SpriteLoadFailed
+    {"Grid", "Raster", "网格", "グリッド"},  // SpriteGroupGrid
+    {"Columns", "Spalten", "列数", "列数"},  // SpriteColumns
+    {"Rows", "Zeilen", "行数", "行数"},  // SpriteRows
+    {"First frame", "Erstes Bild", "起始帧", "最初のフレーム"},  // SpriteFirst
+    {"Frames (0 = to the end)", "Bilder (0 = bis zum Ende)", "帧数（0 = 直到最后）", "フレーム数（0 = 最後まで）"},  // SpriteCount
+    {"Read column by column", "Spalte für Spalte lesen", "按列读取", "列ごとに読む"},  // SpriteColumnsFirst
+    {"Margin (px)", "Rand (px)", "边距（像素）", "余白（px）"},  // SpriteMargin
+    {"Spacing (px)", "Abstand (px)", "间距（像素）", "間隔（px）"},  // SpriteSpacing
+    {"Leave out empty frames at the end", "Leere Bilder am Ende weglassen", "省略末尾的空帧", "末尾の空フレームを省く"},  // SpriteSkipEmpty
+    {"Animation", "Animation", "动画", "アニメーション"},  // SpriteGroupAnim
+    {"Frames per second", "Bilder pro Sekunde", "每秒帧数", "毎秒フレーム数"},  // SpriteFps
+    {"%d frames, %.2f s", "%d Bilder, %.2f s", "%d 帧，%.2f 秒", "%d フレーム、%.2f 秒"},  // SpriteDuration
+    {"Loop (animMap) instead of playing once", "Schleife (animMap) statt einmal abspielen", "循环播放（animMap），而不是只播放一次", "1 回再生ではなくループ（animMap）"},  // SpriteLoop
+    {"Blend between frames (like Raven's explosions)", "Zwischen den Bildern überblenden (wie Ravens Explosionen)", "在帧之间淡入淡出（与 Raven 的爆炸效果相同）", "フレーム間をクロスフェード（Raven の爆発と同じ）"},  // SpriteCrossfade
+    {"Look", "Aussehen", "外观", "見た目"},  // SpriteGroupLook
+    {"Preset", "Vorlage", "预设", "プリセット"},  // SpritePreset
+    {"Explosion", "Explosion", "爆炸", "爆発"},  // PresetExplosion
+    {"Smoke", "Rauch", "烟雾", "煙"},  // PresetSmoke
+    {"Muzzle flash", "Mündungsfeuer", "枪口火焰", "マズルフラッシュ"},  // PresetMuzzle
+    {"Energy / magic", "Energie / Magie", "能量 / 魔法", "エネルギー / 魔法"},  // PresetEnergy
+    {"Blending", "Mischung", "混合方式", "合成方法"},  // SpriteBlendLabel
+    {"Transparency from brightness (for images on black)", "Durchsichtigkeit aus der Helligkeit (für Bilder auf Schwarz)", "按亮度生成透明度（用于黑底图像）", "明るさから透明度を作る（黒背景の画像用）"},  // SpriteAlphaFromBrightness
+    {"Image size", "Bildgröße", "图像尺寸", "画像サイズ"},  // SpriteFrameSize
+    {"Automatic (%d)", "Automatisch (%d)", "自动（%d）", "自動（%d）"},  // SpriteFrameSizeAuto
+    {"Particle size", "Teilchengröße", "粒子大小", "パーティクルのサイズ"},  // SpriteParticleSize
+    {"Save", "Speichern", "保存", "保存"},  // SpriteGroupOutput
+    {"Effect name", "Effektname", "特效名称", "エフェクト名"},  // SpriteName
+    {"Folder under effects/", "Ordner unter effects/", "effects/ 下的文件夹", "effects/ 内のフォルダー"},  // SpriteFolder
+    {"Into the game folder:", "In den Spielordner:", "写入游戏文件夹：", "ゲームフォルダーへ："},  // SpriteOutGame
+    {"Into a folder:", "In einen Ordner:", "写入文件夹：", "フォルダーへ："},  // SpriteOutFolder
+    {"Into a .pk3 file:", "In eine .pk3-Datei:", "写入 .pk3 文件：", ".pk3 ファイルへ："},  // SpriteOutPk3
+    {"Choose...", "Wählen...", "选择...", "選択..."},  // SpriteBrowse
+    {"(no game path set)", "(kein Spielpfad eingestellt)", "（未设置游戏路径）", "（ゲームパス未設定）"},  // SpriteNoGamePath
+    {"Create effect", "Effekt erzeugen", "创建特效", "エフェクトを作成"},  // SpriteCreate
+    {"Frame %d x %d px, written as %d x %d px", "Bild %d x %d px, geschrieben als %d x %d px", "帧 %d x %d 像素，写出为 %d x %d 像素", "フレーム %d x %d px、%d x %d px で書き出し"},  // SpriteCellInfo
+    {"%d of %d frames in the range", "%d von %d Bildern im Bereich", "范围内 %d / %d 帧", "範囲内 %d / %d フレーム"},  // SpriteRange
+    {"More than %d frames: the engine plays at most %d per sequence. Frames are thinned out evenly and the speed is lowered so the duration stays the same.", "Mehr als %d Bilder: Die Engine spielt höchstens %d je Bildfolge. Die Bilder werden gleichmäßig ausgedünnt und die Geschwindigkeit so verringert, dass die Dauer gleich bleibt.", "超过 %d 帧：引擎每个序列最多播放 %d 帧。将均匀抽取帧，并降低速度以保持总时长不变。", "%d フレームを超えています：エンジンは 1 シーケンスにつき最大 %d フレームまで再生します。フレームを均等に間引き、長さが変わらないよう速度を下げます。"},  // SpriteTooMany
+    {"The image has no transparency. Alpha blended it shows as a square: choose additive or transparency from brightness.", "Das Bild hat keine Durchsichtigkeit. Alphagemischt erscheint es als Quadrat: additiv wählen oder Durchsichtigkeit aus der Helligkeit.", "该图像没有透明度。使用透明混合时会显示为方块：请选择叠加，或按亮度生成透明度。", "この画像には透明部分がありません。アルファ合成では四角く表示されます。加算を選ぶか、明るさから透明度を作ってください。"},  // SpriteNoAlpha
+    {"When blending between frames, the shader sets the brightness; the effect's colour curve has no effect then.", "Beim Überblenden bestimmt der Shader die Helligkeit; die Farbkurve des Effekts wirkt dann nicht.", "在帧间淡入淡出时，亮度由着色器决定，特效的颜色曲线将不起作用。", "クロスフェード時は明るさをシェーダーが決めるため、エフェクトの色カーブは効きません。"},  // SpriteCrossfadeNote
+    {"The grid does not fit the image.", "Das Raster passt nicht ins Bild.", "网格与图像不匹配。", "グリッドが画像に合いません。"},  // SpriteErrGrid
+    {"There is no visible frame in the chosen range.", "Im gewählten Bereich ist kein sichtbares Bild.", "所选范围内没有可见的帧。", "選択した範囲に表示できるフレームがありません。"},  // SpriteErrFrames
+    {"Enter an effect name (letters, digits, _).", "Einen Effektnamen eingeben (Buchstaben, Ziffern, _).", "请输入特效名称（字母、数字、_）。", "エフェクト名を入力してください（英字、数字、_）。"},  // SpriteErrName
+    {"Frames per second must be greater than 0.", "Bilder pro Sekunde müssen größer als 0 sein.", "每秒帧数必须大于 0。", "毎秒フレーム数は 0 より大きくしてください。"},  // SpriteErrFps
+    {"Choose where to save.", "Wählen, wohin gespeichert wird.", "请选择保存位置。", "保存先を選んでください。"},  // SpriteErrOutput
+    {"These files exist already and will be replaced:", "Diese Dateien gibt es schon, sie werden ersetzt:", "以下文件已存在，将被替换：", "以下のファイルは既に存在するため、置き換えられます："},  // SpriteOverwrite
+    {"Created %s: %d frames, %d files in %s", "%s erzeugt: %d Bilder, %d Dateien in %s", "已创建 %s：%d 帧，%d 个文件，位于 %s", "%s を作成しました：%d フレーム、%d ファイル（%s）"},  // SpriteDone
+    {"Could not write:", "Ließ sich nicht schreiben:", "无法写入：", "書き込めませんでした："},  // SpriteWriteFailed
+    {"Images (*.png;*.tga;*.jpg)", "Bilder (*.png;*.tga;*.jpg)", "图像 (*.png;*.tga;*.jpg)", "画像 (*.png;*.tga;*.jpg)"},  // SpriteFilterImages
+    {"PK3 archive (*.pk3)", "PK3-Archiv (*.pk3)", "PK3 压缩包 (*.pk3)", "PK3 アーカイブ (*.pk3)"},  // SpriteFilterPk3
+    {"Preview", "Vorschau", "预览", "プレビュー"},  // SpritePreview
     {"Invert Y-Axis (Mouse Look)", "Y-Achse umkehren (Maus)", "反转 Y 轴（鼠标视角）", "Y 軸を反転（マウス視点）"},  // ViewInvertY
     {"Off: mouse forward tilts the view up, like the old EffectsEd. On: mouse forward tilts the view down.", "Aus: Maus nach vorn hebt den Blick, wie im alten EffectsEd. An: Maus nach vorn senkt den Blick.", "关闭：鼠标向前移动时视角抬高，与旧版 EffectsEd 相同。开启：鼠标向前移动时视角降低。", "オフ：マウスを前に動かすと視点が上を向きます（旧 EffectsEd と同じ）。オン：マウスを前に動かすと視点が下を向きます。"},  // HintInvertY
     {"substitute", "Ersatz", "替代", "代替"},  // ShaderFallback

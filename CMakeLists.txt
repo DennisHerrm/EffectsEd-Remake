@@ -64,6 +64,7 @@ add_library(efxcore STATIC
     src/timeline.cpp
     src/tiles.cpp
     src/sound.cpp
+    src/spritesheet.cpp
     src/update.cpp
     src/changelog.cpp
     src/particles.cpp
@@ -149,6 +150,7 @@ if(WIN32)
     gui/app_dialogs.cpp
     gui/app_properties.cpp
     gui/app_browser.cpp
+    gui/app_sprites.cpp
         gui/renderer_d3d11.cpp
         gui/registry_win32.cpp
         # Auto-Updater: GitHub-Releases ueber WinHTTP.

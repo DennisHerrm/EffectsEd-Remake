@@ -731,7 +731,12 @@ void App::requestBrowserEntry(BrowserEntry& entry) {
 
     const std::string name = entry.name;
     const std::string base = settings_.gamePath;
-    jobs::pool().post([this, name, base] {
+    if (!browserCache_) browserCache_ = std::make_shared<BrowserAssetCache>();
+    const std::shared_ptr<BrowserAssetCache> cache = browserCache_;
+    const int generation = browserJobGeneration_.load();
+    jobs::pool().post([this, name, base, cache, generation] {
+        // Der Bestand hat sich inzwischen geaendert: nichts mehr tun.
+        if (generation != browserJobGeneration_.load()) return;
         auto ready = std::make_shared<LoadedEffect>();
         ready->name = name;
 
@@ -749,6 +754,65 @@ void App::requestBrowserEntry(BrowserEntry& entry) {
                 ready->parseMessages = static_cast<int>(result.diagnostics.size());
                 ready->unreadable = false;
             }
+        }
+
+        // Auch den Zusammenbau hier, nicht auf dem Hauptfaden.
+        //
+        // Gemessen beim Durchrollen der Bibliothek (707 Effekte, 14.11.2026):
+        // der Zusammenbau auf dem Hauptfaden kostete 9,6 s, davon 6,0 s fuer
+        // describePreview (Blitzeffekte bis 420 ms je Kachel), 0,85 s fuer
+        // md3-Modelle und 0,77 s fuer Kindeffekte — die Bilder mit 0,3 bis
+        // 1,4 s Stillstand. Hier laeuft das auf allen Kernen nebenher.
+        if (!ready->unreadable && generation == browserJobGeneration_.load()) {
+            const auto childLoader = [this, base, cache](const std::string& child) -> const Effect* {
+                {
+                    std::lock_guard<std::mutex> lock(cache->mutex);
+                    const auto found = cache->effects.find(child);
+                    if (found != cache->effects.end()) return found->second.get();
+                }
+                std::unique_ptr<Effect> loaded;
+                const auto at = assets::findEffect(assets_, base, child);
+                if (at.found) {
+                    std::string error;
+                    const auto bytes = assets::readFile(base, at, &error);
+                    if (!bytes.empty()) {
+                        auto result = read(std::string(bytes.begin(), bytes.end()));
+                        if (!result.effect.primitives.empty()) {
+                            loaded = std::make_unique<Effect>(std::move(result.effect));
+                        }
+                    }
+                }
+                std::lock_guard<std::mutex> lock(cache->mutex);
+                // Hat ein anderer Faden ihn inzwischen geladen, gilt seiner.
+                return cache->effects.emplace(child, std::move(loaded)).first->second.get();
+            };
+            const auto modelLoader = [this, base, cache](const std::string& model) -> const md3::Model* {
+                {
+                    std::lock_guard<std::mutex> lock(cache->mutex);
+                    const auto found = cache->models.find(model);
+                    if (found != cache->models.end()) return found->second.get();
+                }
+                std::unique_ptr<md3::Model> loaded;
+                const auto at = assets::findModel(assets_, base, model);
+                if (at.found) {
+                    std::string error;
+                    const auto bytes = assets::readFile(base, at, &error);
+                    if (!bytes.empty()) {
+                        md3::Model parsed = md3::parse(bytes.data(), bytes.size());
+                        if (parsed.ok) loaded = std::make_unique<md3::Model>(std::move(parsed));
+                    }
+                }
+                std::lock_guard<std::mutex> lock(cache->mutex);
+                return cache->models.emplace(model, std::move(loaded)).first->second.get();
+            };
+            ready->system = std::make_unique<particles::System>();
+            // Wie ensureBrowserEntry: eigener Ausgangswert je Kachel, Vorlauf.
+            ready->system->play(ready->effect, static_cast<unsigned>(std::hash<std::string>{}(name)) | 1u, {},
+                                {}, childLoader, {}, true, {}, modelLoader);
+            const auto preview = particles::describePreview(*ready->system);
+            ready->reach = preview.reach;
+            ready->bestTimeMs = preview.bestTimeMs;
+            ready->cache = cache;
         }
         jobs::pool().postToMain([this, ready] {
             readyEffects_.push_back(std::move(*ready));
@@ -774,7 +838,10 @@ void App::collectLoadedEffects() {
     //
     // Nicht mehr: bei einem Sprung ans Listenende kaemen sonst fuenfzig auf
     // einmal, und dann ist der Ruckler wieder da, nur an anderer Stelle.
-    constexpr size_t kAssemblePerFrame = 12;
+    //
+    // Seit der Zusammenbau auf den Arbeitsfaeden laeuft, ist das Uebernehmen
+    // nur noch ein Umhaengen (ein paar Mikrosekunden) — also mehr je Bild.
+    constexpr size_t kAssemblePerFrame = 48;
     const size_t count = std::min(kAssemblePerFrame, readyEffects_.size());
 
     for (size_t i = 0; i < count; ++i) {
@@ -787,6 +854,22 @@ void App::collectLoadedEffects() {
             entry.parseMessages = ready.parseMessages;
             entry.unreadable = ready.unreadable;
             entry.parsed = true;
+            if (ready.system) {
+                // Schon zusammengebaut: nur uebernehmen. Die Zeiger des
+                // Systems in den Effekt bleiben gueltig — die Primitiven
+                // liegen im Speicher des Vektors, und der zieht beim
+                // Verschieben mit um, statt kopiert zu werden.
+                entry.system = std::move(*ready.system);
+                entry.cache = std::move(ready.cache);
+                entry.reach = ready.reach;
+                entry.bestTimeMs = ready.bestTimeMs;
+                const float repeat = static_cast<float>(effectiveRepeatDelay(entry.effect));
+                entry.clock.setDuration(repeat >= 1.0f ? repeat : entry.system.durationMs());
+                entry.clock.setEndMode(timeline::EndMode::Repeat);
+                entry.clock.play();
+                prefetchTextures(entry.effect);
+                entry.loaded = true;
+            }
             // Die Kachel wurde beim Auftauchen schon einmal (leer) gezeichnet
             // und kommt danach nur bei Zeigerkontakt wieder dran. Ohne diese
             // Zeile blieb sie schwarz — in der grossen Bibliothek fiel es

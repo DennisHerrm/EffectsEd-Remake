@@ -35,7 +35,7 @@ fi
 # App, was hier niemand sah und erst der Kreuzbau meldete.
 FILES="gui/app.cpp gui/app_widgets.cpp gui/app_panels.cpp \
        gui/app_playback.cpp gui/app_resources.cpp gui/app_dialogs.cpp \
-       gui/app_properties.cpp gui/app_browser.cpp gui/icons.cpp"
+       gui/app_properties.cpp gui/app_browser.cpp gui/app_sprites.cpp gui/icons.cpp"
 
 status=0
 for file in $FILES; do

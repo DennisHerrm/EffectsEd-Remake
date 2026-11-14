@@ -8,6 +8,25 @@ namespace {
 // Reihenfolge (testChangelog zaehlt nach). Menuenamen so, wie sie in der
 // jeweiligen Sprache im Programm stehen.
 const std::vector<Entry> kEntries = {
+    {83, "2026-11-14",
+     {
+         // English
+         "New: Effects \xE2\x86\x92 Import Sprite Sheet... turns an animated sprite sheet (frames in a grid) into an effect: single images, a shader with oneshotanimMap and a particle with setShaderTime, the way Raven built its own explosions. Grid, range, speed, loop, blending between frames and presets; saves into the game folder, another folder or a .pk3.\n"
+         "Sheets with more than 32 frames are thinned out evenly (the engine plays at most 32 per sequence), and frame sizes are converted to powers of two.\n"
+         "The effect library no longer stalls while scrolling: tiles are prepared on all processor cores (scrolling through 707 effects: 16 s \xE2\x86\x92 1.4 s).",
+         // Deutsch
+         "Neu: Effekte \xE2\x86\x92 Sprite-Sheet importieren... macht aus einem animierten Sprite-Sheet (Bilder im Raster) einen Effekt: Einzelbilder, einen Shader mit oneshotanimMap und ein Teilchen mit setShaderTime, so wie Raven seine eigenen Explosionen gebaut hat. Raster, Bereich, Geschwindigkeit, Schleife, \xC3\x9C" "berblenden zwischen den Bildern und Vorlagen; speichert in den Spielordner, einen anderen Ordner oder eine .pk3.\n"
+         "Sheets mit mehr als 32 Bildern werden gleichm\xC3\xA4\xC3\x9Fig ausged\xC3\xBCnnt (die Engine spielt h\xC3\xB6" "chstens 32 je Bildfolge), Bildgr\xC3\xB6\xC3\x9F" "en werden auf Zweierpotenzen umgerechnet.\n"
+         "Die Effektbibliothek h\xC3\xA4ngt beim Rollen nicht mehr: die Kacheln werden auf allen Prozessorkernen vorbereitet (707 Effekte durchrollen: 16 s \xE2\x86\x92 1,4 s).",
+         // 中文
+         "新增：特效 \xE2\x86\x92 导入序列帧图集... 可将动画序列帧图集（按网格排列的帧）转换为特效：单独的图像、使用 oneshotanimMap 的着色器以及带 setShaderTime 的粒子，与 Raven 制作自己的爆炸效果的方式相同。支持网格、范围、速度、循环、帧间淡入淡出和预设；可保存到游戏文件夹、其他文件夹或 .pk3 文件。\n"
+         "超过 32 帧的图集会被均匀抽帧（引擎每个序列最多播放 32 帧），帧尺寸会转换为 2 的幂。\n"
+         "特效库在滚动时不再卡顿：缩略图在所有处理器核心上准备（滚动浏览 707 个特效：16 秒 \xE2\x86\x92 1.4 秒）。",
+         // 日本語
+         "新機能：エフェクト \xE2\x86\x92 スプライトシートを読み込む... で、アニメーションのスプライトシート（グリッド状のフレーム）をエフェクトに変換します。個別の画像、oneshotanimMap を使うシェーダー、setShaderTime 付きのパーティクルを作成します。Raven 自身の爆発と同じ作り方です。グリッド、範囲、速度、ループ、フレーム間のクロスフェード、プリセットに対応し、ゲームフォルダー、別のフォルダー、.pk3 に保存できます。\n"
+         "32 フレームを超えるシートは均等に間引かれ（エンジンは 1 シーケンスにつき最大 32 フレームまで再生）、フレームサイズは 2 のべき乗に変換されます。\n"
+         "エフェクトライブラリはスクロール中に止まらなくなりました：サムネイルをすべてのプロセッサコアで準備します（707 個のエフェクトをスクロール：16 秒 \xE2\x86\x92 1.4 秒）。",
+     }},
     {82, "2026-11-14",
      {
          // English

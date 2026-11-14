@@ -285,6 +285,8 @@ void App::drawMenuBar() {
     if (ImGui::BeginMenu(tr(Str::MenuEffects))) {
         if (ImGui::MenuItem(tr(Str::EffectsNewSegment), "Ins")) showNewSegmentDialog_ = true;
         hint(Str::HintNewSegment);
+        if (ImGui::MenuItem(tr(Str::EffectsImportSprite))) showSpriteDialog_ = true;
+        hint(Str::HintImportSprite);
         {
             // "Segment Enabled" aus dem Original. Das Haekchen steht in der
             // Segmentliste, aber auch hier, wie dort.

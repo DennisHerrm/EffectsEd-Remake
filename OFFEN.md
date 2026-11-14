@@ -164,3 +164,38 @@ Gefunden, nicht geändert:
 - Der Selbsttest-Teil `update` ersetzt die laufende exe durch eine Attrappe
   (`efxed.exe` = "NEUE EXE (Attrappe)", die echte als `efxed.exe.alt`).
   `alles` deshalb aus einer Kopie starten, nicht aus build\Release.
+
+## Nachtrag 14.11.2026 (2): Sprite-Sheet-Import, schnellere Bibliothek
+
+**Effects > Import Sprite Sheet...** (Wunsch aus dem Forum, Vorschlag als PDF):
+ein Bild mit den Bildern einer Animation im Raster wird ein Effekt —
+Einzelbilder als 32-Bit-TGA (quadratisch, Zweierpotenz, mit Alpha
+vormultipliziert umgerechnet), ein Shader mit `oneshotanimMap` (bzw.
+`animMap` als Schleife) und ein Particle-Segment mit `setShaderTime`. Das ist
+Ravens eigener Weg (gfx/exp/explosion1, rocket_explosion, wookie, demp2; 53
+von 54 Effekten mit solchen Shadern setzen setShaderTime). Nicht wie im
+Vorschlag ein Segment je Bild: das stoesst an `FX_MAX_EFFECT_COMPONENTS 24`
+und zerfaellt, sobald sich das Teilchen bewegt oder mehrere entstehen.
+- Grenze `MAX_IMAGE_ANIMATIONS 32` (tr_shader.cpp, SP und MP): mehr Bilder
+  werden gleichmaessig ausgeduennt, die Bildrate so gesenkt, dass die Dauer
+  bleibt (mit Hinweis). Mit Ueberblenden hoechstens 31 + Endbild.
+- Optionen: Raster (Spalten/Zeilen werden geraten, erstes Bild, Anzahl,
+  Spalte fuer Spalte, Rand, Abstand, leere Bilder am Ende weglassen),
+  Bildrate, Schleife, Ueberblenden wie explosion1 (zwei Stufen,
+  rgbGen/alphaGen wave), Vorlage (Explosion, Rauch, Muendungsfeuer, Energie),
+  additiv/alphagemischt, Alpha aus Helligkeit, Bildgroesse, Teilchengroesse.
+- Ziel: Spielordner (Bestand wird neu gelesen), ein anderer Ordner (nur er
+  wird eingemischt) oder eine .pk3 (wie "PK3 oeffnen" eingemischt). Vorhandene
+  Dateien nur nach Rueckfrage. Danach oeffnet und laeuft der Effekt.
+- Kern: src/spritesheet.cpp (testSpriteSheet), Dialog: gui/app_sprites.cpp,
+  Selbsttest-Teil `spritesheet` (5 x 4 zu 176 px wie das Forumsbeispiel).
+- Offen: GIF, JSON-Atlas, ungleich grosse oder beschnittene Felder (Phase 2
+  des Vorschlags); ein Test im echten Spiel steht noch aus.
+
+**Bibliothek ohne Haenger:** der Zusammenbau einer Kachel (play mit Vorlauf,
+Reichweite/bester Zeitpunkt, Kindeffekte, md3-Modelle) lief auf dem
+Hauptfaden. Gemessen beim Durchrollen von 707 Effekten (Selbsttest-Teil
+`bibliothekzeit`, nicht in `alles`): 9,6 s Stillstand, Einzelbilder bis
+1,4 s. Jetzt auf den Arbeitsfaeden (BrowserAssetCache mit eigenem Schloss,
+Auftraege einer alten Bestandsfassung brechen ab): Durchrollen 16,4 s ->
+1,3 s, Mittel 20,7 -> 2,1 ms je Bild, groesstes Bild 1412 -> 37 ms.

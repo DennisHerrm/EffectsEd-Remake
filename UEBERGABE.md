@@ -24,7 +24,8 @@ set EFXED_SELBSTTEST=alles          (oder ein Teil: start, segmente, speichern,
                                      ansicht, wiedergabe, eigenschaften, dialoge,
                                      liste, bedienung, beenden, bibliothek,
                                      auswahl, dokumente, werkzeug, nachlegen,
-                                     spinner, felder; extra: darstellung)
+                                     spinner, tippen, spritesheet, felder;
+                                     extra: darstellung, bibliothekzeit)
 set EFXED_RENDERER=gl3              (optional, sonst Direct3D 11)
 set EFXED_FOTOS=C:\pfad             (optional: Fotos der Fenster und der Ansicht)
 set EFXED_FENSTER=1720x1040         (optional: Fenstergröße)

@@ -53,6 +53,8 @@ void App::releaseGraphicsResources(render::Renderer* renderer) {
     if (fallbackTexture_ != render::kNoTexture) renderer->destroyTexture(fallbackTexture_);
     wallTexture_ = render::kNoTexture;
     fallbackTexture_ = render::kNoTexture;
+    if (sprite_.texture != render::kNoTexture) renderer->destroyTexture(sprite_.texture);
+    sprite_.texture = render::kNoTexture;
 }
 
 void App::forgetGraphicsResources() {
@@ -62,6 +64,7 @@ void App::forgetGraphicsResources() {
 
     // Nicht freigeben — der Renderer, dem sie gehoerten, ist schon weg.
     textureCache_.clear();
+    sprite_.texture = render::kNoTexture;
     textureCacheDirty_ = false;
     texturesLoaded_ = 0;
     texturesMissing_ = 0;
@@ -342,6 +345,8 @@ void App::settleTextureJobs() {
     // Das kostet nichts: der Bestand wird geaendert, wenn der Nutzer einen
     // Pfad setzt oder ein Archiv oeffnet. Ein paar Millisekunden Warten sind
     // dort nicht spuerbar.
+    // Laufende Kachel-Auftraege brechen ab, statt fertig zu rechnen.
+    ++browserJobGeneration_;
     jobs::pool().waitIdle();
     jobs::pool().drainMainQueue(-1);
     readyTextures_.clear();
@@ -350,6 +355,9 @@ void App::settleTextureJobs() {
     // abgeraeumt, sonst haelt die Regel nur zur Haelfte.
     readyEffects_.clear();
     effectsInFlight_.clear();
+    // Der Bestand aendert sich gleich: neue Kacheln laden neu. Die alten
+    // halten ihren Speicher selbst (BrowserEntry::cache).
+    browserCache_ = std::make_shared<BrowserAssetCache>();
 }
 
 void App::collectDecodedTextures(render::Renderer* renderer) {

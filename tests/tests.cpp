@@ -40,6 +40,7 @@
 #include "efx/md3.h"
 #include "efx/update.h"
 #include "efx/gp2.h"
+#include "efx/spritesheet.h"
 #include "efx/version.h"
 #include <map>
 #include <numeric>
@@ -15040,6 +15041,273 @@ void testEmitterModels() {
 
 }  // namespace
 
+// ===========================================================================
+// Sprite-Sheet -> Effekt (Wunsch aus dem Forum, 14.11.2026). Engine-Grenzen
+// aus OpenJK: MAX_IMAGE_ANIMATIONS 32 (tr_shader.cpp), Raven-Vorbild
+// gfx/exp/explosion1 (oneshotanimMap + setShaderTime).
+// ===========================================================================
+
+// Ein Sheet aus Feldern; Feld i bekommt Farbe (10*i, 255-10*i, 0) auf einem
+// Kreis, aussen durchsichtig. `leer` Felder am Ende bleiben ganz leer.
+efx::image::Image spriteSheetFor(int columns, int rows, int cellW, int cellH, int empty) {
+    efx::image::Image img;
+    img.width = columns * cellW;
+    img.height = rows * cellH;
+    img.rgba.assign(static_cast<size_t>(img.width) * img.height * 4, 0);
+    img.ok = true;
+    img.hasAlpha = true;
+    const int total = columns * rows;
+    for (int i = 0; i < total - empty; ++i) {
+        const int cx = (i % columns) * cellW, cy = (i / columns) * cellH;
+        for (int y = 0; y < cellH; ++y) {
+            for (int x = 0; x < cellW; ++x) {
+                const float dx = (x + 0.5f) / cellW - 0.5f, dy = (y + 0.5f) / cellH - 0.5f;
+                if (dx * dx + dy * dy > 0.16f) continue;
+                const size_t o = (static_cast<size_t>(cy + y) * img.width + cx + x) * 4;
+                img.rgba[o + 0] = static_cast<unsigned char>(std::min(255, 10 * i));
+                img.rgba[o + 1] = static_cast<unsigned char>(std::max(0, 255 - 10 * i));
+                img.rgba[o + 2] = 0;
+                img.rgba[o + 3] = 255;
+            }
+        }
+    }
+    return img;
+}
+
+void testSpriteSheet() {
+    using namespace efx::spritesheet;
+    std::cout << "== Sprite-Sheet -> Effekt ==\n";
+
+    // --- Raster ---------------------------------------------------------
+    {
+        Layout l;
+        l.columns = 4;
+        l.rows = 4;
+        Error e = Error::None;
+        const auto cells = gridCells(1024, 1024, l, &e);
+        check(e == Error::None && cells.size() == 16, "4 x 4 auf 1024 x 1024: 16 Felder");
+        check(cells.size() == 16 && cells[5].x == 256 && cells[5].y == 256 && cells[5].w == 256,
+              "Feld 5 liegt Zeile 1, Spalte 1 (Zeile fuer Zeile)");
+        l.columnsFirst = true;
+        const auto down = gridCells(1024, 1024, l, &e);
+        check(down.size() == 16 && down[1].x == 0 && down[1].y == 256, "Spalte fuer Spalte: Feld 1 darunter");
+        Layout gaps;
+        gaps.columns = 2;
+        gaps.rows = 1;
+        gaps.margin = 2;
+        gaps.spacing = 4;
+        const auto g = gridCells(28, 14, gaps, &e);
+        check(g.size() == 2 && g[0].w == 10 && g[1].x == 16 && g[0].y == 2 && g[0].h == 10,
+              "Rand und Abstand werden abgezogen");
+        Layout bad;
+        bad.columns = 0;
+        gridCells(64, 64, bad, &e);
+        check(e == Error::BadGrid, "0 Spalten: Raster ungueltig");
+        Layout tiny;
+        tiny.columns = 100;
+        gridCells(64, 64, tiny, &e);
+        check(e == Error::BadGrid, "Felder kleiner als ein Bildpunkt: Raster ungueltig");
+    }
+
+    // --- Auswahl, Groesse, Umrechnung ------------------------------------
+    {
+        const auto all = pickFrames(20, 32);
+        check(all.size() == 20 && all.front() == 0 && all.back() == 19, "20 Bilder: alle");
+        const auto thin = pickFrames(64, 32);
+        bool rising = thin.size() == 32 && thin.front() == 0 && thin.back() == 63;
+        for (size_t i = 1; i < thin.size(); ++i) rising = rising && thin[i] > thin[i - 1];
+        check(rising, "64 Bilder auf 32: gleichmaessig, erstes und letztes dabei");
+        check(nearestPowerOfTwo(176) == 128 && nearestPowerOfTwo(200) == 256 &&
+                  nearestPowerOfTwo(256) == 256 && nearestPowerOfTwo(3000) == 1024 &&
+                  nearestPowerOfTwo(5) == 16,
+              "naechste Zweierpotenz (176 -> 128, 200 -> 256, Grenzen 16 und 1024)");
+
+        // Ein roter, deckender Punkt neben drei durchsichtigen WEISSEN:
+        // vormultipliziert gemittelt bleibt er rot, nur durchsichtiger.
+        const std::vector<unsigned char> quad = {255, 0, 0, 255,   255, 255, 255, 0,
+                                                 255, 255, 255, 0, 255, 255, 255, 0};
+        const auto one = resize(quad, 2, 2, 1, 1);
+        check(one.size() == 4 && one[0] == 255 && one[1] == 0 && one[2] == 0 && one[3] >= 63 && one[3] <= 64,
+              "Verkleinern mittelt mit Alpha: kein weisser Rand um durchsichtige Stellen");
+        const auto up = resize(quad, 2, 2, 4, 4);
+        check(up.size() == 64 && up[0] == 255 && up[3] == 255, "Vergroessern bilinear, Ecke bleibt");
+
+        std::vector<unsigned char> glow = {128, 64, 0, 255};
+        alphaFromBrightness(glow);
+        check(glow[3] == 128 && glow[0] == 255 && glow[1] == 127, "Alpha aus der Helligkeit, Farbe aufgehellt");
+
+        int side = 0;
+        const std::vector<unsigned char> wide(4 * 2 * 4, 255);
+        const auto square = padToSquare(wide, 4, 2, &side);
+        check(side == 4 && square.size() == 64 && square[3] == 0 && square[(4 + 0) * 4 + 3] == 255,
+              "schmales Bild wird zentriert aufs Quadrat gesetzt (Raender durchsichtig)");
+        check(sanitizeName("Mein Feuerball!") == "mein_feuerball" && sanitizeName("..") .empty(),
+              "Name: nur a-z 0-9 _");
+    }
+
+    // --- Der ganze Weg: 4 x 4, drei leere Felder am Ende ---------------
+    const auto sheet = spriteSheetFor(4, 4, 48, 48, 3);
+    Layout layout;
+    Options options;
+    options.name = "Test Ball";
+    options.folder = "custom";
+    options.fps = 20.0f;
+    const Package p = build(sheet, layout, options, "testball.png");
+    check(p.ok(), "4 x 4-Sheet wird gebaut");
+    check(p.sourceFrames == 13 && p.frames == 13 && !p.thinned, "leere Felder am Ende fallen weg (16 -> 13)");
+    check(p.frameSize == 32 && p.cellW == 48, "48er Felder -> 32er Bilder (naechste Zweierpotenz)");
+    check(p.files.size() == 15, "13 Bilder + Shader + Effekt");
+    check(p.effectPath == "effects/custom/test_ball.efx" && p.shaderName == "gfx/effects/custom/test_ball" &&
+              p.shaderPath == "shaders/custom_test_ball.shader",
+          "Pfade wie im Spiel: effects/, shaders/, gfx/effects/");
+    bool tgaOk = true;
+    for (const auto& f : p.files) {
+        if (f.path.size() < 4 || f.path.substr(f.path.size() - 4) != ".tga") continue;
+        const auto img = efx::image::decode(f.data.data(), f.data.size());
+        tgaOk = tgaOk && img.ok && img.width == 32 && img.height == 32;
+    }
+    check(tgaOk, "die Bilder sind lesbare 32-Bit-TGA in Zweierpotenz-Groesse");
+
+    // Shader: oneshotanimMap mit 13 Bildern, additiv.
+    std::string shaderText;
+    for (const auto& f : p.files) {
+        if (f.path == p.shaderPath) shaderText.assign(f.data.begin(), f.data.end());
+    }
+    efx::shader::Library lib;
+    efx::shader::parseInto(lib, shaderText, "spritesheet.shader");
+    const efx::shader::Shader* def = lib.find(p.shaderName);
+    check(def != nullptr && def->stages.size() == 1 && def->stages[0].animOneShot &&
+              def->stages[0].animMaps.size() == 13 && std::fabs(def->stages[0].animFrequency - 20.0f) < 1e-4f &&
+              def->stages[0].srcBlend == efx::shader::BlendFactor::One &&
+              def->stages[0].dstBlend == efx::shader::BlendFactor::One,
+          "Shader: oneshotanimMap 20, 13 Bilder, GL_ONE GL_ONE");
+    check(lib.diagnostics.empty(), "der erzeugte Shader liest sich ohne Meldung");
+
+    // Effekt: ein Particle, life = 13/20 s, setShaderTime.
+    const efx::ReadResult back = efx::read(p.effectText);
+    check(!back.hasErrors() && back.diagnostics.empty() && back.effect.primitives.size() == 1,
+          "die .efx liest sich ohne Meldung, ein Segment");
+    if (!back.effect.primitives.empty()) {
+        const auto& prim = back.effect.primitives[0];
+        check(prim.type == efx::PrimitiveType::Particle && prim.life.min == 650.0f &&
+                  (prim.flags & efx::kFlagSetShaderTime) != 0 && prim.shaders.size() == 1 &&
+                  prim.shaders[0] == p.shaderName,
+              "Particle, life 650, setShaderTime, Shader eingetragen");
+    }
+
+    // Abspielen: jedes Teilchen beginnt bei Bild 0 (setShaderTime) und
+    // laeuft im Takt.
+    {
+        const ShaderBook book(shaderText);
+        efx::particles::System system;
+        system.play(back.effect, 1u);
+        const auto frameAt = [&](float ms) {
+            const auto list = system.build(ms, {1, 0, 0}, {0, 1, 0}, book.lookup());
+            for (const auto& g : list.groups) {
+                const auto at = g.image.find("test_ball_");
+                if (at != std::string::npos) return std::atoi(g.image.c_str() + at + 10);
+            }
+            return -1;
+        };
+        check(frameAt(0.0f) == 0 && frameAt(330.0f) == 6 && frameAt(640.0f) == 12,
+              "Vorschau: 0 ms Bild 0, 330 ms Bild 6, 640 ms Bild 12");
+    }
+
+    // --- Ausduennen auf 32, Ueberblenden wie Raven ------------------------
+    {
+        const auto big = spriteSheetFor(8, 8, 16, 16, 0);
+        Options o;
+        o.name = "big";
+        o.fps = 20.0f;
+        const Package q = build(big, Layout{8, 8}, o);
+        check(q.ok() && q.sourceFrames == 64 && q.frames == 32 && q.thinned &&
+                  std::fabs(q.fps - 10.0f) < 1e-4f,
+              "64 Bilder: 32 benutzt, 10 je Sekunde (gleiche Dauer), Hinweis gesetzt");
+        o.crossfade = true;
+        const Package c = build(big, Layout{8, 8}, o);
+        std::string text;
+        bool hasEnd = false;
+        for (const auto& f : c.files) {
+            if (f.path == c.shaderPath) text.assign(f.data.begin(), f.data.end());
+            if (f.path.find("_end.tga") != std::string::npos) hasEnd = true;
+        }
+        efx::shader::Library l2;
+        efx::shader::parseInto(l2, text, "x.shader");
+        const efx::shader::Shader* s2 = l2.find(c.shaderName);
+        check(c.frames == 31 && hasEnd && s2 && s2->stages.size() == 2 &&
+                  s2->stages[0].animMaps.size() == 32 && s2->stages[1].animMaps.size() == 31 &&
+                  s2->stages[1].animMaps[0] == s2->stages[0].animMaps[1] &&
+                  s2->stages[0].rgbGen == efx::shader::ColorGen::Wave &&
+                  s2->stages[1].rgbGen == efx::shader::ColorGen::Wave,
+              "Ueberblenden: zwei Stufen, die zweite ein Bild voraus, Endbild, hoechstens 32 je Folge");
+        check(text.find("inversesawtooth 0 1 0") != std::string::npos &&
+                  text.find("\tsawtooth 0 1 0") == std::string::npos && text.find(" sawtooth 0 1 0") != std::string::npos,
+              "Ueberblenden mit rgbGen wave inversesawtooth / sawtooth im Bildtakt (wie explosion1)");
+    }
+
+    // --- Alpha, Fehler, pk3 ------------------------------------------------
+    {
+        efx::image::Image opaque;
+        opaque.width = 32;
+        opaque.height = 32;
+        opaque.ok = true;
+        opaque.rgba.assign(32 * 32 * 4, 200);
+        for (size_t i = 3; i < opaque.rgba.size(); i += 4) opaque.rgba[i] = 255;
+        Options o;
+        o.name = "rauch";
+        o.blend = Blend::Alpha;
+        o.preset = Preset::Smoke;
+        const Layout one{1, 1};
+        check(build(opaque, one, o).noTransparency, "alphagemischt ohne Alpha im Bild: Hinweis");
+        o.alphaFromBrightness = true;
+        check(!build(opaque, one, o).noTransparency, "mit Alpha aus Helligkeit: kein Hinweis");
+
+        // Additiv: durchsichtig-weiss wird schwarz (sonst leuchtet ein Quadrat).
+        efx::image::Image white;
+        white.width = 16;
+        white.height = 16;
+        white.ok = true;
+        white.rgba.assign(16 * 16 * 4, 255);
+        for (size_t i = 3; i < white.rgba.size(); i += 4) white.rgba[i] = 0;
+        white.rgba[(8 * 16 + 8) * 4 + 3] = 255;
+        Options add;
+        add.name = "glow";
+        add.frameSize = 16;
+        const Package g = build(white, one, add);
+        const auto img = efx::image::decode(g.files[0].data.data(), g.files[0].data.size());
+        check(g.ok() && img.ok && img.rgba[0] == 0 && img.rgba[(8 * 16 + 8) * 4] == 255,
+              "additiv: durchsichtige Stellen werden schwarz, deckende bleiben");
+
+        Options noName;
+        noName.name = "!!";
+        check(build(sheet, layout, noName).error == Error::BadName, "ohne Namen: Fehler");
+        Options noFps;
+        noFps.fps = 0.0f;
+        check(build(sheet, layout, noFps).error == Error::BadFps, "0 Bilder je Sekunde: Fehler");
+        Layout beyond;
+        beyond.first = 99;
+        check(build(sheet, beyond, options).error == Error::NoFrames, "Bereich hinter dem Raster: Fehler");
+        efx::image::Image blank = spriteSheetFor(2, 2, 16, 16, 4);
+        check(build(blank, Layout{2, 2}, options).error == Error::NoFrames, "nur leere Felder: Fehler");
+
+        const auto zip = zipStored(p.files);
+        const std::filesystem::path path = std::filesystem::temp_directory_path() / "efxed_spritesheet_test.pk3";
+        {
+            std::ofstream f(path, std::ios::binary);
+            f.write(reinterpret_cast<const char*>(zip.data()), static_cast<std::streamsize>(zip.size()));
+        }
+        const auto names = efx::assets::readZipDirectory(path.string());
+        const auto shaderBack = efx::assets::readFromZip(path.string(), p.shaderPath);
+        check(names.size() == p.files.size() && std::string(shaderBack.begin(), shaderBack.end()) == shaderText,
+              "pk3: alle Dateien drin, Inhalt unveraendert lesbar");
+        const auto index = efx::assets::scanArchive(path.string());
+        check(std::find(index.effects.begin(), index.effects.end(), "custom/test_ball") != index.effects.end(),
+              "pk3: der Bestand findet den Effekt");
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+    }
+}
+
 int main(int argc, char** argv) {
     // Ungepuffert: stuerzt ein Test ab, steht die letzte Zeile trotzdem da.
     std::cout << std::unitbuf;
@@ -15204,6 +15472,8 @@ int main(int argc, char** argv) {
     testMd3Parser();
     testEmitterModels();
     testModelCullAndDepthHack();
+    // Sprite-Sheet -> Effekt.
+    testSpriteSheet();
 
     std::cout << "\n" << g_checks << " Pruefungen, " << g_failures << " Fehler";
     if (g_dataFiles > 0) {
