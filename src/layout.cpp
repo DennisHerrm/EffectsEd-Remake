@@ -269,7 +269,7 @@ Settings Settings::fromIni(const std::string& text) {
     s.split.listFraction = std::clamp(s.split.listFraction, 0.05f, 0.8f);
     if (!(s.timeScale > 0.0f && s.timeScale <= 100.0f)) s.timeScale = 1.0f;
     if (s.worldScale <= 0.0f) s.worldScale = 16.0f;
-    if (s.orientation < 0 || s.orientation > 2) s.orientation = 0;
+    if (s.orientation < 0 || s.orientation > 5) s.orientation = 0;
     if (s.roomTexture < 0 || s.roomTexture > 3) s.roomTexture = 0;
     s.updateRenderMode();
     // Ein Nullvektor waere keine Richtung; dann lieber die Voreinstellung.

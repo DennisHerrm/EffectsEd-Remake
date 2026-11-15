@@ -8,6 +8,29 @@ namespace {
 // Reihenfolge (testChangelog zaehlt nach). Menuenamen so, wie sie in der
 // jeweiligen Sprache im Programm stehen.
 const std::vector<Entry> kEntries = {
+    {84, "2026-11-15",
+     {
+         // English
+         "Six orientations in the toolbar and the Effects menu: +X, -X, +Y, -Y, +Z, -Z, named after axis and colour (Orient Up / Sideways / Down are now +Z / +X / -Z).\n"
+         "Wireframe like the old EffectsEd: outlines of the camera-facing quads, without texture and without the diagonal. Turning Draw Textured off now draws untextured surfaces.\n"
+         "Clearer icons for textured, wireframe, overdraw and the orientations.\n"
+         "Copying to the clipboard waits briefly when another program is holding it, instead of failing silently.",
+         // Deutsch
+         "Sechs Ausrichtungen in der Werkzeugleiste und im Effekte-Men\xC3\xBC: +X, -X, +Y, -Y, +Z, -Z, benannt nach Achse und Farbe (Oben / Seitw\xC3\xA4rts / Unten hei\xC3\x9F" "en jetzt +Z / +X / -Z).\n"
+         "Drahtgitter wie im alten EffectsEd: Umrisse der zur Kamera gedrehten Vierecke, ohne Textur und ohne Diagonale. Texturiert aus zeichnet jetzt Fl\xC3\xA4" "chen ohne Textur.\n"
+         "Deutlichere Symbole f\xC3\xBCr Texturiert, Drahtgitter, \xC3\x9C" "berzeichnung und die Ausrichtungen.\n"
+         "Kopieren in die Zwischenablage wartet kurz, wenn ein anderes Programm sie gerade h\xC3\xA4lt, statt still zu scheitern.",
+         // 中文
+         "工具栏和“特效”菜单中提供六个朝向：+X、-X、+Y、-Y、+Z、-Z，按坐标轴和颜色命名（朝上 / 朝侧面 / 朝下 现为 +Z / +X / -Z）。\n"
+         "线框与旧版 EffectsEd 相同：显示朝向摄像机的四边形轮廓，不带纹理，也没有对角线。关闭“带纹理”后现在会绘制无纹理的面。\n"
+         "带纹理、线框、重叠绘制以及各朝向的图标更加清晰。\n"
+         "复制到剪贴板时，如果其他程序正占用剪贴板，会稍作等待，而不是静默失败。",
+         // 日本語
+         "ツールバーとエフェクトメニューに 6 方向の向き：+X、-X、+Y、-Y、+Z、-Z（軸と色で命名。上向き / 横向き / 下向き は +Z / +X / -Z になりました）。\n"
+         "ワイヤーフレームは旧 EffectsEd と同じく、カメラを向く四角形の輪郭をテクスチャなし・対角線なしで描きます。テクスチャ表示をオフにすると、テクスチャなしの面を描くようになりました。\n"
+         "テクスチャ、ワイヤーフレーム、オーバードロー、各向きのアイコンが見分けやすくなりました。\n"
+         "クリップボードへのコピーは、他のプログラムが使用中の場合に少し待つようになり、黙って失敗しなくなりました。",
+     }},
     {83, "2026-11-14",
      {
          // English

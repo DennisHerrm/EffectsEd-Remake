@@ -29,7 +29,7 @@ enum class Icon {
     // ist — so sieht man die Richtung, ohne den Kurzhinweis zu lesen.
     ViewFront, ViewBack, ViewLeft, ViewRight, ViewTop, ViewBottom, ViewReset,
     // Aus den Werkzeugleisten des Originals (RT_TOOLBAR 128/158).
-    Clone, About, PlaybackSettings, OrientUp, OrientSide, OrientDown, SetOrigin,
+    Clone, About, PlaybackSettings, OrientUp, OrientSide, OrientDown, OrientMinusX, OrientPlusY, OrientMinusY, SetOrigin,
     // Lautsprecher neben der Klangliste (Sound-Seite des Originals).
     Speaker,
 };

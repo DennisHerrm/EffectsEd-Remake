@@ -54,8 +54,11 @@ const Entry kTable[] = {
     {"Pause", "Anhalten", "暂停", "一時停止"},  // EffectsPause
     {"Stop", "Stopp", "停止", "停止"},  // EffectsStop
     {"Repeat", "Wiederholen", "循环", "繰り返し"},  // EffectsRepeat
-    {"Orient Up", "Nach oben ausrichten", "朝上", "上向き"},  // EffectsOrientUp
-    {"Orient Sideways", "Seitwärts ausrichten", "朝侧面", "横向き"},  // EffectsOrientSide
+    {"Orient +Z (blue axis)", "Ausrichtung +Z (blaue Achse)", "朝向 +Z（蓝色轴）", "向き +Z（青い軸）"},  // EffectsOrientUp
+    {"Orient +X (red axis)", "Ausrichtung +X (rote Achse)", "朝向 +X（红色轴）", "向き +X（赤い軸）"},  // EffectsOrientSide
+    {"Orient -X (red axis)", "Ausrichtung -X (rote Achse)", "朝向 -X（红色轴）", "向き -X（赤い軸）"},  // EffectsOrientMinusX
+    {"Orient +Y (green axis)", "Ausrichtung +Y (grüne Achse)", "朝向 +Y（绿色轴）", "向き +Y（緑の軸）"},  // EffectsOrientPlusY
+    {"Orient -Y (green axis)", "Ausrichtung -Y (grüne Achse)", "朝向 -Y（绿色轴）", "向き -Y（緑の軸）"},  // EffectsOrientMinusY
     {"Validate Effect", "Effekt prüfen", "检查特效", "エフェクトを検証"},  // EffectsValidate
     {"Help", "Hilfe", "帮助", "ヘルプ"},  // MenuHelp
     {"User Guide", "Anleitung", "用户指南", "ユーザーガイド"},  // HelpManual
@@ -307,7 +310,7 @@ const Entry kTable[] = {
     {"Textured", "Texturiert", "带纹理", "テクスチャあり"},  // RenderTextured
     {"Wireframe", "Drahtgitter", "线框", "ワイヤーフレーム"},  // RenderWireframe
     {"Overdraw", "Überzeichnung", "过度绘制", "オーバードロー"},  // RenderOverdraw
-    {"Orient Down", "Nach unten ausrichten", "朝下", "下向き"},  // EffectsOrientDown
+    {"Orient -Z (blue axis)", "Ausrichtung -Z (blaue Achse)", "朝向 -Z（蓝色轴）", "向き -Z（青い軸）"},  // EffectsOrientDown
     {"Set Custom FX Origin...", "Eigenen Ursprung festlegen...", "设置自定义特效原点...", "カスタム原点を設定..."},  // EffectsCustomOrigin
     {"Playback Settings...", "Wiedergabe-Einstellungen...", "播放设置...", "再生設定..."},  // EffectsPlaybackSettings
     {"Play Sounds", "Klänge abspielen", "播放声音", "サウンドを再生"},  // EffectsPlaySounds
@@ -632,9 +635,12 @@ const Entry kTable[] = {
     {"Pause time", "Zeit anhalten", "暂停时间", "時間を一時停止"},  // HintPause
     {"Stop effects", "Effekte beenden", "停止特效", "エフェクトを停止"},  // HintStop
     {"Displays the Playback Settings dialog box", "Öffnet die Wiedergabe-Einstellungen", "显示播放设置对话框", "再生設定ダイアログを表示"},  // HintPlaybackSettings
-    {"Orient effect up (on Z axis)", "Effekt nach oben ausrichten (Z-Achse)", "特效朝上（Z 轴）", "エフェクトを上向きに（Z 軸）"},  // HintOrientUp
-    {"Orient effect sideways (on X axis)", "Effekt seitwärts ausrichten (X-Achse)", "特效朝侧面（X 轴）", "エフェクトを横向きに（X 軸）"},  // HintOrientSide
-    {"Orient effect down (on Z axis)", "Effekt nach unten ausrichten (Z-Achse)", "特效朝下（Z 轴）", "エフェクトを下向きに（Z 軸）"},  // HintOrientDown
+    {"Point the effect along +Z (blue axis, up)", "Effekt entlang +Z ausrichten (blaue Achse, nach oben)", "特效指向 +Z（蓝色轴，向上）", "エフェクトを +Z 方向に向ける（青い軸、上）"},  // HintOrientUp
+    {"Point the effect along +X (red axis)", "Effekt entlang +X ausrichten (rote Achse)", "特效指向 +X（红色轴）", "エフェクトを +X 方向に向ける（赤い軸）"},  // HintOrientSide
+    {"Point the effect along -Z (blue axis, down)", "Effekt entlang -Z ausrichten (blaue Achse, nach unten)", "特效指向 -Z（蓝色轴，向下）", "エフェクトを -Z 方向に向ける（青い軸、下）"},  // HintOrientDown
+    {"Point the effect along -X (red axis)", "Effekt entlang -X ausrichten (rote Achse)", "特效指向 -X（红色轴）", "エフェクトを -X 方向に向ける（赤い軸）"},  // HintOrientMinusX
+    {"Point the effect along +Y (green axis)", "Effekt entlang +Y ausrichten (grüne Achse)", "特效指向 +Y（绿色轴）", "エフェクトを +Y 方向に向ける（緑の軸）"},  // HintOrientPlusY
+    {"Point the effect along -Y (green axis)", "Effekt entlang -Y ausrichten (grüne Achse)", "特效指向 -Y（绿色轴）", "エフェクトを -Y 方向に向ける（緑の軸）"},  // HintOrientMinusY
     {"Set custom FX spawn origin", "Eigenen Startpunkt des Effekts festlegen", "设置自定义特效生成原点", "エフェクトの発生位置を設定"},  // HintCustomOrigin
     {"Turns any kind of sound play back on or off", "Schaltet die Klangwiedergabe ein oder aus", "打开或关闭声音播放", "サウンド再生のオン/オフ"},  // HintPlaySounds
     {"Display program information, version number and copyright", "Programminformation, Fassung und Urheberrecht", "显示程序信息、版本号和版权", "プログラム情報、バージョン、著作権を表示"},  // HintAbout

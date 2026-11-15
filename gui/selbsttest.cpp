@@ -42,6 +42,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "app.h"
@@ -1037,13 +1038,27 @@ public:
             return punktFarbe[0] > 0 || punktFarbe[1] > 0 || punktFarbe[2] > 0;
         }));
         // Ausrichtung.
+        // Alle sechs, ueber das Menue und ueber die Knoepfe (Reihenfolge der
+        // Knoepfe: +X, -X, +Y, -Y, +Z, -Z).
         const Str ausrichtung[] = {Str::EffectsOrientUp, Str::EffectsOrientSide,
-                                   Str::EffectsOrientDown};
-        for (int i = 2; i >= 0; --i) {
+                                   Str::EffectsOrientDown, Str::EffectsOrientMinusX,
+                                   Str::EffectsOrientPlusY, Str::EffectsOrientMinusY};
+        for (int i = 5; i >= 0; --i) {
             menue(s, Str::MenuEffects, ausrichtung[i]);
             s.push_back(pruefSchritt(std::string("Effects > ") + tr(ausrichtung[i]),
                                      [i] { return app->settings_.orientation == i; }));
         }
+        const struct { const char* id; int wert; } knoepfe[] = {
+            {"##orientPlusX", 1}, {"##orientMinusX", 3}, {"##orientPlusY", 4},
+            {"##orientMinusY", 5}, {"##orientUp", 0}, {"##orientDown", 2}};
+        for (const auto& k : knoepfe) {
+            s.push_back(klick(k.id, "##main"));
+            const int wert = k.wert;
+            s.push_back(pruefSchritt(std::string("Knopf ") + k.id, [wert] {
+                return app->settings_.orientation == wert;
+            }));
+        }
+        s.push_back(tu("Ausrichtung zurueck auf +Z", [] { app->settings_.orientation = 0; }));
         // Play Sounds umschalten.
         auto tonVorher = std::make_shared<bool>(false);
         s.push_back(tu("Ton merken", [=] { *tonVorher = app->settings_.playSounds; }));
@@ -3737,6 +3752,28 @@ public:
                 CloseClipboard();
             }
         }));
+        // Wie der Zwischenablageverlauf von Windows: ein anderer haelt sie
+        // gerade offen. Vorher scheiterte das Kopieren dann still (ImGui
+        // versucht es einmal); jetzt wartet es (openClipboardPatiently).
+        s.push_back(tu("Zwischenablage von einem anderen Fenster 150 ms festhalten", [] {
+            // Mit eigenem (unsichtbarem) Fenster, wie ein fremdes Programm:
+            // ein Faden ohne Fenster zaehlt fuer Windows nicht als anderer
+            // Besitzer (Gegenprobe blieb sonst gruen).
+            HANDLE bereit = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+            std::thread([bereit] {
+                HWND fenster = CreateWindowExW(0, L"STATIC", L"efxed-clipboard-test", 0, 0, 0, 0, 0,
+                                               HWND_MESSAGE, nullptr, GetModuleHandleW(nullptr), nullptr);
+                const bool offen = fenster && OpenClipboard(fenster);
+                SetEvent(bereit);
+                if (offen) {
+                    Sleep(150);
+                    CloseClipboard();
+                }
+                if (fenster) DestroyWindow(fenster);
+            }).detach();
+            WaitForSingleObject(bereit, 1000);
+            CloseHandle(bereit);
+        }));
         s.push_back(klick(tr(Str::LogCopy), "###log"));
         s.push_back(pruefSchritt("Protokoll: 'Alles kopieren' legt Text in die Zwischenablage",
                                  [] { return IsClipboardFormatAvailable(CF_TEXT) != FALSE; }));
@@ -4097,6 +4134,15 @@ public:
                          } else if (g && g[0] == '2') {
                              app->settings_.gridOverRoom = true;
                              app->geometryDirty_ = true;
+                         }
+                         // Darstellungsart der Effekte (Bildvergleich mit dem
+                         // Original): textured, untextured, wire, texwire.
+                         if (const char* art = std::getenv("EFXED_ART"); art && art[0]) {
+                             const std::string a = art;
+                             app->settings_.effectOverdraw = a == "overdraw";
+                             app->settings_.effectTextured = a == "textured" || a == "texwire";
+                             app->settings_.effectWireframe = a == "wire" || a == "texwire";
+                             app->settings_.updateRenderMode();
                          }
                          int grenze = static_cast<int>(liste.size());
                          if (const char* n = std::getenv("EFXED_EFFEKTE"); n && std::atoi(n) > 0) {

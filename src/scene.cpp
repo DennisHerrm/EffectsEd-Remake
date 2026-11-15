@@ -71,6 +71,60 @@ Mesh buildRoom(const RoomSize& size, float worldScale, uint32_t wallColour) {
                         1.0f, false, true);
 }
 
+// Die Kanten der Flaechen fuer das Drahtgitter, als Linienpaare.
+//
+// Zwei aufeinanderfolgende Dreiecke mit gemeinsamer Kante sind ein Viereck
+// (so legen die Teilchen ihre Flaechen an: 0,1,2 / 0,2,3 oder 0,1,2 / 2,1,3).
+// Gezeichnet werden dessen vier Kanten OHNE die Diagonale — wie das Original,
+// das mit GL_QUADS zeichnet. Vorher zeigte efxed das Drahtgitter mit
+// Polygonmodus GL_LINE samt Textur: die Kanten eines Teilchens liegen am
+// durchsichtigen Rand seines Bildes und blieben unsichtbar, sichtbar war nur
+// die Diagonale durch die helle Mitte — "auf der Kante stehende" Striche
+// (Video eines Anwenders, 14.11.2026).
+void appendWireEdges(const scene::Mesh& mesh, std::vector<scene::Vertex>& out) {
+    const auto& index = mesh.indices;
+    const auto& vertex = mesh.vertices;
+    const size_t count = vertex.size();
+    // Deckend in der Farbe der Ecke: additive Teilchen tragen ihre Helligkeit
+    // in der Farbe und oft Alpha 0 — die Linie waere sonst unsichtbar.
+    const auto push = [&](uint16_t a, uint16_t b) {
+        if (a >= count || b >= count) return;
+        out.push_back(vertex[a]);
+        out.back().colour |= 0xFF000000u;
+        out.push_back(vertex[b]);
+        out.back().colour |= 0xFF000000u;
+    };
+    size_t t = 0;
+    while (t + 3 <= index.size()) {
+        const uint16_t a[3] = {index[t], index[t + 1], index[t + 2]};
+        if (t + 6 <= index.size()) {
+            const uint16_t b[3] = {index[t + 3], index[t + 4], index[t + 5]};
+            uint16_t shared[3] = {0, 0, 0};
+            int sharedCount = 0;
+            for (uint16_t x : b) {
+                if (x == a[0] || x == a[1] || x == a[2]) shared[sharedCount++] = x;
+            }
+            if (sharedCount == 2) {
+                const auto isDiagonal = [&](uint16_t p, uint16_t q) {
+                    return (p == shared[0] && q == shared[1]) || (p == shared[1] && q == shared[0]);
+                };
+                for (int k = 0; k < 3; ++k) {
+                    if (!isDiagonal(a[k], a[(k + 1) % 3])) push(a[k], a[(k + 1) % 3]);
+                }
+                for (int k = 0; k < 3; ++k) {
+                    if (!isDiagonal(b[k], b[(k + 1) % 3])) push(b[k], b[(k + 1) % 3]);
+                }
+                t += 6;
+                continue;
+            }
+        }
+        push(a[0], a[1]);
+        push(a[1], a[2]);
+        push(a[2], a[0]);
+        t += 3;
+    }
+}
+
 LineSet buildGrid(const RoomSize& size, float worldScale, uint32_t colour,
                   uint32_t majorColour, bool walls) {
     // Drahtgitter wie im Original: 20 Einheiten je Feld, auf jeder Flaeche

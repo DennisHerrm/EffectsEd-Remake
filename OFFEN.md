@@ -199,3 +199,28 @@ Hauptfaden. Gemessen beim Durchrollen von 707 Effekten (Selbsttest-Teil
 1,4 s. Jetzt auf den Arbeitsfaeden (BrowserAssetCache mit eigenem Schloss,
 Auftraege einer alten Bestandsfassung brechen ab): Durchrollen 16,4 s ->
 1,3 s, Mittel 20,7 -> 2,1 ms je Bild, groesstes Bild 1412 -> 37 ms.
+
+## Nachtrag 15.11.2026: Ausrichtungen, Darstellungsarten, Symbole
+
+Rueckmeldung mit Videos (Original gegen efxed, flamejet):
+
+- **Sechs Ausrichtungen** statt drei: Knoepfe und Menue in der Reihenfolge
+  +X, -X, +Y, -Y, +Z, -Z, benannt nach Achse und Farbe ("Orient +Z (blue
+  axis)" statt "Orient Up"). Die Nummern der alten drei bleiben (0 +Z,
+  1 +X, 2 -Z), neu 3 -X, 4 +Y, 5 -Y (particles::axisFor). Die Hinweise im
+  Effekte-Menue standen hinter den falschen Eintraegen ("Set custom FX spawn
+  origin" zeigte den Hinweis von "Orient Up") — behoben.
+- **Drahtgitter wie das Original:** Umrisse der Vierecke ohne Diagonale,
+  ohne Textur, deckend in der Eckenfarbe (scene::appendWireEdges). Vorher
+  Polygonmodus GL_LINE samt Textur: die Kanten lagen am durchsichtigen Rand
+  des Bildes, sichtbar blieb nur die Diagonale durch die Mitte.
+- **Textured aus** zeichnet jetzt Flaechen ohne Textur (weiss mit
+  Eckenfarbe), wie das Original; vorher blieb es texturiert, solange
+  Wireframe aus war (layout::Settings::effectPasses).
+- **Symbole:** Texturiert als kleines Bild, Drahtgitter als Gitterwuerfel,
+  Ueberzeichnung als ueberlappende durchscheinende Quadrate; Ausrichtungen als
+  Pfeil in Achsenfarbe mit Vorzeichen.
+- Tests: testRenderModesLikeOriginal, axisFor fuer alle sechs, Selbsttest
+  klickt alle sechs Knoepfe und Menueeintraege. Darstellungslauf kennt
+  EFXED_ART=textured|untextured|wire|texwire|overdraw.
+

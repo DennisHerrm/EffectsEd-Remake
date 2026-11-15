@@ -52,6 +52,62 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM,
 
 namespace {
 
+// Die Zwischenablage mit Geduld oeffnen.
+//
+// OpenClipboard scheitert, solange ein anderes Programm sie offen haelt — und
+// das tun nach jeder Aenderung kurz der Windows-Zwischenablageverlauf, die
+// Cloud-Zwischenablage oder ein Passwortmanager. ImGuis eigener Weg versucht
+// es genau einmal; "Alles kopieren" im Protokoll scheiterte dann still (im
+// Selbsttest gelegentlich gesehen, Win7-Bau rev82 und rev83). Jetzt bis zu
+// 25 Versuche im Abstand von 10 ms.
+bool openClipboardPatiently(HWND owner) {
+    for (int attempt = 0; attempt < 25; ++attempt) {
+        if (OpenClipboard(owner)) return true;
+        Sleep(10);
+    }
+    return false;
+}
+
+void setClipboardTextPatiently(ImGuiContext*, const char* text) {
+    if (!text || !openClipboardPatiently(nullptr)) return;
+    const int length = MultiByteToWideChar(CP_UTF8, 0, text, -1, nullptr, 0);
+    HGLOBAL handle = GlobalAlloc(GMEM_MOVEABLE, static_cast<SIZE_T>(length) * sizeof(WCHAR));
+    if (!handle) {
+        CloseClipboard();
+        return;
+    }
+    auto* wide = static_cast<WCHAR*>(GlobalLock(handle));
+    if (!wide) {
+        GlobalFree(handle);
+        CloseClipboard();
+        return;
+    }
+    MultiByteToWideChar(CP_UTF8, 0, text, -1, wide, length);
+    GlobalUnlock(handle);
+    EmptyClipboard();
+    if (SetClipboardData(CF_UNICODETEXT, handle) == nullptr) GlobalFree(handle);
+    CloseClipboard();
+}
+
+const char* getClipboardTextPatiently(ImGuiContext*) {
+    static std::string text;
+    text.clear();
+    if (!openClipboardPatiently(nullptr)) return nullptr;
+    if (HANDLE handle = GetClipboardData(CF_UNICODETEXT)) {
+        if (const auto* wide = static_cast<const WCHAR*>(GlobalLock(handle))) {
+            const int length = WideCharToMultiByte(CP_UTF8, 0, wide, -1, nullptr, 0, nullptr, nullptr);
+            if (length > 0) {
+                text.resize(static_cast<size_t>(length));
+                WideCharToMultiByte(CP_UTF8, 0, wide, -1, text.data(), length, nullptr, nullptr);
+                text.resize(static_cast<size_t>(length - 1));
+            }
+            GlobalUnlock(handle);
+        }
+    }
+    CloseClipboard();
+    return text.c_str();
+}
+
 bool g_quit = false;
 bool g_closeRequested = false;
 // Auf das Fenster gezogene Dateien, bis die Hauptschleife sie oeffnet.
@@ -708,7 +764,7 @@ static bool runSession(efx::gui::App& app, efx::render::Backend preferred,
             }
         }
         GlobalUnlock(memory);
-        if (!OpenClipboard(hwnd)) {
+        if (!openClipboardPatiently(hwnd)) {
             GlobalFree(memory);
             return false;
         }
@@ -862,6 +918,9 @@ static bool runSession(efx::gui::App& app, efx::render::Backend preferred,
                 UnregisterClassW(wc.lpszClassName, wc.hInstance);
                 return false;
             }
+            // Kopieren und Einfuegen mit Wiederholung (openClipboardPatiently).
+            ImGui::GetPlatformIO().Platform_SetClipboardTextFn = setClipboardTextPatiently;
+            ImGui::GetPlatformIO().Platform_GetClipboardTextFn = getClipboardTextPatiently;
         }
         {
             // Erst hier, nicht beim Anlegen des Renderers: die Anbindung

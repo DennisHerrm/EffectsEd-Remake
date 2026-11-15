@@ -102,26 +102,50 @@ void draw(const Canvas& c, Icon icon) {
             c.triangle(0.60f, 0.30f, 0.60f, 0.70f, 0.90f, 0.50f);
             break;
         case Icon::OrientUp:
-            c.line(0.30f, 0.80f, 0.30f, 0.14f);   // Z, hervorgehoben
-            c.line(0.30f, 0.14f, 0.20f, 0.28f);
-            c.line(0.30f, 0.14f, 0.40f, 0.28f);
-            c.line(0.30f, 0.80f, 0.80f, 0.80f);
-            c.line(0.30f, 0.80f, 0.62f, 0.54f);
-            break;
         case Icon::OrientSide:
-            c.line(0.20f, 0.80f, 0.20f, 0.36f);
-            c.line(0.20f, 0.80f, 0.88f, 0.80f);   // X, hervorgehoben
-            c.line(0.88f, 0.80f, 0.74f, 0.70f);
-            c.line(0.88f, 0.80f, 0.74f, 0.90f);
-            c.line(0.20f, 0.80f, 0.52f, 0.54f);
-            break;
         case Icon::OrientDown:
-            c.line(0.30f, 0.20f, 0.30f, 0.86f);   // -Z, hervorgehoben
-            c.line(0.30f, 0.86f, 0.20f, 0.72f);
-            c.line(0.30f, 0.86f, 0.40f, 0.72f);
-            c.line(0.30f, 0.20f, 0.80f, 0.20f);
-            c.line(0.30f, 0.20f, 0.62f, 0.46f);
+        case Icon::OrientMinusX:
+        case Icon::OrientPlusY:
+        case Icon::OrientMinusY: {
+            // Sechs Richtungen (15.11.2026). Ein blasses Achsenkreuz in der
+            // ueblichen Schraegansicht (X rechts, Z oben, Y schraeg nach
+            // hinten), darauf die gewaehlte Richtung als Pfeil in ihrer
+            // Achsenfarbe und oben links ein Plus oder Minus. Vorher waren es
+            // drei kaum unterscheidbare Dreibeine.
+            const float cx = 0.56f, cy = 0.58f;
+            const ImU32 faint = IM_COL32(150, 150, 150, 90);
+            const float thin = std::max(1.0f, c.thickness * 0.5f);
+            const auto faintLine = [&](float x0, float y0, float x1, float y1) {
+                c.list->AddLine(c.at(x0, y0), c.at(x1, y1), faint, thin);
+            };
+            faintLine(0.14f, cy, 0.98f, cy);                 // X
+            faintLine(cx, 0.98f, cx, 0.10f);                 // Z
+            faintLine(0.28f, 0.86f, 0.84f, 0.30f);           // Y
+            float dx = 0.0f, dy = 0.0f;
+            bool plus = true;
+            switch (icon) {
+                case Icon::OrientSide:   dx = 0.42f; dy = 0.0f; break;            // +X
+                case Icon::OrientMinusX: dx = -0.42f; dy = 0.0f; plus = false; break;
+                case Icon::OrientPlusY:  dx = 0.30f; dy = -0.30f; break;          // +Y (nach hinten)
+                case Icon::OrientMinusY: dx = -0.30f; dy = 0.30f; plus = false; break;
+                case Icon::OrientUp:     dx = 0.0f; dy = -0.46f; break;           // +Z
+                default:                 dx = 0.0f; dy = 0.40f; plus = false; break;  // -Z
+            }
+            const float tx = cx + dx, ty = cy + dy;
+            const float len = std::sqrt(dx * dx + dy * dy);
+            const float ux = dx / len, uy = dy / len;
+            const float back = 0.24f, wide = 0.15f;
+            // Schaft bis zum Ansatz der Spitze, dann die Spitze.
+            c.list->AddLine(c.at(cx, cy), c.at(tx - ux * back * 0.8f, ty - uy * back * 0.8f), c.colour,
+                            c.thickness);
+            c.triangle(tx, ty, tx - ux * back - uy * wide, ty - uy * back + ux * wide,
+                       tx - ux * back + uy * wide, ty - uy * back - ux * wide);
+            // Plus oder Minus oben links, gross genug, dass es kein Punkt wird.
+            const float sign = std::max(1.0f, c.thickness * 0.8f);
+            c.list->AddLine(c.at(0.00f, 0.17f), c.at(0.34f, 0.17f), c.colour, sign);
+            if (plus) c.list->AddLine(c.at(0.17f, 0.00f), c.at(0.17f, 0.34f), c.colour, sign);
             break;
+        }
         case Icon::SetOrigin:
             c.line(0.22f, 0.80f, 0.22f, 0.30f);
             c.line(0.22f, 0.80f, 0.72f, 0.80f);
@@ -236,23 +260,39 @@ void draw(const Canvas& c, Icon icon) {
             c.line(0.18f, 0.39f, 0.82f, 0.39f);
             c.line(0.18f, 0.61f, 0.82f, 0.61f);
             break;
-        case Icon::Textured:
-            // Gefuellte Flaeche mit Muster — "mit Textur".
-            c.filled(0.18f, 0.18f, 0.82f, 0.82f);
+        case Icon::Textured: {
+            // Ein kleines Bild — Himmel, Sonne, Huegel — wie das bunte Symbol
+            // des Originals. Vorher ein weisses Quadrat, das niemand als
+            // "texturiert" las (Rueckmeldung 15.11.2026).
+            c.list->AddRectFilled(c.at(0.14f, 0.18f), c.at(0.86f, 0.82f), IM_COL32(90, 150, 230, 255));
+            c.list->AddCircleFilled(c.at(0.66f, 0.36f), 0.10f * c.extent, IM_COL32(250, 210, 70, 255), 12);
+            c.list->AddTriangleFilled(c.at(0.14f, 0.82f), c.at(0.42f, 0.44f), c.at(0.70f, 0.82f),
+                                      IM_COL32(70, 170, 80, 255));
+            c.list->AddTriangleFilled(c.at(0.46f, 0.82f), c.at(0.68f, 0.56f), c.at(0.86f, 0.82f),
+                                      IM_COL32(50, 135, 65, 255));
+            c.list->AddRect(c.at(0.14f, 0.18f), c.at(0.86f, 0.82f), IM_COL32(230, 230, 230, 255), 0.0f, 0,
+                            std::max(1.0f, c.thickness * 0.8f));
             break;
+        }
         case Icon::Wireframe:
-            // Dieselbe Flaeche, nur als Gitter — der Gegensatz ist die
-            // Aussage.
-            c.rect(0.18f, 0.18f, 0.82f, 0.82f);
-            c.line(0.18f, 0.18f, 0.82f, 0.82f);
-            c.line(0.82f, 0.18f, 0.18f, 0.82f);
+            // Ein Gitterwuerfel: nur Kanten, keine Flaechen.
+            c.rect(0.16f, 0.34f, 0.62f, 0.80f);
+            c.rect(0.38f, 0.16f, 0.84f, 0.62f);
+            c.line(0.16f, 0.34f, 0.38f, 0.16f);
+            c.line(0.62f, 0.34f, 0.84f, 0.16f);
+            c.line(0.16f, 0.80f, 0.38f, 0.62f);
+            c.line(0.62f, 0.80f, 0.84f, 0.62f);
             break;
-        case Icon::Overdraw:
-            // Drei sich ueberlappende Kreise: genau das, was der Modus zeigt.
-            c.circle(0.38f, 0.40f, 0.22f, false);
-            c.circle(0.62f, 0.40f, 0.22f, false);
-            c.circle(0.50f, 0.62f, 0.22f, false);
+        case Icon::Overdraw: {
+            // Drei sich ueberlappende, durchscheinende Flaechen: wo sie sich
+            // decken, wird es heller — genau das, was der Modus zeigt (wie
+            // die gestapelten Quadrate des Originals).
+            const ImU32 layer = IM_COL32(110, 150, 230, 120);
+            c.list->AddRectFilled(c.at(0.12f, 0.14f), c.at(0.58f, 0.60f), layer);
+            c.list->AddRectFilled(c.at(0.28f, 0.28f), c.at(0.74f, 0.74f), layer);
+            c.list->AddRectFilled(c.at(0.44f, 0.42f), c.at(0.90f, 0.88f), layer);
             break;
+        }
         case Icon::Wind:
             // Drei wehende Linien, unten am laengsten.
             c.line(0.16f, 0.34f, 0.62f, 0.34f);
@@ -298,9 +338,14 @@ static ImU32 colourFor(Icon icon) {
         case Icon::Clone:          return IM_COL32(110, 150, 230, 255);
         case Icon::About:          return IM_COL32(226, 200, 74, 255);
         case Icon::PlaybackSettings: return IM_COL32(88, 200, 96, 255);
-        case Icon::OrientUp:       return IM_COL32(110, 150, 230, 255); // Z blau
-        case Icon::OrientSide:     return IM_COL32(214, 78, 70, 255);   // X rot
-        case Icon::OrientDown:     return IM_COL32(200, 90, 200, 255);  // -Z magenta
+        // Achsenfarben wie das Achsenkreuz der Ansicht: X rot, Y gruen, Z blau.
+        case Icon::OrientUp:       return IM_COL32(110, 150, 230, 255); // +Z
+        case Icon::OrientDown:     return IM_COL32(110, 150, 230, 255); // -Z
+        case Icon::OrientSide:     return IM_COL32(214, 78, 70, 255);   // +X
+        case Icon::OrientMinusX:   return IM_COL32(214, 78, 70, 255);   // -X
+        case Icon::OrientPlusY:    return IM_COL32(88, 190, 96, 255);   // +Y
+        case Icon::OrientMinusY:   return IM_COL32(88, 190, 96, 255);   // -Y
+        case Icon::Wireframe:      return IM_COL32(110, 150, 230, 255);
         case Icon::SetOrigin:      return IM_COL32(110, 150, 230, 255);
         default: break;
     }

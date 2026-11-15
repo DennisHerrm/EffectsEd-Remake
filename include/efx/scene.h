@@ -160,6 +160,12 @@ Mesh buildRoomLit(const RoomSize& size, float worldScale, uint32_t wallColour,
 // bis zur Decke reicht, sieht genauso aus wie eine halb so hohe, solange
 // nichts danebensteht, woran man messen kann. Mit Gitter auf allen Flächen
 // wird der Raum zum Maßstab.
+// Die Kanten einer Flaeche als Linienpaare fuer das Drahtgitter, deckend in
+// der Farbe der Ecken. Zwei aufeinanderfolgende Dreiecke mit gemeinsamer
+// Kante gelten als Viereck und bekommen dessen vier Kanten OHNE die
+// Diagonale (wie GL_QUADS im Original).
+void appendWireEdges(const Mesh& mesh, std::vector<Vertex>& out);
+
 LineSet buildGrid(const RoomSize& size, float worldScale, uint32_t colour,
                   uint32_t majorColour, bool walls = false);
 

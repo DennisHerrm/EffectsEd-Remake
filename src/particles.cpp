@@ -315,12 +315,22 @@ Axis axisFromDirection(const camera::Vec3& direction) {
 // „nach unten" war ausserdem rechts gespiegelt. Am Original nachgemessen
 // (Sonde zprobe/achsen): „Up" kommt zur Kamera.
 Axis axisFor(int orientation) {
+    // 0..2 wie das Original (Orient Up / Sideways / Down), 3..5 kamen am
+    // 15.11.2026 dazu (Wunsch aus dem Forum: alle sechs Achsrichtungen).
+    // Die Nummern der ersten drei bleiben, damit gespeicherte Einstellungen
+    // gelten.
     switch (orientation) {
-        case 1:  // seitwaerts, auf der X-Achse: rechts (0,-1,0), oben (0,0,1)
+        case 1:  // +X: rechts (0,-1,0), oben (0,0,1)
             return axisFromDirection({1.0f, 0.0f, 0.0f});
-        case 2:  // nach unten: rechts (-1,0,0), oben (0,-1,0)
+        case 2:  // -Z: rechts (-1,0,0), oben (0,-1,0)
             return axisFromDirection({0.0f, 0.0f, -1.0f});
-        default:  // nach oben: rechts (1,0,0), oben (0,-1,0)
+        case 3:  // -X
+            return axisFromDirection({-1.0f, 0.0f, 0.0f});
+        case 4:  // +Y
+            return axisFromDirection({0.0f, 1.0f, 0.0f});
+        case 5:  // -Y
+            return axisFromDirection({0.0f, -1.0f, 0.0f});
+        default:  // +Z: rechts (1,0,0), oben (0,-1,0)
             return axisFromDirection({0.0f, 0.0f, 1.0f});
     }
 }

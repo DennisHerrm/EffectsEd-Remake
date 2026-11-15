@@ -672,11 +672,15 @@ int App::drawParticleGroups(render::Renderer* renderer, const particles::DrawLis
         return render::BlendFactor::One;
     };
 
-    // Die drei Darstellungsarten des Originals: texturiert, Drahtgitter,
-    // Ueberzeichnung ("Shows areas of high polygon overlap" — jede Flaeche
-    // als schwaches gleichmaessiges Additiv ohne Textur).
+    // Die Darstellungsarten des Originals: 0 texturiert, 1 Drahtgitter
+    // (Umrisse ohne Textur), 2 Ueberzeichnung ("Shows areas of high polygon
+    // overlap" — jede Flaeche als schwaches gleichmaessiges Additiv ohne
+    // Textur), 3 Flaechen ohne Textur (Draw Textured aus, Wireframe aus: das
+    // Original zeichnet dann weisse, untexturierte Flaechen).
     const bool overdraw = renderMode == 2;
-    renderer->setFill(renderMode == 1 ? render::Fill::Wireframe : render::Fill::Solid);
+    const bool wire = renderMode == 1;
+    const bool untextured = renderMode == 3;
+    renderer->setFill(render::Fill::Solid);
     int calls = 0;
     for (const auto& group : list.groups) {
         const scene::Mesh& mesh = group.mesh;
@@ -687,6 +691,36 @@ int App::drawParticleGroups(render::Renderer* renderer, const particles::DrawLis
         // der Shaderstufen kennt prefetchTextures nicht; in der anderen
         // Reihenfolge wuerden sie nie angefordert.
         if (group.clamp) clampImages_.insert(group.image);
+        if (wire || untextured) {
+            // Ohne Textur: Farbe und Alpha der Ecken, wie das Original.
+            if (wire) {
+                renderer->setBlendFactors(render::BlendFactor::SrcAlpha,
+                                          render::BlendFactor::OneMinusSrcAlpha);
+            } else {
+                renderer->setBlendFactors(group.blended ? factor(group.src) : render::BlendFactor::One,
+                                          group.blended ? factor(group.dst) : render::BlendFactor::Zero);
+            }
+            renderer->setDepthTest(group.depthTest && !group.depthHack);
+            renderer->setDepthWrite(!wire && group.depthWrite && !group.depthHack);
+            renderer->setAlphaTest(0);
+            renderer->setCulling(render::Cull::None);
+            renderer->setDepthOffset(!wire && group.polygonOffset ? render::DepthOffset::TowardViewer
+                                                                  : render::DepthOffset::None);
+            if (wire) {
+                wireScratch_.clear();
+                scene::appendWireEdges(mesh, wireScratch_);
+                if (!wireScratch_.empty()) {
+                    renderer->drawLines(reinterpret_cast<const render::Vertex*>(wireScratch_.data()),
+                                        static_cast<int>(wireScratch_.size()), 1.0f);
+                }
+            } else {
+                renderer->drawTriangles(reinterpret_cast<const render::Vertex*>(mesh.vertices.data()),
+                                        static_cast<int>(mesh.vertices.size()), mesh.indices.data(),
+                                        static_cast<int>(mesh.indices.size()), render::kNoTexture);
+            }
+            ++calls;
+            continue;
+        }
         if (const shader::Shader* def = assets_.shaderOf(group.shader); def && def->noMipMaps) {
             // Schon mit Kette geladen (etwa vorab fuer eine Kachel)? Dann
             // wegwerfen und neu anfordern — sonst bliebe die Kette.
@@ -1090,14 +1124,20 @@ void App::drawViewport(render::Renderer* renderer, float width, float height) {
     if (showParticles) {
         renderer->setCulling(render::Cull::None);
         const auto drawStart = std::chrono::steady_clock::now();
-        drawParticleGroups(renderer, list, elapsed * 0.001f, settings_.effectRenderMode);
+        // Wie im Original, drei unabhaengige Knoepfe:
+        //   Overdraw                 -> nur die Ueberzeichnung
+        //   Textured an              -> texturierte Flaechen
+        //   Textured aus, Wire aus   -> weisse Flaechen ohne Textur
+        //   Wireframe an             -> Umrisse obendrauf (allein: nur Umrisse)
+        // Vorher ergab "Textured aus, Wire aus" wieder texturiert, der Knopf
+        // schien nichts zu tun (Rueckmeldung 15.11.2026).
+        const auto passes = settings_.effectPasses();
+        if (passes.overdraw) drawParticleGroups(renderer, list, elapsed * 0.001f, 2);
+        if (passes.textured) drawParticleGroups(renderer, list, elapsed * 0.001f, 0);
+        if (passes.untextured) drawParticleGroups(renderer, list, elapsed * 0.001f, 3);
+        if (passes.wire) drawParticleGroups(renderer, list, elapsed * 0.001f, 1);
         lastDrawMs_ = std::chrono::duration<float, std::milli>(
                           std::chrono::steady_clock::now() - drawStart).count();
-        // Texturiert UND Drahtgitter: im Original liegen die Kanten ueber dem
-        // gefuellten Bild (beide Knoepfe sind unabhaengig).
-        if (settings_.effectRenderMode == 0 && settings_.effectWireframe && settings_.effectTextured) {
-            drawParticleGroups(renderer, list, elapsed * 0.001f, 1);
-        }
     }
 
     // Die Achsen zuletzt, obenauf (wie im Original).

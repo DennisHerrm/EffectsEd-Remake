@@ -651,6 +651,8 @@ private:
     bool showWindDialog_ = false;
     bool showSunDialog_ = false;
     bool showSpriteDialog_ = false;
+    // Linienpaare des Drahtgitters (drawParticleGroups), wiederverwendet.
+    std::vector<scene::Vertex> wireScratch_;
     // Zustand des Sprite-Sheet-Dialogs. Bleibt zwischen zwei Aufrufen stehen:
     // wer das zweite Sheet aus derselben Sammlung holt, hat dasselbe Raster.
     struct SpriteImport {

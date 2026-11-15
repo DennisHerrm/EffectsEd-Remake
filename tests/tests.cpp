@@ -5783,7 +5783,7 @@ void testParticles() {
 
         // Die Achsen muessen zueinander senkrecht und normiert sein — sonst
         // verzerrt sich der Effekt beim Drehen.
-        for (int orientation = 0; orientation < 3; ++orientation) {
+        for (int orientation = 0; orientation < 6; ++orientation) {
             const Axis axis = axisFor(orientation);
             check(std::fabs(efx::camera::length(axis.forward) - 1.0f) < 1e-5f,
                   "Vorwaertsachse normiert");
@@ -5809,6 +5809,12 @@ void testParticles() {
               "seitwaerts: rechts -Y, oben +Z");
         check(near(axisFor(2).right, -1, 0, 0) && near(axisFor(2).up, 0, -1, 0),
               "nach unten: rechts -X, oben -Y");
+        // Die drei neuen (15.11.2026): vorwaerts genau entlang der Achse,
+        // rechts und oben wie MakeNormalVectors sie fuer diese Richtung baut.
+        check(near(axisFor(3).forward, -1, 0, 0) && near(axisFor(4).forward, 0, 1, 0) &&
+                  near(axisFor(5).forward, 0, -1, 0) && near(axisFor(1).forward, 1, 0, 0) &&
+                  near(axisFor(0).forward, 0, 0, 1) && near(axisFor(2).forward, 0, 0, -1),
+              "sechs Ausrichtungen: +Z, +X, -Z, -X, +Y, -Y entlang ihrer Achse");
         const Axis plain;
         check(near(plain.up, 0, -1, 0) && near(plain.right, 1, 0, 0),
               "die Vorgabe-Achse (Kacheln) ist dieselbe wie nach oben");
@@ -14173,7 +14179,7 @@ void testRenderAbsoluteVelocity() {
         "Particle\n{\n\tlife\t1000\n\tspawnFlags\tabsoluteVel absoluteAccel\n"
         "\tvelocity\t0 0 100\n\tacceleration\t0 0 10\n}\n");
     bool all = true;
-    for (int orientation = 0; orientation < 3; ++orientation) {
+    for (int orientation = 0; orientation < 6; ++orientation) {
         System system;
         system.play(effect, 1u, {}, axisFor(orientation));
         const auto& item = system.live()[0];
@@ -15308,6 +15314,64 @@ void testSpriteSheet() {
     }
 }
 
+// Rueckmeldung 15.11.2026 (Videos Original gegen efxed): Drahtgitter zeigte
+// nur Diagonalen ("auf der Kante"), Textured aus tat nichts.
+void testRenderModesLikeOriginal() {
+    std::cout << "== Darstellungsarten wie das Original ==\n";
+    using efx::layout::Settings;
+    Settings s;
+    s.effectTextured = false;
+    s.effectWireframe = false;
+    s.effectOverdraw = false;
+    auto p = s.effectPasses();
+    check(p.untextured && !p.textured && !p.wire && !p.overdraw,
+          "Textured aus, Wireframe aus: Flaechen ohne Textur (wie das Original)");
+    s.effectWireframe = true;
+    p = s.effectPasses();
+    check(p.wire && !p.untextured && !p.textured, "nur Wireframe: nur Umrisse");
+    s.effectTextured = true;
+    p = s.effectPasses();
+    check(p.wire && p.textured && !p.untextured, "Textured und Wireframe: Umrisse ueber dem Bild");
+    s.effectOverdraw = true;
+    p = s.effectPasses();
+    check(p.overdraw && !p.wire && !p.textured && !p.untextured, "Overdraw sperrt die anderen");
+
+    using efx::scene::Mesh;
+    using efx::scene::Vertex;
+    Mesh quad;
+    for (int i = 0; i < 4; ++i) {
+        Vertex v{};
+        v.pos[0] = (i == 1 || i == 2) ? 1.0f : 0.0f;
+        v.pos[1] = (i >= 2) ? 1.0f : 0.0f;
+        v.colour = 0x00102030u;  // Alpha 0, wie bei additiven Teilchen
+        quad.vertices.push_back(v);
+    }
+    quad.indices = {0, 1, 2, 0, 2, 3};
+    std::vector<Vertex> lines;
+    efx::scene::appendWireEdges(quad, lines);
+    bool diagonal = false, opaque = true;
+    for (size_t i = 0; i + 1 < lines.size(); i += 2) {
+        const bool corner02 = (lines[i].pos[0] == 0 && lines[i].pos[1] == 0 && lines[i + 1].pos[0] == 1 &&
+                               lines[i + 1].pos[1] == 1) ||
+                              (lines[i].pos[0] == 1 && lines[i].pos[1] == 1 && lines[i + 1].pos[0] == 0 &&
+                               lines[i + 1].pos[1] == 0);
+        if (corner02) diagonal = true;
+        opaque = opaque && (lines[i].colour >> 24) == 0xFFu && (lines[i].colour & 0xFFFFFFu) == 0x102030u;
+    }
+    check(lines.size() == 8 && !diagonal, "Viereck (0,1,2 / 0,2,3): vier Kanten, keine Diagonale");
+    check(opaque, "Umrisse deckend in der Farbe der Ecke (auch bei Alpha 0)");
+    Mesh strip = quad;
+    strip.indices = {0, 1, 3, 3, 1, 2};
+    lines.clear();
+    efx::scene::appendWireEdges(strip, lines);
+    check(lines.size() == 8, "Viereck als Streifen (0,1,3 / 3,1,2): ebenfalls vier Kanten");
+    Mesh tri = quad;
+    tri.indices = {0, 1, 2};
+    lines.clear();
+    efx::scene::appendWireEdges(tri, lines);
+    check(lines.size() == 6, "einzelnes Dreieck: drei Kanten");
+}
+
 int main(int argc, char** argv) {
     // Ungepuffert: stuerzt ein Test ab, steht die letzte Zeile trotzdem da.
     std::cout << std::unitbuf;
@@ -15474,6 +15538,7 @@ int main(int argc, char** argv) {
     testModelCullAndDepthHack();
     // Sprite-Sheet -> Effekt.
     testSpriteSheet();
+    testRenderModesLikeOriginal();
 
     std::cout << "\n" << g_checks << " Pruefungen, " << g_failures << " Fehler";
     if (g_dataFiles > 0) {

@@ -187,10 +187,31 @@ struct Settings {
     // Abgeleitet fuer den Zeichenweg: 2 Ueberzeichnung, 1 nur Drahtgitter,
     // 0 texturiert (Drahtgitter darueber, wenn effectWireframe).
     int effectRenderMode = 0;
+    // Welche Durchgaenge die Ansicht zeichnet — drei unabhaengige Knoepfe wie
+    // im Original. Textured aus und Wireframe aus heisst: Flaechen OHNE
+    // Textur (vorher wieder texturiert, der Knopf schien nichts zu tun).
+    struct EffectPasses {
+        bool overdraw = false;
+        bool textured = false;
+        bool untextured = false;
+        bool wire = false;
+    };
+    EffectPasses effectPasses() const {
+        EffectPasses p;
+        if (effectOverdraw) {
+            p.overdraw = true;
+            return p;
+        }
+        p.textured = effectTextured;
+        p.untextured = !effectTextured && !effectWireframe;
+        p.wire = effectWireframe;
+        return p;
+    }
     void updateRenderMode() {
         effectRenderMode = effectOverdraw ? 2 : (effectWireframe && !effectTextured) ? 1 : 0;
     }
-    // 0 nach oben, 1 seitwaerts, 2 nach unten. Das Original hat drei, nicht zwei.
+    // 0 +Z (Orient Up), 1 +X (Sideways), 2 -Z (Down) wie das Original;
+    // 3 -X, 4 +Y, 5 -Y dazu (particles::axisFor).
     int orientation = 0;
 
     // Raumart: 0 geschlossen, 1 draussen mit Himmel, 2 gar nichts.

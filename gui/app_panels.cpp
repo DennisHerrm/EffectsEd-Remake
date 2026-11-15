@@ -314,19 +314,30 @@ void App::drawMenuBar() {
         if (ImGui::MenuItem(tr(Str::EffectsPlaybackSettings))) showPlaybackDialog_ = true;
         hint(Str::HintPlaybackSettings);
         ImGui::Separator();
-        // Drei Ausrichtungen, nicht zwei — das Original hat auch "Orient Down".
-        if (ImGui::MenuItem(tr(Str::EffectsOrientUp), nullptr,
-                            settings_.orientation == 0)) settings_.orientation = 0;
-        if (ImGui::MenuItem(tr(Str::EffectsOrientSide), nullptr,
-                            settings_.orientation == 1)) settings_.orientation = 1;
-        if (ImGui::MenuItem(tr(Str::EffectsOrientDown), nullptr,
-                            settings_.orientation == 2)) settings_.orientation = 2;
+        // Sechs Ausrichtungen in derselben Reihenfolge wie die Knoepfe. Die
+        // Hinweise stehen jetzt je hinter IHREM Eintrag — vorher zeigte
+        // "Set custom FX spawn origin" den Hinweis von "Orient Up".
+        {
+            const struct { Str label; Str help; int value; } orients[] = {
+                {Str::EffectsOrientSide, Str::HintOrientSide, 1},
+                {Str::EffectsOrientMinusX, Str::HintOrientMinusX, 3},
+                {Str::EffectsOrientPlusY, Str::HintOrientPlusY, 4},
+                {Str::EffectsOrientMinusY, Str::HintOrientMinusY, 5},
+                {Str::EffectsOrientUp, Str::HintOrientUp, 0},
+                {Str::EffectsOrientDown, Str::HintOrientDown, 2},
+            };
+            for (const auto& o : orients) {
+                if (ImGui::MenuItem(tr(o.label), nullptr, settings_.orientation == o.value) &&
+                    settings_.orientation != o.value) {
+                    settings_.orientation = o.value;
+                    refreshPreview();
+                }
+                hint(o.help);
+            }
+        }
         ImGui::Separator();
-        hint(Str::HintOrientDown);
         if (ImGui::MenuItem(tr(Str::EffectsCustomOrigin))) showSpawnOriginDialog_ = true;
-        hint(Str::HintOrientSide);
         hint(Str::HintCustomOrigin);
-        hint(Str::HintOrientUp);
         ImGui::MenuItem(tr(Str::EffectsPlaySounds), nullptr, &settings_.playSounds);
         hint(Str::HintPlaySounds);
         ImGui::Separator();
@@ -460,10 +471,15 @@ void App::drawToolbar(float dpiScale) {
         if (bySlider) repeatSeconds = slider;
         if (byField || bySlider) setRepeatRateSeconds(repeatSeconds);
         separator();
-        // Ausrichtung als Gruppe von drei Umschaltern.
+        // Ausrichtung als Gruppe von sechs Umschaltern, Reihenfolge +X, -X,
+        // +Y, -Y, +Z, -Z (Wunsch aus dem Forum, 15.11.2026). Das Original hat
+        // drei (Up = +Z, Sideways = +X, Down = -Z); deren Nummern bleiben.
         const struct { const char* id; Icon icon; Str tip; int value; } orient[] = {
+            {"##orientPlusX", Icon::OrientSide, Str::EffectsOrientSide, 1},
+            {"##orientMinusX", Icon::OrientMinusX, Str::EffectsOrientMinusX, 3},
+            {"##orientPlusY", Icon::OrientPlusY, Str::EffectsOrientPlusY, 4},
+            {"##orientMinusY", Icon::OrientMinusY, Str::EffectsOrientMinusY, 5},
             {"##orientUp", Icon::OrientUp, Str::EffectsOrientUp, 0},
-            {"##orientSide", Icon::OrientSide, Str::EffectsOrientSide, 1},
             {"##orientDown", Icon::OrientDown, Str::EffectsOrientDown, 2},
         };
         bool firstOrient = true;
